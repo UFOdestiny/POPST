@@ -1,0 +1,7 @@
+*.sh
+*.ipynb
+output
+res
+result
+.vscode
+data
