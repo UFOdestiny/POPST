@@ -8,5 +8,5 @@ data
 dataset
 
 
-__pycache__/
-*.py[cod]
+# __pycache__/
+# *.py[cod]
