@@ -6,3 +6,7 @@ result
 .vscode
 data
 dataset
+
+
+__pycache__/
+*.py[cod]
