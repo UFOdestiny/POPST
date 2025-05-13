@@ -7,11 +7,15 @@ import numpy as np
 import torch
 import sys
 
-sys.path.append(os.path.abspath(__file__ + '/../../../../'))
+sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 sys.path.append("/home/ec2-user/POPST")
 from utils.args import get_data_path
-from utils.generate_data_for_training import LogScaler, StandardScaler, StandardScaler_OD
+from utils.generate_data_for_training import (
+    LogScaler,
+    StandardScaler,
+    StandardScaler_OD,
+)
 from scipy.spatial import distance
 
 
@@ -29,6 +33,8 @@ class DataLoader(object):
         self.size = len(idx)
         self.bs = bs
         self.num_batch = int(self.size // self.bs)
+        if self.size % self.bs != 0:
+            self.num_batch += 1
         self.current_ind = 0
         logger.info(
             f"{name} num: "
@@ -125,9 +131,9 @@ def load_dataset(data_path, args, logger):
         scaler = LogScaler()
     else:
         scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
-    
 
     return dataloader, scaler
+
 
 class DataLoader_MPGCN(object):
     def __init__(
@@ -235,43 +241,40 @@ class DataLoader_MPGCN(object):
 
         return _wrapper()
 
+
 def construct_dyn_G(
-        OD_data: np.array, perceived_period: int = 7
-    ):  # construct dynamic graphs based on OD history
-        train_len = int(OD_data.shape[0] * 0.8)
-        # print(OD_data.shape, OD_data.max(), OD_data.min(), OD_data.mean())
-        num_periods_in_history = train_len // perceived_period  # dump the remainder
-        OD_history = OD_data[: num_periods_in_history * perceived_period, :, :, :]
+    OD_data: np.array, perceived_period: int = 7
+):  # construct dynamic graphs based on OD history
+    train_len = int(OD_data.shape[0] * 0.8)
+    # print(OD_data.shape, OD_data.max(), OD_data.min(), OD_data.mean())
+    num_periods_in_history = train_len // perceived_period  # dump the remainder
+    OD_history = OD_data[: num_periods_in_history * perceived_period, :, :, :]
 
-        O_dyn_G, D_dyn_G = [], []
-        for t in range(perceived_period):
-            OD_t_avg = np.mean(
-                OD_history[t::perceived_period, :, :, :], axis=0
-            ).squeeze(axis=-1)
-            O, D = OD_t_avg.shape
+    O_dyn_G, D_dyn_G = [], []
+    for t in range(perceived_period):
+        OD_t_avg = np.mean(OD_history[t::perceived_period, :, :, :], axis=0).squeeze(
+            axis=-1
+        )
+        O, D = OD_t_avg.shape
 
-            O_G_t = np.zeros((O, O))  # initialize O graph at t
-            for i in range(O):
-                for j in range(O):
+        O_G_t = np.zeros((O, O))  # initialize O graph at t
+        for i in range(O):
+            for j in range(O):
 
-                    # if np.all(OD_t_avg[i, :] == 0) or np.all(OD_t_avg[j, :] == 0):
-                    #     print(i,j)
+                # if np.all(OD_t_avg[i, :] == 0) or np.all(OD_t_avg[j, :] == 0):
+                #     print(i,j)
 
+                O_G_t[i, j] = distance.cosine(OD_t_avg[i, :], OD_t_avg[j, :])  # eq (6)
 
-                    O_G_t[i, j] = distance.cosine(
-                        OD_t_avg[i, :], OD_t_avg[j, :]
-                    )  # eq (6)
+        D_G_t = np.zeros((D, D))  # initialize D graph at t
+        for i in range(D):
+            for j in range(D):
+                D_G_t[i, j] = distance.cosine(OD_t_avg[:, i], OD_t_avg[j, :])  # eq (7)
 
-            D_G_t = np.zeros((D, D))  # initialize D graph at t
-            for i in range(D):
-                for j in range(D):
-                    D_G_t[i, j] = distance.cosine(
-                        OD_t_avg[:, i], OD_t_avg[j, :]
-                    )  # eq (7)
+        O_dyn_G.append(O_G_t), D_dyn_G.append(D_G_t)
 
-            O_dyn_G.append(O_G_t), D_dyn_G.append(D_G_t)
+    return np.stack(O_dyn_G, axis=-1), np.stack(D_dyn_G, axis=-1)
 
-        return np.stack(O_dyn_G, axis=-1), np.stack(D_dyn_G, axis=-1)
 
 def load_dataset_MPGCN(data_path, args, logger):
 
@@ -299,6 +302,7 @@ def load_dataset_MPGCN(data_path, args, logger):
         )
 
     return dataloader, scaler
+
 
 def load_adj_from_pickle(pickle_file):
     try:
@@ -343,10 +347,13 @@ def get_dataset_info(dataset):
         "sz_taxi_od": [base_dir + "sz_taxi_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_bike_od": [base_dir + "sz_bike_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_dd_od": [base_dir + "sz_dd_od", base_dir + "shenzhen/adj.npy", 491],
-
         "nyc_taxi_od": [base_dir + "nyc_taxi_od", base_dir + "nyc_taxi_od/adj.npy", 67],
         "nyc_bike_od": [base_dir + "nyc_bike_od", base_dir + "nyc_taxi_od/adj.npy", 67],
-        "nyc_subway_od": [base_dir + "nyc_subway_od", base_dir + "nyc_taxi_od/adj.npy", 67],
+        "nyc_subway_od": [
+            base_dir + "nyc_subway_od",
+            base_dir + "nyc_taxi_od/adj.npy",
+            67,
+        ],
     }
 
     assert dataset in d.keys()

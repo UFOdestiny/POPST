@@ -248,7 +248,6 @@ class BaseEngine:
                 # X (b, t, n, f), label (b, t, n, 1)
                 X, label = self._to_device(self._to_tensor([X, label]))
                 pred = self.model(X)
-
                 scale = None
                 if type(pred) == tuple:
                     pred, scale = pred  # mean scale
