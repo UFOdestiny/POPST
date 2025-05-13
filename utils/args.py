@@ -1,5 +1,7 @@
 import argparse
 import platform
+import os 
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 def get_public_config():
     parser = argparse.ArgumentParser()
@@ -51,7 +53,7 @@ def get_data_path():
         path = '/home/ec2-user/POPST/datasets/'
         # path = '/home/dy23a.fsu/neu24/LargeST-old/data/'
     else:
-        path = 'D:/OneDrive - Florida State University/mycode/st/data/'
+        path = 'D:/OneDrive - Florida State University/mycode/POPST/dataset/'
 
     # path=""
     return path

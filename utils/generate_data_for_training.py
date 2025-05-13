@@ -4,7 +4,7 @@ import sys
 import torch
 import numpy as np
 
-sys.path.append(os.path.abspath(__file__ + "/../../.."))
+sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 sys.path.append("/home/dy23a.fsu/st/")
 sys.path.append("/home/ec2-user/POPST")
 from utils.args import get_data_path

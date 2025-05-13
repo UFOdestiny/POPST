@@ -4,7 +4,7 @@ import torch
 import sys
 
 
-sys.path.append(os.path.abspath(__file__ + "/../../.."))
+sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 sys.path.append("/home/dy23a.fsu/st/")
 sys.path.append("/home/ec2-user/POPST")
 torch.set_num_threads(8)

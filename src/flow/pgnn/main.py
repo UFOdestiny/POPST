@@ -3,7 +3,7 @@ import sys
 
 from src.flow.pgnn.pgnn_engine import PGNN_Engine_Quantile
 
-sys.path.append(os.path.abspath(__file__ + "/../../.."))
+sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 
 import numpy as np
 import torch
