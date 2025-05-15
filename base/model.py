@@ -2,7 +2,7 @@ import torch.nn as nn
 from abc import abstractmethod
 
 class BaseModel(nn.Module):
-    def __init__(self, node_num, input_dim, output_dim, seq_len=12, horizon=1):
+    def __init__(self, node_num, input_dim, output_dim, seq_len=6, horizon=1):
         super(BaseModel, self).__init__()
         self.node_num = node_num
 

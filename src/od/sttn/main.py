@@ -4,7 +4,7 @@ import sys
 
 sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 sys.path.append("/home/dy23a.fsu/st/")
-sys.path.append("/home/ec2-user/POPST")
+
 from base.quantile_engine import Quantile_Engine
 import torch
 import numpy as np
