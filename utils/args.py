@@ -7,7 +7,7 @@ def get_public_config():
     parser = argparse.ArgumentParser()
     parser.add_argument('--comment', type=str, default='')
 
-    parser.add_argument('--dataset', type=str, default='nyc_taxi_od')  # Shenzhen NYC
+    parser.add_argument('--dataset', type=str, default='sz_taxi_od')  # sz_bike_od sz_dd_od sz_taxi_od
     parser.add_argument('--years', type=str, default='2024')
     parser.add_argument('--model_name', type=str, default='')
 
@@ -29,11 +29,11 @@ def get_public_config():
 
     parser.add_argument('--device', type=str, default="cuda")
     parser.add_argument('--seed', type=int, default=2024)
-    parser.add_argument('--mode', type=str, default='train')
+    parser.add_argument('--mode', type=str, default='test')
     parser.add_argument('--model_path', type=str, default="")
-    parser.add_argument('--result_path', type=str, default="D:/OneDrive - Florida State University/mycode/PopST/result/")
+    parser.add_argument('--result_path', type=str, default="D:/OneDrive - Florida State University/mycode/PopST/result/npy/")
     parser.add_argument('--export', type=bool, default=True)
-    parser.add_argument('--not_print_args', default=False, action='store_true')
+    parser.add_argument('--not_print_args', default=True, action='store_true')
 
 
     return parser
