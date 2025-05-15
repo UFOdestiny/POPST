@@ -19,7 +19,7 @@ def get_public_config():
     parser.add_argument('--input_dim', type=int, default=1)  # feature
     parser.add_argument('--output_dim', type=int, default=1)
 
-    parser.add_argument('--max_epochs', type=int, default=5)
+    parser.add_argument('--max_epochs', type=int, default=2000)
     parser.add_argument('--patience', type=int, default=200)
     parser.add_argument('--normalize', type=bool, default=True) # Z-Score
 
