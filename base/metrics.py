@@ -6,7 +6,8 @@ from torch.distributions.log_normal import LogNormal
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
 
-zero = torch.tensor(0.)
+zero = torch.tensor(0.0)
+
 
 class Metrics:
     def __init__(self, loss_func, metric_lst, horizon=1, early_stop_method="MAE"):
@@ -26,7 +27,7 @@ class Metrics:
 
         self.metric_lst = [loss_func] + metric_lst
         self.metric_func = [self.dic[i] for i in self.metric_lst]
-        early_stop_method=loss_func
+        early_stop_method = loss_func
         self.early_stop_method_index = self.metric_lst.index(early_stop_method)
 
         self.N = len(self.metric_lst)  # loss function
@@ -41,15 +42,15 @@ class Metrics:
     def formatter(self):
         self.train_msg = "Epoch: {:d}, T Loss: {:.3f}, "
         for i in self.metric_lst[1:]:
-            self.train_msg += ("T " + i + ": {:.3f}, ")
+            self.train_msg += "T " + i + ": {:.3f}, "
         self.train_msg += "V Loss: {:.3f}, "
         for i in self.metric_lst[1:]:
-            self.train_msg += ("V " + i + ": {:.3f}, ")
+            self.train_msg += "V " + i + ": {:.3f}, "
         self.train_msg += "LR: {:.4e}, T Time: {:.3f}s/epoch, V Time: {:.3f}s"
 
     # quantile=None, upper=None, lower=None
     def compute_one_batch(self, preds, labels, null_val=None, mode="train", **kwargs):
-        grad_res=None
+        grad_res = None
         for i, fname in enumerate(self.metric_lst):
             res = None
             if fname in ["MAE", "MSE", "MAPE", "RMSE", "KL", "CRPS"]:
@@ -59,7 +60,9 @@ class Metrics:
                 res = self.metric_func[i](preds, labels, null_val, kwargs["scale"])
 
             elif fname in ["WINK", "COV"]:
-                res = self.metric_func[i](kwargs["lower"], kwargs["upper"], labels, alpha=0.1)
+                res = self.metric_func[i](
+                    kwargs["lower"], kwargs["upper"], labels, alpha=0.1
+                )
 
             elif fname in ["MPIW"]:
                 res = self.metric_func[i](kwargs["lower"], kwargs["upper"])
@@ -67,7 +70,7 @@ class Metrics:
                 raise ValueError("Invalid metric name")
 
             if i == 0 and mode == "train":
-                grad_res=res
+                grad_res = res
                 # res.backward()  # loss function
 
             if mode == "train":
@@ -78,7 +81,7 @@ class Metrics:
                 self.test_res[i].append(res.item())
         return grad_res
 
-    def get_loss(self, mode='valid', method="MAE"):
+    def get_loss(self, mode="valid", method="MAE"):
         index_ = self.metric_lst.index(method)
 
         if mode == "train":
@@ -97,7 +100,9 @@ class Metrics:
 
         train_lst = [np.mean(i) for i in self.train_res]
         valid_lst = [np.mean(i) for i in self.valid_res]
-        msg = self.train_msg.format(epoch, *train_lst, *valid_lst, lr, training_time, valid_time)
+        msg = self.train_msg.format(
+            epoch, *train_lst, *valid_lst, lr, training_time, valid_time
+        )
 
         self.train_res = [[] for _ in range(self.N)]
         self.valid_res = [[] for _ in range(self.N)]
@@ -108,7 +113,7 @@ class Metrics:
         for i in range(self.horizon):
             self.test_msg = f"Test Horizon: {i + 1}, "
             for j in self.metric_lst:
-                self.test_msg += (j + ": {:.3f}, ")
+                self.test_msg += j + ": {:.3f}, "
             self.test_msg = self.test_msg[:-2]  # remove the last ", "
             test_lst = [k[i] for k in self.test_res]
             msg = self.test_msg.format(*test_lst)
@@ -116,7 +121,7 @@ class Metrics:
 
         self.test_msg = f"Average: "
         for i in self.metric_lst:
-            self.test_msg += (i + ": {:.3f}, ")
+            self.test_msg += i + ": {:.3f}, "
         self.test_msg = self.test_msg[:-2]
         test_lst = [np.mean(i) for i in self.test_res]
         msg = self.test_msg.format(*test_lst)
@@ -126,11 +131,12 @@ class Metrics:
     def export(self):
         return self.test_res
 
+
 def get_mask(labels, null_val):
     if torch.isnan(null_val):
         mask = ~torch.isnan(labels)
     else:
-        mask = (labels != null_val)
+        mask = labels != null_val
     mask = mask.float()
     mask /= torch.mean(mask)
     mask = torch.where(torch.isnan(mask), torch.zeros_like(mask), mask)
@@ -171,6 +177,7 @@ def masked_rmse(preds, labels, null_val):
 
 
 def masked_mae(preds, labels, null_val):
+    # print("preds:", preds.shape, "labels:", labels.shape)
     assert preds.shape == labels.shape
     mask = get_mask(labels, null_val)
 
@@ -233,7 +240,9 @@ def masked_mpiw_ens(preds, labels, null_val):
     lower_bound = torch.quantile(m, 0.05)
     loss = upper_bound - lower_bound
 
-    return torch.mean(loss)  # -torch.mean(torch.quantile(m, 0.8)-torch.quantile(m, 0.2))
+    return torch.mean(
+        loss
+    )  # -torch.mean(torch.quantile(m, 0.8)-torch.quantile(m, 0.2))
 
 
 def compute_all_metrics(preds, labels, null_val, lower=None, upper=None):
@@ -278,9 +287,17 @@ def nb_loss(preds, labels, null_val):
 
     lambda_ = 1e-4
 
-    L_yeq0 = torch.log(pi_yeq0 + lambda_) + torch.log(lambda_ + (1 - pi_yeq0) * torch.pow(p_yeq0, n_yeq0))
-    L_yg0 = torch.log(1 - pi_yg0 + lambda_) + torch.lgamma(n_yg0 + yg0) - torch.lgamma(yg0 + 1) - torch.lgamma(
-        n_yg0 + lambda_) + n_yg0 * torch.log(p_yg0 + lambda_) + yg0 * torch.log(1 - p_yg0 + lambda_)
+    L_yeq0 = torch.log(pi_yeq0 + lambda_) + torch.log(
+        lambda_ + (1 - pi_yeq0) * torch.pow(p_yeq0, n_yeq0)
+    )
+    L_yg0 = (
+        torch.log(1 - pi_yg0 + lambda_)
+        + torch.lgamma(n_yg0 + yg0)
+        - torch.lgamma(yg0 + 1)
+        - torch.lgamma(n_yg0 + lambda_)
+        + n_yg0 * torch.log(p_yg0 + lambda_)
+        + yg0 * torch.log(1 - p_yg0 + lambda_)
+    )
 
     loss = -torch.sum(L_yeq0) - torch.sum(L_yg0)
 
@@ -317,8 +334,14 @@ def nb_nll_loss(preds, labels, null_val):
     pi_yeq0[index4] = torch.tensor(0.001)
 
     L_yeq0 = torch.log(pi_yeq0) + torch.log((1 - pi_yeq0) * torch.pow(p_yeq0, n_yeq0))
-    L_yg0 = torch.log(1 - pi_yg0) + torch.lgamma(n_yg0 + yg0) - torch.lgamma(yg0 + 1) - torch.lgamma(
-        n_yg0) + n_yg0 * torch.log(p_yg0) + yg0 * torch.log(1 - p_yg0)
+    L_yg0 = (
+        torch.log(1 - pi_yg0)
+        + torch.lgamma(n_yg0 + yg0)
+        - torch.lgamma(yg0 + 1)
+        - torch.lgamma(n_yg0)
+        + n_yg0 * torch.log(p_yg0)
+        + yg0 * torch.log(1 - p_yg0)
+    )
 
     loss = -torch.sum(L_yeq0) - torch.sum(L_yg0)
 

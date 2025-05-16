@@ -19,7 +19,7 @@ class GWNET(BaseModel):
             self.nodevec1 = nn.Parameter(torch.randn(self.node_num, 10), requires_grad=True)
             self.nodevec2 = nn.Parameter(torch.randn(10, self.node_num), requires_grad=True)
             self.supports_len += 1
-        print('check supports length', len(supports), self.supports_len)
+        # print('check supports length', len(supports), self.supports_len)
 
         self.dropout = dropout
         self.blocks = blocks

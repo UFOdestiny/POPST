@@ -2,7 +2,7 @@ import os
 import sys
 import numpy as np
 
-sys.path.append(os.path.abspath(__file__ + '/../../..'))
+sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 from stgcn_gaussian_engine import STGCN_Gaussian_Engine
 import torch
 

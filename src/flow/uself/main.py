@@ -5,7 +5,7 @@ import numpy as np
 
 
 
-sys.path.append(os.path.abspath(__file__ + '/../../..'))
+sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 import torch
 
 from uself_model import USELF

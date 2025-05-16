@@ -3,7 +3,7 @@ import sys
 
 import numpy as np
 
-sys.path.append(os.path.abspath(__file__ + '/../../..'))
+sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 from stgcn_nb_engine import STGCN_NB_Engine
 import torch
 

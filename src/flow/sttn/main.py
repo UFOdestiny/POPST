@@ -1,10 +1,12 @@
 import os
 import numpy as np
 import sys
-sys.path.append(os.path.abspath(__file__ + '/../../..'))
+
+sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
 import torch
 from base.quantile_engine import Quantile_Engine
+
 torch.set_num_threads(8)
 
 from sttn_model import STTN
@@ -25,21 +27,24 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument('--adj_type', type=str, default='doubletransition')
-    parser.add_argument('--blocks', type=int, default=2)
-    parser.add_argument('--mlp_expand', type=int, default=2)
-    parser.add_argument('--hid_dim', type=int, default=32)
-    parser.add_argument('--end_dim', type=int, default=512)
+    parser.add_argument("--adj_type", type=str, default="doubletransition")
+    parser.add_argument("--blocks", type=int, default=2)
+    parser.add_argument("--mlp_expand", type=int, default=2)
+    parser.add_argument("--hid_dim", type=int, default=32)
+    parser.add_argument("--end_dim", type=int, default=512)
 
-    parser.add_argument('--lrate', type=float, default=1e-3)
-    parser.add_argument('--wdecay', type=float, default=1e-4)
-    parser.add_argument('--dropout', type=float, default=0.1)
-    parser.add_argument('--clip_grad_value', type=float, default=5)
+    parser.add_argument("--lrate", type=float, default=1e-3)
+    parser.add_argument("--wdecay", type=float, default=1e-4)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--clip_grad_value", type=float, default=5)
     args = parser.parse_args()
 
     args.model_name = "STTN"
     log_dir = get_log_path(args)
-    logger = get_logger(log_dir, __name__, )
+    logger = get_logger(
+        log_dir,
+        __name__,
+    )
     print_args(logger, args)  # logger.info(args)
 
     return args, log_dir, logger
@@ -61,42 +66,49 @@ def main():
 
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
 
-    model = STTN(node_num=node_num,
-                 input_dim=args.input_dim,
-                 output_dim=args.output_dim,
-                 device=device,
-                 supports=supports,
-                 blocks=args.blocks,
-                 mlp_expand=args.mlp_expand,
-                 hidden_channels=args.hid_dim,
-                 end_channels=args.end_dim,
-                 dropout=args.dropout,
-                 horizon=args.horizon,
-                 )
+    model = STTN(
+        node_num=node_num,
+        input_dim=args.input_dim,
+        output_dim=args.input_dim,
+        device=device,
+        supports=supports,
+        blocks=args.blocks,
+        mlp_expand=args.mlp_expand,
+        hidden_channels=args.hid_dim,
+        end_channels=args.end_dim,
+        dropout=args.dropout,
+        horizon=args.horizon,
+        seq_len=args.seq_len,
+    )
 
     loss_fn = "MAE"
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lrate, weight_decay=args.wdecay)
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=args.lrate, weight_decay=args.wdecay
+    )
     scheduler = None
 
-    engine = engine_template(device=device,
-                             model=model,
-                             dataloader=dataloader,
-                             scaler=scaler,
-                             sampler=None,
-                             loss_fn=loss_fn,
-                             lrate=args.lrate,
-                             optimizer=optimizer,
-                             scheduler=scheduler,
-                             clip_grad_value=args.clip_grad_value,
-                             max_epochs=args.max_epochs,
-                             patience=args.patience,
-                             log_dir=log_dir,
-                             logger=logger,
-                             seed=args.seed,
-                             alpha=args.quantile_alpha,
-                             )
+    engine = engine_template(
+        device=device,
+        model=model,
+        dataloader=dataloader,
+        scaler=scaler,
+        sampler=None,
+        loss_fn=loss_fn,
+        lrate=args.lrate,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        clip_grad_value=args.clip_grad_value,
+        max_epochs=args.max_epochs,
+        patience=args.patience,
+        log_dir=log_dir,
+        logger=logger,
+        seed=args.seed,
+        alpha=args.quantile_alpha,
+        metric_list=["MAE", "MAPE", "RMSE"],
+        args=args,
+    )
 
-    if args.mode == 'train':
+    if args.mode == "train":
         engine.train()
     else:
         engine.evaluate(args.mode, args.model_path, args.export)

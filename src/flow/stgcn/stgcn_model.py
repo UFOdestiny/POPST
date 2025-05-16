@@ -339,6 +339,7 @@ class STGCN(BaseModel):
             self.fc1 = nn.Linear(in_features=blocks[-3][-1], out_features=blocks[-2][0])
             self.fc2 = nn.Linear(in_features=blocks[-2][0], out_features=blocks[-1][0])
             self.relu = nn.ReLU()
+        
         self.horizon = horizon
 
     def forward(self, x, label=None):  # (b, t, n, f)

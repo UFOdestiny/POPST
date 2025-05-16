@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from utils.args import get_data_path
-from utils.generate_data_for_training import (
+from utils.generate import (
     LogScaler,
     StandardScaler,
     StandardScaler_OD,
@@ -21,7 +21,7 @@ from scipy.spatial import distance
 
 class DataLoader(object):
     def __init__(
-        self, data, idx, seq_len, horizon, bs, logger, name=None, pad_last_sample=False
+        self, data, idx, seq_len, horizon, bs, logger, name=None, pad_last_sample=False, droplast=False
     ):
         if pad_last_sample:
             num_padding = (bs - (len(idx) % bs)) % bs
@@ -33,8 +33,9 @@ class DataLoader(object):
         self.size = len(idx)
         self.bs = bs
         self.num_batch = int(self.size // self.bs)
-        if self.size % self.bs != 0:
+        if not droplast and self.size % self.bs != 0:
             self.num_batch += 1
+
         self.current_ind = 0
         logger.info(
             f"{name} num: "
@@ -111,7 +112,7 @@ class DataLoader(object):
         return _wrapper()
 
 
-def load_dataset(data_path, args, logger):
+def load_dataset(data_path, args, logger, drop=False):
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
     logger.info("Data shape: " + str(ptr["data"].shape))
 
@@ -124,13 +125,14 @@ def load_dataset(data_path, args, logger):
         idx = np.load(os.path.join(data_path, args.years, "idx_" + cat + ".npy"))
 
         dataloader[cat + "_loader"] = DataLoader(
-            X, idx, args.seq_len, args.horizon, args.bs, logger, cat
+            X, idx, args.seq_len, args.horizon, args.bs, logger, cat,droplast=drop
         )
 
     if "_od" in data_path:
         scaler = LogScaler()
     else:
-        scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
+        scaler = LogScaler()
+        # scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
 
     return dataloader, scaler
 
@@ -284,7 +286,8 @@ def load_dataset_MPGCN(data_path, args, logger):
     if "_od" in data_path:
         scaler = LogScaler()
     else:
-        scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
+        scaler = LogScaler()
+        # scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
 
     X = ptr["data"]
 
@@ -329,7 +332,7 @@ def get_dataset_info(dataset):
         # Flow Prediction: N -> N
         "Shenzhen": [base_dir + "shenzhen", base_dir + "shenzhen/adj.npy", 491],
         "Shenzhen2": [base_dir + "shenzhen2", base_dir + "shenzhen2/adj.npy", 491],
-        "NYC": [base_dir + "nyc", base_dir + "nyc/adj.npy", 42],
+        "NYC": [base_dir + "nyc", base_dir + "nyc/adj.npy", 67],
         "NYC_Crash": [base_dir + "nyc_crash", base_dir + "nyc_crash/adj.npy", 42],
         "NYC_Combine": [base_dir + "nyc_combine", base_dir + "nyc_combine/adj.npy", 42],
         "Chicago": [base_dir + "chicago", base_dir + "chicago/adj.npy", 77],

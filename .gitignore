@@ -1,13 +1,14 @@
 *.sh
 *.ipynb
+*.zip
+*.vscode
+
 output
 res
 result
-.vscode
 data
 dataset
 datasets
-
 
 __pycache__/
 *.py[cod]

@@ -22,7 +22,7 @@ class AGCRN(BaseModel):
         output, _ = self.encoder(source, init_state, self.node_embed)
         output = output[:, -1:, :, :]
         pred = self.end_conv(output)
-        return pred
+        return pred.permute(0,3,2,1)
 
 
 class AVWDCRNN(nn.Module):

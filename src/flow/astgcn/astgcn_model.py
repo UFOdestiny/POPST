@@ -25,7 +25,7 @@ class ASTGCN(BaseModel):
 
         output = self.final_conv(x.permute(0, 3, 1, 2))#[:, :, :, -1]  # (b, t, n)
         # print(output.shape)
-        return output#.unsqueeze(-1)
+        return output.permute(0,3,2,1)
 
 
 class ASTGCN_block(nn.Module):

@@ -4,35 +4,61 @@ import torch.nn.functional as F
 from torchdiffeq import odeint
 from base.model import BaseModel
 
+
 class STGODE(BaseModel):
-    '''
+    """
     Reference code: https://github.com/square-coder/STGODE
-    '''
-    def __init__(self, A_sp, A_se, **args):     
+    """
+
+    def __init__(self, A_sp, A_se, **args):
         super(STGODE, self).__init__(**args)
         # spatial graph
         self.sp_blocks = nn.ModuleList(
-            [nn.Sequential(
-                STGCNBlock(in_channels=self.input_dim, out_channels=[64, 32, 64],
-                node_num=self.node_num, A_hat=A_sp),
-                STGCNBlock(in_channels=64, out_channels=[64, 32, 64],
-                node_num=self.node_num, A_hat=A_sp)) for _ in range(3)
-            ])
-
-        # semantic graph
-        self.se_blocks = nn.ModuleList([nn.Sequential(
-                STGCNBlock(in_channels=self.input_dim, out_channels=[64, 32, 64],
-                node_num=self.node_num, A_hat=A_se),
-                STGCNBlock(in_channels=64, out_channels=[64, 32, 64],
-                node_num=self.node_num, A_hat=A_se)) for _ in range(3)
-            ]) 
-
-        self.pred = nn.Sequential(
-            nn.Linear(self.seq_len * 64, self.horizon * 32), 
-            nn.ReLU(),
-            nn.Linear(self.horizon * 32, self.horizon)
+            [
+                nn.Sequential(
+                    STGCNBlock(
+                        in_channels=self.input_dim,
+                        out_channels=[64, 32, 64],
+                        node_num=self.node_num,
+                        A_hat=A_sp,
+                    ),
+                    STGCNBlock(
+                        in_channels=64,
+                        out_channels=[64, 32, 64],
+                        node_num=self.node_num,
+                        A_hat=A_sp,
+                    ),
+                )
+                for _ in range(3)
+            ]
         )
 
+        # semantic graph
+        self.se_blocks = nn.ModuleList(
+            [
+                nn.Sequential(
+                    STGCNBlock(
+                        in_channels=self.input_dim,
+                        out_channels=[64, 32, 64],
+                        node_num=self.node_num,
+                        A_hat=A_se,
+                    ),
+                    STGCNBlock(
+                        in_channels=64,
+                        out_channels=[64, 32, 64],
+                        node_num=self.node_num,
+                        A_hat=A_se,
+                    ),
+                )
+                for _ in range(3)
+            ]
+        )
+
+        self.pred = nn.Sequential(
+            nn.Linear(self.seq_len * 64, self.horizon * 32),
+            nn.ReLU(),
+            nn.Linear(self.horizon * 32, self.horizon),
+        )
 
     def forward(self, x, label=None):  # (b, t, n, f)
         x = x.transpose(1, 2)
@@ -49,20 +75,21 @@ class STGODE(BaseModel):
         x = self.pred(x)
         x = x.unsqueeze(-1).transpose(1, 2)
 
-        return x
+        return x.permute(0, 3, 2, 1)
 
 
 class STGCNBlock(nn.Module):
     def __init__(self, in_channels, out_channels, node_num, A_hat):
         super(STGCNBlock, self).__init__()
         self.A_hat = A_hat
-        self.temporal1 = TemporalConvNet(num_inputs=in_channels,
-                                   num_channels=out_channels)
+        self.temporal1 = TemporalConvNet(
+            num_inputs=in_channels, num_channels=out_channels
+        )
         self.odeg = ODEG(out_channels[-1], 12, A_hat, time=6)
-        self.temporal2 = TemporalConvNet(num_inputs=out_channels[-1],
-                                   num_channels=out_channels)
+        self.temporal2 = TemporalConvNet(
+            num_inputs=out_channels[-1], num_channels=out_channels
+        )
         self.batch_norm = nn.BatchNorm2d(node_num)
-
 
     def forward(self, X):
         t = self.temporal1(X)
@@ -77,11 +104,17 @@ class TemporalConvNet(nn.Module):
         layers = []
         num_levels = len(num_channels)
         for i in range(num_levels):
-            dilation_size = 2 ** i
-            in_channels = num_inputs if i == 0 else num_channels[i-1]
+            dilation_size = 2**i
+            in_channels = num_inputs if i == 0 else num_channels[i - 1]
             out_channels = num_channels[i]
             padding = (kernel_size - 1) * dilation_size
-            self.conv = nn.Conv2d(in_channels, out_channels, (1, kernel_size), dilation=(1, dilation_size), padding=(0, padding))
+            self.conv = nn.Conv2d(
+                in_channels,
+                out_channels,
+                (1, kernel_size),
+                dilation=(1, dilation_size),
+                padding=(0, padding),
+            )
             self.conv.weight.data.normal_(0, 0.01)
             self.chomp = Chomp1d(padding)
             self.relu = nn.ReLU()
@@ -90,10 +123,13 @@ class TemporalConvNet(nn.Module):
             layers += [nn.Sequential(self.conv, self.chomp, self.relu, self.dropout)]
 
         self.network = nn.Sequential(*layers)
-        self.downsample = nn.Conv2d(num_inputs, num_channels[-1], (1, 1)) if num_inputs != num_channels[-1] else None
+        self.downsample = (
+            nn.Conv2d(num_inputs, num_channels[-1], (1, 1))
+            if num_inputs != num_channels[-1]
+            else None
+        )
         if self.downsample:
             self.downsample.weight.data.normal_(0, 0.01)
-
 
     def forward(self, x):
         y = x.permute(0, 3, 1, 2)
@@ -107,16 +143,16 @@ class Chomp1d(nn.Module):
         super(Chomp1d, self).__init__()
         self.chomp_size = chomp_size
 
-
     def forward(self, x):
-        return x[:, :, :, :-self.chomp_size].contiguous()
+        return x[:, :, :, : -self.chomp_size].contiguous()
 
 
 class ODEG(nn.Module):
     def __init__(self, feature_dim, temporal_dim, adj, time):
         super(ODEG, self).__init__()
-        self.odeblock = ODEblock(ODEFunc(feature_dim, temporal_dim, adj), t=torch.tensor([0, time]))
-
+        self.odeblock = ODEblock(
+            ODEFunc(feature_dim, temporal_dim, adj), t=torch.tensor([0, time])
+        )
 
     def forward(self, x):
         self.odeblock.set_x0(x)
@@ -125,19 +161,17 @@ class ODEG(nn.Module):
 
 
 class ODEblock(nn.Module):
-    def __init__(self, odefunc, t=torch.tensor([0,1])):
+    def __init__(self, odefunc, t=torch.tensor([0, 1])):
         super(ODEblock, self).__init__()
         self.t = t
         self.odefunc = odefunc
 
-
     def set_x0(self, x0):
         self.odefunc.x0 = x0.clone().detach()
 
-
     def forward(self, x):
         t = self.t.type_as(x)
-        z = odeint(self.odefunc, x, t, method='euler')[1]
+        z = odeint(self.odefunc, x, t, method="euler")[1]
         return z
 
 
@@ -153,18 +187,17 @@ class ODEFunc(nn.Module):
         self.w2 = nn.Parameter(torch.eye(temporal_dim))
         self.d2 = nn.Parameter(torch.zeros(temporal_dim) + 1)
 
-
     def forward(self, t, x):
         alpha = torch.sigmoid(self.alpha).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
-        xa = torch.einsum('ij, kjlm->kilm', self.adj, x)
+        xa = torch.einsum("ij, kjlm->kilm", self.adj, x)
 
         d = torch.clamp(self.d, min=0, max=1)
         w = torch.mm(self.w * d, torch.t(self.w))
-        xw = torch.einsum('ijkl, lm->ijkm', x, w)
+        xw = torch.einsum("ijkl, lm->ijkm", x, w)
 
         d2 = torch.clamp(self.d2, min=0, max=1)
         w2 = torch.mm(self.w2 * d2, torch.t(self.w2))
-        xw2 = torch.einsum('ijkl, km->ijml', x, w2)
+        xw2 = torch.einsum("ijkl, km->ijml", x, w2)
 
         f = alpha / 2 * xa - x + xw - x + xw2 - x + self.x0
         return f
