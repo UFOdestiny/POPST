@@ -279,7 +279,11 @@ class BaseEngine:
             for i in range(self.model.horizon):
                 s = scales[:, i, :].unsqueeze(1) if len(scales) > 0 else None
                 self.metric.compute_one_batch(
-                    preds[:, i, :].unsqueeze(1), labels[:, i, :].unsqueeze(1), mask_value, "test", scale=s
+                    preds[:, i, :].unsqueeze(1),
+                    labels[:, i, :].unsqueeze(1),
+                    mask_value,
+                    "test",
+                    scale=s,
                 )
 
             for i in self.metric.get_test_msg():

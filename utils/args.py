@@ -21,7 +21,7 @@ def get_public_config():
     parser.add_argument("--input_dim", type=int, default=1)  # feature
     parser.add_argument("--output_dim", type=int, default=1)
 
-    parser.add_argument("--max_epochs", type=int, default=5)
+    parser.add_argument("--max_epochs", type=int, default=3)
     parser.add_argument("--patience", type=int, default=200)
     parser.add_argument("--normalize", type=bool, default=True)  # Z-Score
 
@@ -33,13 +33,21 @@ def get_public_config():
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--mode", type=str, default="train")
     parser.add_argument("--model_path", type=str, default="")
-    parser.add_argument(
-        "--result_path",
-        type=str,
-        default="D:/OneDrive - Florida State University/mycode/PopST/result/npy/",
-    )
     parser.add_argument("--export", type=bool, default=True)
     parser.add_argument("--not_print_args", default=False, action="store_true")
+
+    if platform.system().lower() == "linux":
+        parser.add_argument(
+            "--result_path",
+            type=str,
+            default="/home/ec2-user/POPST/res/",
+        )
+    else:
+        parser.add_argument(
+            "--result_path",
+            type=str,
+            default="D:/OneDrive - Florida State University/mycode/PopST/result/npy/",
+        )
 
     return parser
 
