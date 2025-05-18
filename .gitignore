@@ -2,6 +2,7 @@
 *.ipynb
 *.zip
 *.vscode
+*.log
 
 output
 res
