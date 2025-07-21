@@ -38,6 +38,7 @@ def get_config():
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--clip_grad_value', type=float, default=5)
     args = parser.parse_args()
+    args.bs=4
 
     args.model_name = "LSTM_OD"
     log_dir = get_log_path(args)
