@@ -15,7 +15,8 @@ from utils.args import get_public_config, get_log_path, print_args, check_quanti
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from utils.log import get_logger
 from fastdtw import fastdtw
-
+from scipy.spatial.distance import euclidean
+from joblib import Parallel, delayed
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -109,6 +110,11 @@ def main():
 
 
 def construct_se_matrix(data_path, args):
+    # def compute_and_fill(i, j):
+    #     dist = fastdtw(data_mean[i], data_mean[j], radius=6)[0]
+    #     print(i,j)
+    #     return i, j, dist
+
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
     data = ptr["data"][..., 0]
     sample_num, node_num = data.shape
@@ -123,13 +129,32 @@ def construct_se_matrix(data_path, args):
     data_mean = data_mean.T
 
     dist_matrix = np.zeros((node_num, node_num))
-    for i in range(node_num):
-        for j in range(i, node_num):
-            dist_matrix[i][j] = fastdtw(data_mean[i], data_mean[j], radius=6)[0]
+
+    # pairs = [(i, j) for i in range(node_num) for j in range(i, node_num)]
+    # results = Parallel(n_jobs=-1)(delayed(compute_and_fill)(i, j) for i, j in pairs)
+    # dist_matrix = np.zeros((node_num, node_num))
+    # for i, j, dist in results:
+    #     dist_matrix[i][j] = dist
+    #     dist_matrix[j][i] = dist
+
+    # print("DONE!!!!!!!!!!!!!!!")
 
     for i in range(node_num):
-        for j in range(i):
-            dist_matrix[i][j] = dist_matrix[j][i]
+        for j in range(i, node_num):
+            dist = euclidean(data_mean[i], data_mean[j])
+            dist_matrix[i][j] = dist
+            dist_matrix[j][i] = dist
+
+            # print(i,j)
+
+    # for i in range(node_num):
+    #     for j in range(i, node_num):
+    #         print(i,j)
+    #         dist_matrix[i][j] = fastdtw(data_mean[i], data_mean[j], radius=6)[0]
+
+    # for i in range(node_num):
+    #     for j in range(i):
+    #         dist_matrix[i][j] = dist_matrix[j][i]
 
     mean = np.mean(dist_matrix)
     std = np.std(dist_matrix)

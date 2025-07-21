@@ -56,118 +56,204 @@ class GCN(nn.Module):
         )
 
 
+# class Adj_Processor:
+#     def __init__(self, kernel_type: str, K: int):
+#         self.kernel_type = kernel_type
+#         # chebyshev (Defferard NIPS'16)/localpool (Kipf ICLR'17)/random_walk_diffusion (Li ICLR'18)
+#         self.K = K if self.kernel_type != "localpool" else 1
+#         # max_chebyshev_polynomial_order (Defferard NIPS'16)/max_diffusion_step (Li ICLR'18)
+
+#     def process(self, flow: torch.Tensor):
+#         """
+#         Generate adjacency matrices
+#         :param flow: batch flow stat - (batch_size, Origin, Destination) torch.Tensor
+#         :return: processed adj matrices - (batch_size, K_supports, O, D) torch.Tensor
+#         """
+#         batch_list = list()
+
+#         for b in range(flow.shape[0]):
+#             adj = flow[b, :, :]
+#             kernel_list = list()
+
+#             if self.kernel_type in ["localpool", "chebyshev"]:  # spectral
+#                 adj_norm = self.symmetric_normalize(adj).to(device="cuda")
+#                 if self.kernel_type == "localpool":
+#                     localpool = (
+#                         torch.eye(adj_norm.shape[0]).to(device="cuda") + adj_norm
+#                     )  # same as add self-loop first
+#                     kernel_list.append(localpool)
+
+#                 else:  # chebyshev
+#                     laplacian_norm = (
+#                         torch.eye(adj_norm.shape[0]).to(device="cuda") - adj_norm
+#                     )
+#                     laplacian_rescaled = self.rescale_laplacian(laplacian_norm)
+#                     kernel_list = self.compute_chebyshev_polynomials(
+#                         laplacian_rescaled, kernel_list
+#                     )
+
+#             elif self.kernel_type == "random_walk_diffusion":  # spatial
+#                 # diffuse k steps on transition matrix P
+#                 P_forward = self.random_walk_normalize(adj)
+#                 kernel_list = self.compute_chebyshev_polynomials(
+#                     P_forward.T, kernel_list
+#                 )
+
+#             elif self.kernel_type == "dual_random_walk_diffusion":
+#                 # diffuse k steps bidirectionally on transition matrix P
+#                 P_forward = self.random_walk_normalize(adj)
+#                 P_backward = self.random_walk_normalize(adj.T)
+#                 forward_series, backward_series = [], []
+#                 forward_series = self.compute_chebyshev_polynomials(
+#                     P_forward.T, forward_series
+#                 )
+#                 backward_series = self.compute_chebyshev_polynomials(
+#                     P_backward.T, backward_series
+#                 )
+#                 kernel_list += (
+#                     forward_series + backward_series[1:]
+#                 )  # 0-order Chebyshev polynomial is same: I
+
+#             else:
+#                 raise ValueError(
+#                     "Invalid kernel_type. Must be one of [chebyshev, localpool, random_walk_diffusion, dual_random_walk_diffusion]."
+#                 )
+
+#             # print(f"Minibatch {b}: {self.kernel_type} kernel has {len(kernel_list)} support kernels.")
+#             kernels = torch.stack(kernel_list, dim=0)
+#             batch_list.append(kernels)
+#         batch_adj = torch.stack(batch_list, dim=0)
+#         return batch_adj
+
+#     @staticmethod
+#     def random_walk_normalize(A):  # asymmetric
+#         d_inv = torch.pow(A.sum(dim=1), -1)  # OD matrix Ai,j sum on j (axis=1)
+#         d_inv[torch.isinf(d_inv)] = 0.0
+#         D = torch.diag(d_inv)
+#         P = torch.mm(D, A)
+#         return P
+
+#     @staticmethod
+#     def symmetric_normalize(A):
+#         D = torch.diag(torch.pow(A.sum(dim=1), -0.5))
+#         D = torch.where(torch.isfinite(D), D, torch.tensor(0.0))
+#         A_norm = torch.mm(torch.mm(D, A), D)
+#         return A_norm
+
+#     @staticmethod
+#     def rescale_laplacian(L):
+#         # rescale laplacian to arccos range [-1,1] for input to Chebyshev polynomials of the first kind
+#         try:
+#             lambda_ = torch.eig(L)[0][:, 0]  # get the real parts of eigenvalues
+#             lambda_max = lambda_.max()  # get the largest eigenvalue
+#         except:
+#             print(
+#                 "Eigen_value calculation didn't converge, using max_eigen_val=2 instead."
+#             )
+#             lambda_max = 2
+#         L_rescaled = (2 / lambda_max) * L - torch.eye(L.shape[0])
+#         return L_rescaled
+
+#     def compute_chebyshev_polynomials(self, x, T_k):
+#         # compute Chebyshev polynomials up to order k. Return a list of matrices.
+#         # print(f"Computing Chebyshev polynomials up to order {self.K}.")
+#         for k in range(self.K + 1):
+#             if k == 0:
+#                 T_k.append(torch.eye(x.shape[0]))
+#             elif k == 1:
+#                 T_k.append(x)
+#             else:
+#                 T_k.append(2 * torch.mm(x, T_k[k - 1]) - T_k[k - 2])
+#         return T_k
+
 class Adj_Processor:
     def __init__(self, kernel_type: str, K: int):
         self.kernel_type = kernel_type
-        # chebyshev (Defferard NIPS'16)/localpool (Kipf ICLR'17)/random_walk_diffusion (Li ICLR'18)
-        self.K = K if self.kernel_type != "localpool" else 1
-        # max_chebyshev_polynomial_order (Defferard NIPS'16)/max_diffusion_step (Li ICLR'18)
+        self.K = K if kernel_type != "localpool" else 1
 
     def process(self, flow: torch.Tensor):
-        """
-        Generate adjacency matrices
-        :param flow: batch flow stat - (batch_size, Origin, Destination) torch.Tensor
-        :return: processed adj matrices - (batch_size, K_supports, O, D) torch.Tensor
-        """
-        batch_list = list()
+        batch_list = []
 
         for b in range(flow.shape[0]):
-            adj = flow[b, :, :]
-            kernel_list = list()
+            adj = flow[b, :, :]  # shape: (O, D)
+            kernel_list = []
 
-            if self.kernel_type in ["localpool", "chebyshev"]:  # spectral
-                adj_norm = self.symmetric_normalize(adj).to(device="cuda")
+            if self.kernel_type in ["localpool", "chebyshev"]:
+                adj_norm = self.symmetric_normalize(adj).to(flow.device)
                 if self.kernel_type == "localpool":
-                    localpool = (
-                        torch.eye(adj_norm.shape[0]).to(device="cuda") + adj_norm
-                    )  # same as add self-loop first
+                    localpool = torch.eye(adj.shape[0], device=flow.device) + adj_norm
                     kernel_list.append(localpool)
-
-                else:  # chebyshev
-                    laplacian_norm = torch.eye(adj_norm.shape[0]).to(device="cuda") - adj_norm
+                else:
+                    laplacian_norm = torch.eye(adj.shape[0], device=flow.device) - adj_norm
                     laplacian_rescaled = self.rescale_laplacian(laplacian_norm)
-                    kernel_list = self.compute_chebyshev_polynomials(
-                        laplacian_rescaled, kernel_list
-                    )
+                    kernel_list = self.compute_chebyshev_polynomials(laplacian_rescaled, kernel_list)
 
-            elif self.kernel_type == "random_walk_diffusion":  # spatial
-                # diffuse k steps on transition matrix P
+            elif self.kernel_type == "random_walk_diffusion":
                 P_forward = self.random_walk_normalize(adj)
-                kernel_list = self.compute_chebyshev_polynomials(
-                    P_forward.T, kernel_list
-                )
+                kernel_list = self.compute_chebyshev_polynomials(P_forward.T, kernel_list)
 
             elif self.kernel_type == "dual_random_walk_diffusion":
-                # diffuse k steps bidirectionally on transition matrix P
                 P_forward = self.random_walk_normalize(adj)
                 P_backward = self.random_walk_normalize(adj.T)
-                forward_series, backward_series = [], []
-                forward_series = self.compute_chebyshev_polynomials(
-                    P_forward.T, forward_series
-                )
-                backward_series = self.compute_chebyshev_polynomials(
-                    P_backward.T, backward_series
-                )
-                kernel_list += (
-                    forward_series + backward_series[1:]
-                )  # 0-order Chebyshev polynomial is same: I
+                forward_series = self.compute_chebyshev_polynomials(P_forward.T, [])
+                backward_series = self.compute_chebyshev_polynomials(P_backward.T, [])
+                kernel_list += forward_series + backward_series[1:]
 
             else:
-                raise ValueError(
-                    "Invalid kernel_type. Must be one of [chebyshev, localpool, random_walk_diffusion, dual_random_walk_diffusion]."
-                )
+                raise ValueError(f"Invalid kernel_type: {self.kernel_type}")
 
-            # print(f"Minibatch {b}: {self.kernel_type} kernel has {len(kernel_list)} support kernels.")
-            kernels = torch.stack(kernel_list, dim=0)
+            kernels = torch.stack(kernel_list, dim=0)  # shape: (K_supports, O, D)
             batch_list.append(kernels)
-        batch_adj = torch.stack(batch_list, dim=0)
-        return batch_adj
+
+        batch_adj = torch.stack(batch_list, dim=0)  # shape: (B, K_supports, O, D)
+        return batch_adj.to(device="cuda")
 
     @staticmethod
-    def random_walk_normalize(A):  # asymmetric
-        d_inv = torch.pow(A.sum(dim=1), -1)  # OD matrix Ai,j sum on j (axis=1)
-        d_inv[torch.isinf(d_inv)] = 0.0
+    def random_walk_normalize(A):
+        row_sum = A.sum(dim=1)
+        d_inv = torch.where(row_sum > 0, 1.0 / row_sum, torch.zeros_like(row_sum))
         D = torch.diag(d_inv)
         P = torch.mm(D, A)
+        P[torch.isnan(P)] = 0.0
         return P
 
     @staticmethod
     def symmetric_normalize(A):
-        D = torch.diag(torch.pow(A.sum(dim=1), -0.5))
-        D = torch.where(torch.isfinite(D), D, torch.tensor(0.0))
+        row_sum = A.sum(dim=1)
+        d_inv_sqrt = torch.where(row_sum > 0, torch.pow(row_sum, -0.5), torch.zeros_like(row_sum))
+        D = torch.diag(d_inv_sqrt)
         A_norm = torch.mm(torch.mm(D, A), D)
+        A_norm[torch.isnan(A_norm)] = 0.0
         return A_norm
 
     @staticmethod
     def rescale_laplacian(L):
-        # rescale laplacian to arccos range [-1,1] for input to Chebyshev polynomials of the first kind
         try:
-            lambda_ = torch.eig(L)[0][:, 0]  # get the real parts of eigenvalues
-            lambda_max = lambda_.max()  # get the largest eigenvalue
-        except:
-            print(
-                "Eigen_value calculation didn't converge, using max_eigen_val=2 instead."
-            )
-            lambda_max = 2
-        L_rescaled = (2 / lambda_max) * L - torch.eye(L.shape[0])
-        return L_rescaled
+            lambda_ = torch.linalg.eigvals(L).real
+            lambda_max = lambda_.max().clamp(min=1e-5).item()
+        except Exception as e:
+            print("Eigenvalue calculation failed:", e)
+            lambda_max = 2.0
+        I = torch.eye(L.shape[0], device=L.device)
+        return (2.0 / lambda_max) * L - I
 
     def compute_chebyshev_polynomials(self, x, T_k):
-        # compute Chebyshev polynomials up to order k. Return a list of matrices.
-        # print(f"Computing Chebyshev polynomials up to order {self.K}.")
         for k in range(self.K + 1):
             if k == 0:
-                T_k.append(torch.eye(x.shape[0]))
+                T_k.append(torch.eye(x.shape[0], device=x.device))
             elif k == 1:
                 T_k.append(x)
             else:
-                T_k.append(2 * torch.mm(x, T_k[k - 1]) - T_k[k - 2])
+                T_next = 2 * torch.mm(x, T_k[k - 1]) - T_k[k - 2]
+                T_next[torch.isnan(T_next)] = 0.0
+                T_k.append(T_next)
         return T_k
+
 
 
 class BDGCN(nn.Module):  # 2DGCN: handling both static and dynamic graph input
     def __init__(
-        self, K: int, input_dim: int, hidden_dim: int, use_bias=True, activation=None
+        self, K: int, input_dim: int, hidden_dim: int, use_bias=True, activation=nn.ReLU
     ):
         super(BDGCN, self).__init__()
         self.K = K
@@ -324,8 +410,13 @@ class MPGCN(BaseModel):
 
         G_list = [
             self.G,
-            (self.adj_preprocessor.process(o).to(device="cuda"), self.adj_preprocessor.process(d).to(device="cuda")),
+            (
+                self.adj_preprocessor.process(o).to(device="cuda"),
+                self.adj_preprocessor.process(d).to(device="cuda"),
+            ),
         ]
+
+        assert G_list[1][0].isnan().any() == False
 
         assert (len(x_seq.shape) == 5) & (
             self.num_nodes == x_seq.shape[2] == x_seq.shape[3]
@@ -346,11 +437,14 @@ class MPGCN(BaseModel):
             gcn_in = lstm_out[:, -1, :].reshape(
                 batch_size, self.num_nodes, self.num_nodes, self.lstm_hidden_dim
             )
+
             for n in range(self.gcn_num_layers):
+                # print(G_list[m][0].isnan().any())
                 gcn_in = self.branch_models[m]["spatial"][n](gcn_in, G_list[m])
+
             fc_out = self.branch_models[m]["fc"](gcn_in)
             branch_out.append(fc_out)
-        
+
         # ensemble
         ensemble_out = torch.mean(torch.stack(branch_out, dim=-1), dim=-1)
         res = ensemble_out.permute(0, 3, 1, 2)

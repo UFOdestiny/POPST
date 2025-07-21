@@ -75,9 +75,9 @@ class GMEL(BaseModel):
         seq_len,
         horizon,
         g,
-        in_dim=128,
-        out_dim=128,
-        num_hidden=64,
+        in_dim=64,
+        out_dim=64,
+        num_hidden=32,
         num_layers=3,
         num_heads=6,
     ):
@@ -85,7 +85,7 @@ class GMEL(BaseModel):
         参数 T 表示输入的时间步数（即输入的第二个维度）。
         """
         super(GMEL, self).__init__(node_num, input_dim, output_dim)
-        # 用于将时间序列信息映射到 131 维特征（适配 GAT 的 in_dim）
+        # 用于将时间序列信息映射到 X 维特征（适配 GAT 的 in_dim）
         self.mlp_origin = nn.Linear(seq_len, in_dim)
         self.mlp_dest = nn.Linear(seq_len, in_dim)
 
@@ -97,7 +97,10 @@ class GMEL(BaseModel):
         self.out_dim = out_dim
 
         self.init = False
-        self.g = g
+        self.adj = g
+        self.g=None
+
+        
 
     def forward(self, x, label=None):
         """
@@ -108,9 +111,9 @@ class GMEL(BaseModel):
         """
         B, T, N_src, N_dst = x.shape
         if not self.init:
-            g = build_graph(self.g)
+            g = build_graph(self.adj)
             self.g = dgl.batch([g] * B).to(device="cuda")
-            self.init = True
+            # self.init = True
 
         # 对起点（源）分支：沿目的地维度取均值，得到 (B, T, N_src)
         origin_input = x.mean(dim=3)  # shape: (B, T, N_src)
