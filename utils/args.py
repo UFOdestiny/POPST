@@ -9,7 +9,7 @@ def get_public_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
 
-    parser.add_argument("--dataset", type=str, default="sz_taxi_od") # NYC
+    parser.add_argument("--dataset", type=str, default="nyc_subway_od") # NYC
     parser.add_argument("--years", type=str, default="2024")
     parser.add_argument("--model_name", type=str, default="")
 
@@ -22,7 +22,7 @@ def get_public_config():
     parser.add_argument("--output_dim", type=int, default=1)
 
     parser.add_argument("--max_epochs", type=int, default=1000)
-    parser.add_argument("--patience", type=int, default=200)
+    parser.add_argument("--patience", type=int, default=100)
     parser.add_argument("--normalize", type=bool, default=True)  # Z-Score
 
     parser.add_argument("--quantile", type=bool, default=False)

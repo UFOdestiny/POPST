@@ -18,7 +18,7 @@ class ARIMA(BaseModel):
         series_info: (b, i, j, series)
         """
         b, i, j, series = series_info
-        # print(b, i, j)
+        print(b, i, j)
         try:
             model = ARIMA(series, order=self.order)
             fitted = model.fit()

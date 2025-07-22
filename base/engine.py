@@ -184,7 +184,8 @@ class BaseEngine:
 
     def train(self):
         wait = 0
-        min_loss = np.inf
+        min_loss_val = np.inf
+        min_loss_test = np.inf
         for epoch in range(self._max_epochs):
             t1 = time.time()
             self.train_batch()
@@ -193,7 +194,13 @@ class BaseEngine:
             v1 = time.time()
             self.evaluate("val")
             v2 = time.time()
+
+            te1 = time.time()
+            self.evaluate("test", export=None, train_test=True)
+            te2 = time.time()
+
             valid_loss = self.metric.get_valid_loss()
+            test_loss = self.metric.get_test_loss()
 
             if self._lr_scheduler is None:
                 cur_lr = self._lrate
@@ -201,10 +208,20 @@ class BaseEngine:
                 cur_lr = self._lr_scheduler.get_last_lr()[0]
                 self._lr_scheduler.step()
 
-            msg = self.metric.get_epoch_msg(epoch + 1, cur_lr, t2 - t1, v2 - v1)
+            msg = self.metric.get_epoch_msg(
+                epoch + 1, cur_lr, t2 - t1, v2 - v1, te2 - te1
+            )
             self._logger.info(msg)
 
-            if valid_loss < min_loss:
+            if test_loss < min_loss_test:
+                self._logger.info(
+                    "Test loss decrease from {:.3f} to {:.3f}".format(
+                        min_loss_test, test_loss
+                    )
+                )
+                min_loss_test = test_loss
+
+            if valid_loss < min_loss_val:
                 if valid_loss == 0:
                     self._logger.info("Something went WRONG!")
                     exit()
@@ -213,25 +230,25 @@ class BaseEngine:
                 self.save_model(self._save_path)
                 self._logger.info(
                     "Val loss decrease from {:.3f} to {:.3f}".format(
-                        min_loss, valid_loss
+                        min_loss_val, valid_loss
                     )
                 )
-                min_loss = valid_loss
+                min_loss_val = valid_loss
                 wait = 0
             else:
                 wait += 1
                 if wait == self._patience:
                     self._logger.info(
                         "Early stop at epoch {}, loss = {:.6f}".format(
-                            epoch + 1, min_loss
+                            epoch + 1, min_loss_val
                         )
                     )
                     break
 
         self.evaluate("test", export=self.args.export)
 
-    def evaluate(self, mode, model_path=None, export=None):
-        if mode == "test":
+    def evaluate(self, mode, model_path=None, export=None, train_test=False):
+        if mode == "test" and train_test == False:
             if model_path:
                 self.load_exact_model(model_path)
             else:
@@ -274,7 +291,7 @@ class BaseEngine:
             self.metric.compute_one_batch(pred, label, mask_value, "valid", scale=scale)
 
         elif mode == "test":
-            self._logger.info(f"check mask value {mask_value}")
+            # self._logger.info(f"check mask value {mask_value}")
 
             for i in range(self.model.horizon):
                 s = scales[:, i, :].unsqueeze(1) if len(scales) > 0 else None
@@ -286,8 +303,9 @@ class BaseEngine:
                     scale=s,
                 )
 
-            for i in self.metric.get_test_msg():
-                self._logger.info(i)
+            if not train_test:
+                for i in self.metric.get_test_msg():
+                    self._logger.info(i)
 
             if export:
                 self.save_result(preds, labels)

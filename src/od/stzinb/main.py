@@ -43,7 +43,6 @@ def get_config():
     parser.add_argument("--clip_grad_value", type=float, default=5)
     args = parser.parse_args()
     # args.bs = 32
-
     args.model_name = "STZINB"
     log_dir = get_log_path(args)
     logger = get_logger(
@@ -113,6 +112,8 @@ def main():
         metric_list=["MAE", "MAPE", "RMSE"],
         args=args,
     )
+
+    
 
     if args.mode == "train":
         engine.train()

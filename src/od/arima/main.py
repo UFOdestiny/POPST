@@ -8,7 +8,7 @@ sys.path.append("/home/dy23a.fsu/st/")
 from base.engine import BaseEngine
 from base.quantile_engine import Quantile_Engine
 from src.od.ha.ha_engine import HA_Engine
-
+from arima_engine import ARIMA_Engine
 import torch
 
 torch.set_num_threads(8)
@@ -36,9 +36,9 @@ def get_config():
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=5e-4)
     args = parser.parse_args()
-
+    
+    args.mode="test"
     args.model_name = "ARIMA"
-    args.mode = "test"
     args.max_epochs = 1
     log_dir = get_log_path(args)
     logger = get_logger(
@@ -58,7 +58,8 @@ def main():
     data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, HA_Engine, Quantile_Engine)
+    args, engine_template = check_quantile(args, ARIMA_Engine, Quantile_Engine)
+    
     model = ARIMA(
         node_num=node_num,
         input_dim=args.input_dim,
