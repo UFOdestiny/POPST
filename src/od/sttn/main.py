@@ -17,7 +17,7 @@ from utils.args import get_public_config, get_log_path, print_args, check_quanti
 from utils.dataloader import load_adj_from_numpy, load_dataset, get_dataset_info
 from utils.log import get_logger
 from utils.graph_algo import normalize_adj_mx
-
+from sttn_engine import STTN_Engine
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -30,10 +30,10 @@ def set_seed(seed):
 def get_config():
     parser = get_public_config()
 
-    parser.add_argument("--rank_s", type=int, default=128)
-    parser.add_argument("--rank_t", type=int, default=128)
-    parser.add_argument("--hidden_dim_s", type=int, default=16)
-    parser.add_argument("--hidden_dim_t", type=int, default=16)
+    parser.add_argument("--rank_s", type=int, default=64)
+    parser.add_argument("--rank_t", type=int, default=64)
+    parser.add_argument("--hidden_dim_s", type=int, default=8)
+    parser.add_argument("--hidden_dim_t", type=int, default=8)
     parser.add_argument('--min_vec', type=float, default=1e-3)
 
     parser.add_argument("--step_size", type=int, default=10)
@@ -68,7 +68,7 @@ def main():
     gso = normalize_adj_mx(adj_mx, "uqgnn")[0]
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, STTN_Engine, Quantile_Engine)
 
     model = STTN(
         A=gso,

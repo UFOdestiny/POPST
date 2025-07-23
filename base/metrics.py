@@ -117,7 +117,7 @@ class Metrics:
 
         self.train_res = [[] for _ in range(self.N)]
         self.valid_res = [[] for _ in range(self.N)]
-        self.test_lst = [[] for _ in range(self.N)]
+        self.test_res = [[] for _ in range(self.N)]
         return msg
 
     def get_test_msg(self):

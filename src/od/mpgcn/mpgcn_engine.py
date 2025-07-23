@@ -49,8 +49,8 @@ class MPGCN_Engine(BaseEngine):
 
             self._iter_cnt += 1
 
-    def evaluate(self, mode, model_path=None, export=None):
-        if mode == "test":
+    def evaluate(self, mode, model_path=None, export=None, train_test=False):
+        if mode == "test" and train_test == False:
             if model_path:
                 self.load_exact_model(model_path)
             else:
@@ -102,8 +102,9 @@ class MPGCN_Engine(BaseEngine):
                     preds[:, i, :], labels[:, i, :], mask_value, "test", scale=s
                 )
 
-            for i in self.metric.get_test_msg():
-                self._logger.info(i)
+            if not train_test:
+                for i in self.metric.get_test_msg():
+                    self._logger.info(i)
 
             if export:
                 self.save_result(preds, labels)
