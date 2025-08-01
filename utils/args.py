@@ -9,7 +9,7 @@ def get_public_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
 
-    parser.add_argument("--dataset", type=str, default="sz_taxi_od") # NYC
+    parser.add_argument("--dataset", type=str, default="nyc_taxi_od") # NYC
     parser.add_argument("--years", type=str, default="2024")
     parser.add_argument("--model_name", type=str, default="")
 

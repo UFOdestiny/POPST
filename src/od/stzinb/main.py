@@ -30,10 +30,10 @@ def set_seed(seed):
 def get_config():
     parser = get_public_config()
 
-    parser.add_argument("--rank_s", type=int, default=256)
-    parser.add_argument("--rank_t", type=int, default=256)
-    parser.add_argument("--hidden_dim_s", type=int, default=32)
-    parser.add_argument("--hidden_dim_t", type=int, default=32)
+    parser.add_argument("--rank_s", type=int, default=32)
+    parser.add_argument("--rank_t", type=int, default=32)
+    parser.add_argument("--hidden_dim_s", type=int, default=16)
+    parser.add_argument("--hidden_dim_t", type=int, default=16)
 
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
