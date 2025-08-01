@@ -5,6 +5,7 @@ from torch.distributions.laplace import Laplace
 from torch.distributions.log_normal import LogNormal
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
+import torch.nn.functional as F
 
 zero = torch.tensor(0.0)
 
@@ -22,6 +23,7 @@ class Metrics:
             "COV": masked_coverage,
             "KL": masked_kl,
             "MGAU": mnormal_loss,
+            "Quantile": masked_quantile,
         }
         self.horizon = horizon
 
@@ -49,9 +51,10 @@ class Metrics:
         self.train_msg += "Te Loss: {:.3f}, "
         for i in self.metric_lst[1:]:
             self.train_msg += "Te " + i + ": {:.3f}, "
-        
-        self.train_msg += "LR: {:.4e}, Tr Time: {:.3f} s/epoch, V Time: {:.3f} s, Te Time: {:.3f} s"
 
+        self.train_msg += (
+            "LR: {:.4e}, Tr Time: {:.3f} s/epoch, V Time: {:.3f} s, Te Time: {:.3f} s"
+        )
 
     # quantile=None, upper=None, lower=None
     def compute_one_batch(self, preds, labels, null_val=None, mode="train", **kwargs):
@@ -71,11 +74,18 @@ class Metrics:
 
             elif fname in ["MPIW"]:
                 res = self.metric_func[i](kwargs["lower"], kwargs["upper"])
+
+            elif fname in ["Quantile"]:
+                res = self.metric_func[i](
+                    kwargs["lower"], preds, kwargs["upper"], labels
+                )
             else:
                 raise ValueError("Invalid metric name")
 
             if i == 0 and mode == "train":
+
                 grad_res = res
+
                 # res.backward()  # loss function
 
             if mode == "train":
@@ -112,7 +122,14 @@ class Metrics:
         test_lst = [np.mean(i) for i in self.test_res]
 
         msg = self.train_msg.format(
-            epoch, *train_lst, *valid_lst, *test_lst, lr, training_time, valid_time, test_time
+            epoch,
+            *train_lst,
+            *valid_lst,
+            *test_lst,
+            lr,
+            training_time,
+            valid_time,
+            test_time,
         )
 
         self.train_res = [[] for _ in range(self.N)]
@@ -223,7 +240,7 @@ def masked_kl(preds, labels, null_val):
     return torch.mean(loss)
 
 
-def masked_mpiw(lower, upper, null_val):
+def masked_mpiw(lower, upper, null_val=None):
     return torch.mean(upper - lower)
 
 
@@ -502,6 +519,32 @@ def masked_crps(preds, labels, null_val):
     loss = ps.crps_ensemble(labels.cpu().numpy(), preds.cpu().detach().numpy())
 
     return loss.mean()
+
+
+def masked_quantile(
+    y_lower,
+    y_middle,
+    y_upper,
+    y_true,
+    q_lower=0.1,
+    q_upper=0.9,
+    q_middle=0.5,
+    lam=1.0,
+):
+
+    def quantile_loss_(pred, target, quantile):
+        error = target - pred
+        return torch.max((quantile - 1) * error, quantile * error).mean()
+
+    def monotonicity_loss(y_lower, y_middle, y_upper, margin=0.0):
+        loss = F.relu(y_lower - y_middle + margin) + F.relu(y_middle - y_upper + margin)
+        return loss.mean()
+
+    loss_lower = quantile_loss_(y_lower, y_true, q_lower)
+    loss_middle = quantile_loss_(y_middle, y_true, q_middle)
+    loss_upper = quantile_loss_(y_upper, y_true, q_upper)
+    loss_monotonic = monotonicity_loss(y_lower, y_middle, y_upper)
+    return loss_lower + loss_middle + loss_upper + lam * loss_monotonic
 
 
 if __name__ == "__main__":

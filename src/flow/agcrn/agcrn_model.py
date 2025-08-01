@@ -22,7 +22,7 @@ class AGCRN(BaseModel):
         output, _ = self.encoder(source, init_state, self.node_embed)
         output = output[:, -1:, :, :]
         pred = self.end_conv(output)
-        return pred.permute(0,3,2,1)
+        return pred.permute(0,1,2,3)
 
 
 class AVWDCRNN(nn.Module):
@@ -103,5 +103,4 @@ class AVWGCN(nn.Module):
         x_g = torch.einsum("knm,bmc->bknc", supports, x)
         x_g = x_g.permute(0, 2, 1, 3)
         x_gconv = torch.einsum('bnki,nkio->bno', x_g, weights) + bias
-
         return x_gconv

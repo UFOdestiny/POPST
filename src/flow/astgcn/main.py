@@ -76,14 +76,14 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, ASTGCN_Engine, ASTGCN_Engine_Quantile)
-    # if args.quantile:
-    #     args.output_dim=3
+    if args.quantile:
+        args.output_dim=3
 
     model = ASTGCN(
         node_num=node_num,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
-        horizon=args.input_dim,
+        horizon=args.horizon,
         device=args.device,
         cheb_poly=cheb_poly,
         order=args.order,

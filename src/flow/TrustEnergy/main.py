@@ -8,7 +8,7 @@ import numpy as np
 sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 import torch
 
-from uself_model import USELF
+from flow.TrustEnergy.trustenergy_model import TrustE
 from base.metrics import masked_mae
 
 torch.set_num_threads(3)
@@ -43,7 +43,7 @@ def get_config():
     parser.add_argument('--clip_grad_value', type=float, default=0)
 
     args = parser.parse_args()
-    args.model_name = "USELF"
+    args.model_name = "TrustEnergy"
 
 
     log_dir = get_log_path(args)
@@ -73,7 +73,7 @@ def main():
 
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
 
-    model = USELF(
+    model = TrustE(
     A=gso,
     seq_len=args.seq_len,
     node_num=node_num,

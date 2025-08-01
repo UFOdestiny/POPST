@@ -9,12 +9,12 @@ def get_public_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
 
-    parser.add_argument("--dataset", type=str, default="NYISO") # NYC
+    parser.add_argument("--dataset", type=str, default="NYISO")  # NYC
     parser.add_argument("--years", type=str, default="2024")
     parser.add_argument("--model_name", type=str, default="")
 
-    parser.add_argument("--bs", type=int, default=64)
-    parser.add_argument("--seq_len", type=int, default=12)  # flow 12 od 6
+    parser.add_argument("--bs", type=int, default=512)
+    parser.add_argument("--seq_len", type=int, default=6)  # flow 12 od 6
     parser.add_argument("--horizon", type=int, default=1)
 
     parser.add_argument("--feature", type=int, default=1)
@@ -22,10 +22,10 @@ def get_public_config():
     parser.add_argument("--output_dim", type=int, default=1)
 
     parser.add_argument("--max_epochs", type=int, default=500)
-    parser.add_argument("--patience", type=int, default=100)
+    parser.add_argument("--patience", type=int, default=50)
     parser.add_argument("--normalize", type=bool, default=True)  # Z-Score
 
-    parser.add_argument("--quantile", type=bool, default=False)
+    parser.add_argument("--quantile", type=bool, default=True)
     parser.add_argument("--quantile_alpha", type=float, default=0.1)
     parser.add_argument("--hour_day_month", type=bool, default=False)
 

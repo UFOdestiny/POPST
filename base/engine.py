@@ -264,7 +264,7 @@ class BaseEngine:
             for X, label in self._dataloader[mode + "_loader"].get_iterator():
                 # X (b, t, n, f), label (b, t, n, 1)
                 X, label = self._to_device(self._to_tensor([X, label]))
-                pred = self.model(X)
+                pred = self._predict(X)
                 scale = None
                 if type(pred) == tuple:
                     pred, scale = pred  # mean scale
@@ -288,11 +288,11 @@ class BaseEngine:
             mask_value = labels.min()
 
         if mode == "val":
-            self.metric.compute_one_batch(pred, label, mask_value, "valid", scale=scale)
+            self.metric.compute_one_batch(
+                preds, labels, mask_value, "valid", scale=scale
+            )
 
-        elif mode == "test":
-            # self._logger.info(f"check mask value {mask_value}")
-
+        elif mode == "test" or mode == "export":
             for i in range(self.model.horizon):
                 s = scales[:, i, :].unsqueeze(1) if len(scales) > 0 else None
                 self.metric.compute_one_batch(

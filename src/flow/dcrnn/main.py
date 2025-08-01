@@ -1,18 +1,16 @@
 import os
 import sys
 import numpy as np
-
+import torch
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
-
-import torch
 
 torch.set_num_threads(3)
 
 from base.engine import BaseEngine
 from base.quantile_engine import Quantile_Engine
 from dcrnn_model import DCRNN
-from dcrnn_engine import DCRNN_Engine
+from dcrnn_engine import DCRNN_Engine,DCRNN_Engine_Quantile
 from utils.args import check_quantile, get_public_config, get_log_path, print_args
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from base.metrics import masked_mae
@@ -44,7 +42,10 @@ def get_config():
     args.model_name = "DCRNN"
 
     log_dir = get_log_path(args)
-    logger = get_logger(log_dir, __name__, "record_s{}.log".format(args.seed))
+    logger = get_logger(
+        log_dir,
+        __name__,
+    )
     print_args(logger, args)  # logger.info(args)
 
     return args, log_dir, logger
@@ -60,11 +61,16 @@ def main():
     adj_mx = load_adj_from_numpy(adj_path)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
+    args, engine_template = check_quantile(args, DCRNN_Engine, DCRNN_Engine_Quantile)
+    if args.quantile:
+        args.output_dim=3
+        args.horizon=1
+        # args.input_dim=1
 
     model = DCRNN(
         node_num=node_num,
         input_dim=args.input_dim,
-        output_dim=args.input_dim,
+        output_dim=args.output_dim,
         device=device,
         adj_mx=adj_mx,
         n_filters=args.n_filters,
@@ -83,7 +89,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones=steps, gamma=0.1
     )
-    args, engine_template = check_quantile(args, DCRNN_Engine, Quantile_Engine)
+    
     engine = engine_template(
         device=device,
         model=model,

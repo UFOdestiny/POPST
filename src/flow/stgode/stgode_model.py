@@ -79,7 +79,7 @@ class STGODE(BaseModel):
         x = self.pred(x)
         x = x.unsqueeze(-1).transpose(1, 2)
 
-        return x.permute(0, 3, 2, 1)
+        return x.permute(0, 1, 2, 3)
 
 
 class STGCNBlock(nn.Module):

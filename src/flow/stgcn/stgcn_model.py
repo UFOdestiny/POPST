@@ -12,7 +12,9 @@ class STConvBlock(nn.Module):
     def __init__(self, Kt, Ks, node_num, last_block_channel, channels, gso, dropout):
         super(STConvBlock, self).__init__()
         # print(channels)
-        self.tmp_conv1 = TemporalConvLayer(Kt, last_block_channel, channels[0], node_num)
+        self.tmp_conv1 = TemporalConvLayer(
+            Kt, last_block_channel, channels[0], node_num
+        )
         self.graph_conv = GraphConvLayer(channels[0], channels[1], Ks, gso)
         self.tmp_conv2 = TemporalConvLayer(Kt, channels[1], channels[2], node_num)
         self.tc2_ln = nn.LayerNorm([node_num, channels[2]])
@@ -33,7 +35,9 @@ class STConvBlock(nn.Module):
 class OutputBlock(nn.Module):
     def __init__(self, Ko, last_block_channel, channels, end_channel, node_num):
         super(OutputBlock, self).__init__()
-        self.tmp_conv1 = TemporalConvLayer(Ko, last_block_channel, channels[0], node_num)
+        self.tmp_conv1 = TemporalConvLayer(
+            Ko, last_block_channel, channels[0], node_num
+        )
         self.fc1 = nn.Linear(in_features=channels[0], out_features=channels[1])
         self.fc2 = nn.Linear(in_features=channels[1], out_features=end_channel)
 
@@ -63,14 +67,19 @@ class TemporalConvLayer(nn.Module):
         self.node_num = node_num
         self.align = Align(c_in, c_out)
         self.sigmoid = nn.Sigmoid()
-        self.causal_conv = CausalConv2d(in_channels=c_in, out_channels=2 * c_out, kernel_size=(Kt, 1),
-                                        enable_padding=False, dilation=1)
+        self.causal_conv = CausalConv2d(
+            in_channels=c_in,
+            out_channels=2 * c_out,
+            kernel_size=(Kt, 1),
+            enable_padding=False,
+            dilation=1,
+        )
 
     def forward(self, x):
-        x_in = self.align(x)[:, :, self.Kt - 1:, :]
+        x_in = self.align(x)[:, :, self.Kt - 1 :, :]
         x_causal_conv = self.causal_conv(x)
         x_p = x_causal_conv[:, : self.c_out, :, :]
-        x_q = x_causal_conv[:, -self.c_out:, :, :]
+        x_q = x_causal_conv[:, -self.c_out :, :, :]
         x = torch.mul((x_p + x_in), self.sigmoid(x_q))
         return x
 
@@ -115,24 +124,28 @@ class ChebGraphConv(nn.Module):
 
         if self.Ks - 1 < 0:
             raise ValueError(
-                f'ERROR: the graph convolution kernel size Ks has to be a positive integer, but received {self.Ks}.')
+                f"ERROR: the graph convolution kernel size Ks has to be a positive integer, but received {self.Ks}."
+            )
         elif self.Ks - 1 == 0:
             x_0 = x
             x_list = [x_0]
         elif self.Ks - 1 == 1:
             x_0 = x
-            x_1 = torch.einsum('hi,btij->bthj', self.gso, x)
+            x_1 = torch.einsum("hi,btij->bthj", self.gso, x)
             x_list = [x_0, x_1]
         elif self.Ks - 1 >= 2:
             x_0 = x
-            x_1 = torch.einsum('hi,btij->bthj', self.gso, x)
+            x_1 = torch.einsum("hi,btij->bthj", self.gso, x)
             x_list = [x_0, x_1]
             for k in range(2, self.Ks):
-                x_list.append(torch.einsum('hi,btij->bthj', 2 * self.gso, x_list[k - 1]) - x_list[k - 2])
+                x_list.append(
+                    torch.einsum("hi,btij->bthj", 2 * self.gso, x_list[k - 1])
+                    - x_list[k - 2]
+                )
 
         x = torch.stack(x_list, dim=2)
 
-        cheb_graph_conv = torch.einsum('btkhi,kij->bthj', x, self.weight)
+        cheb_graph_conv = torch.einsum("btkhi,kij->bthj", x, self.weight)
         cheb_graph_conv = torch.add(cheb_graph_conv, self.bias)
         return cheb_graph_conv
 
@@ -142,32 +155,61 @@ class Align(nn.Module):
         super(Align, self).__init__()
         self.c_in = c_in
         self.c_out = c_out
-        self.align_conv = nn.Conv2d(in_channels=c_in, out_channels=c_out, kernel_size=(1, 1))
+        self.align_conv = nn.Conv2d(
+            in_channels=c_in, out_channels=c_out, kernel_size=(1, 1)
+        )
 
     def forward(self, x):
         if self.c_in > self.c_out:
             x = self.align_conv(x)
         elif self.c_in < self.c_out:
             batch_size, _, timestep, node_num = x.shape
-            x = torch.cat([x, torch.zeros([batch_size, self.c_out - self.c_in, timestep, node_num]).to(x)], dim=1)
+            x = torch.cat(
+                [
+                    x,
+                    torch.zeros(
+                        [batch_size, self.c_out - self.c_in, timestep, node_num]
+                    ).to(x),
+                ],
+                dim=1,
+            )
         else:
             x = x
         return x
 
 
 class CausalConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, enable_padding=False, dilation=1, groups=1,
-                 bias=True):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        enable_padding=False,
+        dilation=1,
+        groups=1,
+        bias=True,
+    ):
         kernel_size = nn.modules.utils._pair(kernel_size)
         stride = nn.modules.utils._pair(stride)
         dilation = nn.modules.utils._pair(dilation)
         if enable_padding == True:
-            self.__padding = [int((kernel_size[i] - 1) * dilation[i]) for i in range(len(kernel_size))]
+            self.__padding = [
+                int((kernel_size[i] - 1) * dilation[i]) for i in range(len(kernel_size))
+            ]
         else:
             self.__padding = 0
         self.left_padding = nn.modules.utils._pair(self.__padding)
-        super(CausalConv2d, self).__init__(in_channels, out_channels, kernel_size, stride=stride, padding=0,
-                                           dilation=dilation, groups=groups, bias=bias)
+        super(CausalConv2d, self).__init__(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=0,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+        )
 
     def forward(self, input):
         if self.__padding != 0:
@@ -182,14 +224,24 @@ class STGCN_NB(BaseModel):
         # print(blocks)
         modules = []
         for l in range(len(blocks) - 3):
-            modules.append(STConvBlock(Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout))
+            modules.append(
+                STConvBlock(
+                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
+                )
+            )
         self.st_blocks = nn.Sequential(*modules)
         Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
         self.Ko = Ko
 
-        self.output_n = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
-        self.output_p = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
-        self.output_pi = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
+        self.output_n = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+        )
+        self.output_p = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+        )
+        self.output_pi = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+        )
 
         # self.v = torch.tensor(0.9999)
 
@@ -205,7 +257,7 @@ class STGCN_NB(BaseModel):
         # p = F.sigmoid(p)
         # pi = F.sigmoid(pi)
 
-        n = F.softplus(n)+1e-6
+        n = F.softplus(n) + 1e-6
         p = torch.clamp(F.sigmoid(p), min=1e-4, max=1 - 1e-4)  # 避免 p 过于接近 0 或 1
         pi = torch.clamp(F.sigmoid(pi), min=1e-4, max=1 - 1e-4)  # 避免 pi 过于接近边界
 
@@ -218,13 +270,21 @@ class STGCN_Gaussian(BaseModel):
         # print(blocks)
         modules = []
         for l in range(len(blocks) - 3):
-            modules.append(STConvBlock(Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout))
+            modules.append(
+                STConvBlock(
+                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
+                )
+            )
         self.st_blocks = nn.Sequential(*modules)
         Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
         self.Ko = Ko
 
-        self.output = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
-        self.output2 = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
+        self.output = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+        )
+        self.output2 = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+        )
 
     def forward(self, x, label, i=None):  # (b, t, n, f)
         x = x.permute(0, 3, 1, 2)  # b,f,t,n
@@ -240,38 +300,46 @@ class STGCN_Gaussian(BaseModel):
 
 
 class STGCN_mGau(BaseModel):
-    def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon,min_vec, **args):
+    def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, min_vec, **args):
         super(STGCN_mGau, self).__init__(**args)
         # print(blocks)
         modules = []
         # modules2 = []
         for l in range(len(blocks) - 3):
-            modules.append(STConvBlock(Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout))
+            modules.append(
+                STConvBlock(
+                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
+                )
+            )
             # modules2.append(STConvBlock(Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout))
-        
+
         self.st_blocks = nn.Sequential(*modules)
         # self.st_blocks2 = nn.Sequential(*modules2)
-        
+
         Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
         self.Ko = Ko
 
-        self.output_mu = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
+        self.output_mu = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+        )
 
         self.half = (feature + 1) * feature // 2
-        self.full = feature ** 2
+        self.full = feature**2
         self.feature = feature
         self.idx_up = torch.triu_indices(self.feature, self.feature)
         self.idx_diag = list(range(self.feature))
 
-        self.output_sigma = OutputBlock(Ko, blocks[-3][-1], blocks[-2], self.half, self.node_num)
-        
+        self.output_sigma = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], self.half, self.node_num
+        )
+
         # NYC: 1E-6 NYC M: 1e-5  SZ: 1e-1 Chicago: 1e-4
         self.min_vec = min_vec
         self.horizon = horizon
 
     def forward(self, x, label, i=None):  # (b, t, n, f)
         origin_x = x.permute(0, 3, 1, 2)  # b,f,t,n
-        
+
         x = self.st_blocks(origin_x)
 
         mu = self.output_mu(x).transpose(2, 3)
@@ -282,7 +350,9 @@ class STGCN_mGau(BaseModel):
 
         # print(f"mu min:{mu.min()}, sigma min:{pd_matrix.min()}")
 
-        z = torch.zeros(*sigma.shape[:3], self.feature, self.feature).to(device=sigma.device)
+        z = torch.zeros(*sigma.shape[:3], self.feature, self.feature).to(
+            device=sigma.device
+        )
         z[..., self.idx_up[0], self.idx_up[1]] = sigma[..., :]
         z[..., self.idx_up[1], self.idx_up[0]] = sigma[..., :]
 
@@ -305,7 +375,7 @@ class STGCN_mGau(BaseModel):
 
         # 1. matrix_exp
         # pd_matrix = torch.linalg.matrix_exp(z)
-        
+
         # 2. Symmetrize and ensure positive definiteness
         eigval, eigvec = torch.linalg.eigh(z)
         clamp_eigval = torch.clamp(eigval, min=self.min_vec)
@@ -319,27 +389,33 @@ class STGCN_mGau(BaseModel):
 
 
 class STGCN(BaseModel):
-    '''
+    """
     Reference code: https://github.com/hazdzz/STGCN
-    '''
+    """
 
     def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, **args):
         super(STGCN, self).__init__(**args)
         # print(blocks)
         modules = []
         for l in range(len(blocks) - 3):
-            modules.append(STConvBlock(Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout))
+            modules.append(
+                STConvBlock(
+                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
+                )
+            )
         self.st_blocks = nn.Sequential(*modules)
         Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
         self.Ko = Ko
         if self.Ko > 1:
             # self.output = OutputBlock(Ko, blocks[-3][-1], blocks[-2], blocks[-1][0], self.node_num, dropout)
-            self.output = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
+            self.output = OutputBlock(
+                Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+            )
         elif self.Ko == 0:
             self.fc1 = nn.Linear(in_features=blocks[-3][-1], out_features=blocks[-2][0])
             self.fc2 = nn.Linear(in_features=blocks[-2][0], out_features=blocks[-1][0])
             self.relu = nn.ReLU()
-        
+
         self.horizon = horizon
 
     def forward(self, x, label=None):  # (b, t, n, f)
@@ -376,13 +452,21 @@ class STGCN_mNB(BaseModel):
         # print(blocks)
         modules = []
         for l in range(len(blocks) - 3):
-            modules.append(STConvBlock(Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout))
+            modules.append(
+                STConvBlock(
+                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
+                )
+            )
         self.st_blocks = nn.Sequential(*modules)
         Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
         self.Ko = Ko
 
-        self.output = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
-        self.output2 = OutputBlock(Ko, blocks[-3][-1], blocks[-2], feature, self.node_num)
+        self.output = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+        )
+        self.output2 = OutputBlock(
+            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+        )
         self.horizon = horizon
 
     def forward(self, x, label, i=None):  # (b, t, n, f)

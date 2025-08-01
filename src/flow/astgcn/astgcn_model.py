@@ -24,8 +24,8 @@ class ASTGCN(BaseModel):
             x = block(x)
 
         output = self.final_conv(x.permute(0, 3, 1, 2))#[:, :, :, -1]  # (b, t, n)
-        # print(output.shape)
-        return output.permute(0,3,2,1)
+        # print(self.horizon,output.shape)
+        return output.permute(0,1,2,3)
 
 
 class ASTGCN_block(nn.Module):

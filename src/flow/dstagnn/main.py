@@ -44,6 +44,9 @@ def get_config():
     args = parser.parse_args()
 
     args.model_name = "DSTAGNN"
+    
+    args.seq_len=7
+
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,

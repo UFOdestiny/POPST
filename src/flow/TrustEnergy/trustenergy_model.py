@@ -464,11 +464,11 @@ class HieDecoder(nn.Module):
             current_input = state
         return current_input, output_hidden
 
-class USELF(BaseModel):
+class TrustE(BaseModel):
     def __init__(self, A, node_num, hidden_dim_t, hidden_dim_s, rank_t, rank_s,
                  num_timesteps_input, num_timesteps_output, device, input_dim, output_dim, seq_len,
                  node_embedding_dim=16, embedding_dim = 12, **args):
-        super(USELF, self).__init__(node_num, input_dim, output_dim, **args)
+        super(TrustE, self).__init__(node_num, input_dim, output_dim, **args)
         self.node_num=node_num
         self.num_feature = input_dim
         self.seq_len = seq_len

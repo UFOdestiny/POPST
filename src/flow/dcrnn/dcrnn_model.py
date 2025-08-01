@@ -379,7 +379,7 @@ class DCRNN(BaseModel):
 
         self.decoder = DCGRUDecoder(device=device,
                                     node_num=self.node_num,
-                                    input_dim=self.output_dim,
+                                    input_dim=self.input_dim,
                                     hid_dim=n_filters,
                                     output_dim=self.output_dim,
                                     max_diffusion_step=max_diffusion_step,
@@ -409,10 +409,10 @@ class DCRNN(BaseModel):
 
     def forward(self, source, target, iter=None):  # (b, t, n, f)
         b, t, n, f = source.shape
-        go_symbol = torch.zeros(1, b, self.node_num, self.output_dim).to(self.device)
+        go_symbol = torch.zeros(1, b, self.node_num, self.input_dim).to(self.device)
 
         source = torch.transpose(source, dim0=0, dim1=1)
-        target = torch.transpose(target[..., :self.output_dim], dim0=0, dim1=1)
+        target = torch.transpose(target[..., :self.input_dim], dim0=0, dim1=1)
         target = torch.cat([go_symbol, target], dim=0)
 
         init_hidden_state = self.encoder.init_hidden(b).to(self.device)
@@ -422,8 +422,9 @@ class DCRNN(BaseModel):
             (self.training and self.use_curriculum_learning) else 0
 
         outputs = self.decoder(target, self.supports, context, teacher_forcing_ratio)
+
         o = outputs[1:, :, :].permute(1, 0, 2).reshape(b, self.horizon, n, self.output_dim)
-        return o
+        return o.permute(0,3,2,1)
 
 
 class DCRNNEncoder(nn.Module):

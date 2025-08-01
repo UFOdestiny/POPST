@@ -72,7 +72,7 @@ def main():
         output_dim=args.output_dim,
         A_sp=sp_matrix,
         A_se=se_matrix,
-        horizon=args.input_dim,
+        horizon=args.horizon,
         seq_len=args.seq_len
     )
 
