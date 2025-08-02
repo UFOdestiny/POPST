@@ -526,8 +526,8 @@ def masked_quantile(
     y_middle,
     y_upper,
     y_true,
-    q_lower=0.1,
-    q_upper=0.9,
+    q_lower=0.05,
+    q_upper=0.95,
     q_middle=0.5,
     lam=1.0,
 ):

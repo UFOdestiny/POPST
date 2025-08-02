@@ -75,7 +75,7 @@ def main():
     cl_step = args.cl_epoch * dataloader["train_loader"].num_batch
     warm_step = args.warm_epoch * dataloader["train_loader"].num_batch
 
-    # args, engine_template = check_quantile(args, D2STGNN_Engine, AGCRN_Engine_Quantile)
+    args, engine_template = check_quantile(args, D2STGNN_Engine, AGCRN_Engine_Quantile)
 
     model = D2STGNN(
         node_num=node_num,
@@ -91,7 +91,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones=[1, 38, 46, 54, 62, 70, 80], gamma=0.5
     )
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    # args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
     engine = engine_template(
         device=device,
         model=model,

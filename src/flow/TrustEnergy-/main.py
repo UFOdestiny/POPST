@@ -1,10 +1,12 @@
 import os
 import sys
 import numpy as np
-import torch
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
+import torch
 
+from trustenergy_model import TrustE
+from trustenergy_engine import TrustE_Engine
 from base.metrics import masked_mae
 
 torch.set_num_threads(3)
@@ -14,8 +16,7 @@ from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from utils.log import get_logger
 from base.engine import BaseEngine
 from base.quantile_engine import Quantile_Engine
-from trustenergy_model import TrustE
-from trustenergy_engine import TrustE_Engine_Quantile
+
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -33,16 +34,15 @@ def get_config():
     parser.add_argument("--hidden_dim_s", type=int, default=64)
     parser.add_argument("--hidden_dim_t", type=int, default=64)
 
-    parser.add_argument("--step_size", type=int, default=20)
+    parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=5e-4)
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--clip_grad_value", type=float, default=0)
-    parser.add_argument('--min_vec', type=float, default=1e-6)
 
     args = parser.parse_args()
-    args.model_name = "TrustEnergy"
+    args.model_name = "TrustEnergy_TEST"
     args.dataset="NYISO_HDM"
     args.hour_day_month=True
 
@@ -71,7 +71,7 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
 
-    args, engine_template = check_quantile(args, BaseEngine, TrustE_Engine_Quantile)
+    args, engine_template = check_quantile(args, BaseEngine, TrustE_Engine)
 
     model = TrustE(
         A=gso,
@@ -86,8 +86,7 @@ def main():
         device=device,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
-        min_vec=args.min_vec,
-        horizon=args.horizon
+        
     )
 
     loss_fn = "MAE"
