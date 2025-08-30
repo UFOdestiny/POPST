@@ -41,7 +41,7 @@ def get_config():
     args = parser.parse_args()
 
     args.model_name = "HMDLF"
-    args.bs = 16
+    
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,

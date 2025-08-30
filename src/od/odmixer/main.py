@@ -1,23 +1,23 @@
 import os
 import sys
 
-
-
-sys.path.append(os.path.abspath(__file__ + '/../../../../'))
+sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 
-from base.quantile_engine import Quantile_Engine
-import torch
+
 import numpy as np
+import torch
 
 torch.set_num_threads(8)
 
-from switch_model import SWITCH
+from base.quantile_engine import Quantile_Engine
+from odmixer_model import ODMixer
 from base.engine import BaseEngine
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
-from utils.dataloader import load_adj_from_numpy, load_dataset, get_dataset_info
-from utils.log import get_logger
+from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from utils.graph_algo import normalize_adj_mx
+from utils.log import get_logger
+
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -29,30 +29,20 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-
-    parser.add_argument(
-        "--gcn",
-        type=dict,
-        default={"in_channel": 6, "out_channel": 256, "hidden_channel": 128},
-    )
-    parser.add_argument(
-        "--tcn",
-        type=dict,
-        default={"in_channel": 1, "out_channel": 1, "kernel_size": 3, "dilation": 1},
-    )
-    parser.add_argument("--num_trans", type=int, default=1)
-    parser.add_argument("--node_list", type=list, default=[])
+    parser.add_argument("--hid_dim", type=int, default=8)
+    parser.add_argument("--layer_nums", type=int, default=3)
 
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
-    parser.add_argument("--wdecay", type=float, default=1e-4)
-    parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--clip_grad_value", type=float, default=5)
+    parser.add_argument("--wdecay", type=float, default=5e-4)
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--clip_grad_value", type=float, default=0)
     args = parser.parse_args()
+    args.model_name = "ODMixer"
 
-    args.model_name = "SWITCH_OD"
     log_dir = get_log_path(args)
+
     logger = get_logger(
         log_dir,
         __name__,
@@ -61,24 +51,36 @@ def get_config():
 
     return args, log_dir, logger
 
-
 def main():
     args, log_dir, logger = get_config()
     set_seed(args.seed)
-    device = torch.device(args.device)
-
+    device = torch.device(0)
     data_path, adj_path, node_num = get_dataset_info(args.dataset)
-    args.node_list = [node_num]
+    args.feature = node_num
+    args.input_dim = node_num
 
     adj_mx = load_adj_from_numpy(adj_path)
-    adj = normalize_adj_mx(adj_mx, 'scalap')[0]
-    adj = torch.tensor(adj).to(device)
+    adj_mx = adj_mx - np.eye(node_num)
 
+    gso = normalize_adj_mx(adj_mx, "scalap")[0]
+    gso = torch.tensor(gso).to(device)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
+
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
 
-    model = SWITCH(node_num,adj,args)
+    model = ODMixer(
+        node_num=node_num,
+        input_dim=node_num,
+        output_dim=args.output_dim,
+        dropout=args.dropout,
+        feature=args.feature,
+        horizon=args.horizon,
+
+        seq_len=args.seq_len,
+        hid_dim=args.hid_dim,
+        layer_nums=args.layer_nums,
+    )
 
     loss_fn = "MSE"
     optimizer = torch.optim.Adam(

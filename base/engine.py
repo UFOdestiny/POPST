@@ -32,20 +32,16 @@ class BaseEngine:
         metric_list=None,
     ):
         super().__init__()
+
         self._normalize = normalize
         self._device = device
-        self.model = model
-        self.model.to(self._device)
-
         self._dataloader = dataloader
         self._scaler = scaler
-
         self._loss_fn = loss_fn
         self._lrate = lrate
         self._optimizer = optimizer
         self._lr_scheduler = scheduler
         self._clip_grad_value = clip_grad_value
-
         self._max_epochs = max_epochs
         self._patience = patience
         self._iter_cnt = 0
@@ -53,6 +49,14 @@ class BaseEngine:
         self._logger = logger
         self._seed = seed
         self.args = args
+
+        self.model = model
+        self.model.to(self._device)
+
+        # metric
+        if metric_list is None:
+            metric_list = ["MAE", "MAPE", "RMSE", "KL", "CRPS"]
+        self.metric = Metrics(self._loss_fn, metric_list, self.model.horizon)
 
         self._logger.info("The number of parameters: {}".format(self.model.param_num()))
 
@@ -70,10 +74,7 @@ class BaseEngine:
         self.upper_bound = 1 - self.alpha / 2
         self.hour_day_month = hour_day_month
 
-        # metric
-        if metric_list is None:
-            metric_list = ["MAE", "MAPE", "RMSE", "KL", "CRPS"]
-        self.metric = Metrics(self._loss_fn, metric_list, self.model.horizon)
+
 
     def split_hour_day_month(self, X, Y):
         data = X[..., 0].unsqueeze(-1)

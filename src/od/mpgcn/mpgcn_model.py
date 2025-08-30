@@ -393,19 +393,13 @@ class MPGCN(BaseModel):
             hidden_list.append(hidden)
         return hidden_list
 
-    def forward(self, x_seq: torch.Tensor, o, d):  # , G_list: list
-        """
-        :param x_seq: (batch, seq, O, D, 1)
-        :param G_list: static graph (K, N, N); dynamic OD graph tuple ((batch, K, N, N), (batch, K, N, N))
-        :return:
-        """
-        x_seq = x_seq.unsqueeze(4)
+    def forward(self, x_seq, o, d):
+        x_seq = x_seq.unsqueeze(4)  # (batch, seq, N, N, input_dim)
 
         if self.G_tensor is None:
             self.G = self.adj_preprocessor.process(
                 torch.from_numpy(self.G).float().unsqueeze(dim=0)
-            ).squeeze(dim=0)
-            self.G.to(device="cuda")
+            ).squeeze(dim=0).to(device="cuda")
             self.G_tensor = 1
 
         G_list = [
@@ -416,30 +410,40 @@ class MPGCN(BaseModel):
             ),
         ]
 
-        assert G_list[1][0].isnan().any() == False
+        batch_size, seq_len, N1, N2, i = x_seq.shape
+        assert N1 == N2 == self.num_nodes
 
-        assert (len(x_seq.shape) == 5) & (
-            self.num_nodes == x_seq.shape[2] == x_seq.shape[3]
-        )
-        assert len(G_list) == self.M
-        batch_size, seq_len, _, _, i = x_seq.shape
         hidden_list = self.init_hidden_list(batch_size)
 
+        # flatten nodes for LSTM
         lstm_in = x_seq.permute(0, 2, 3, 1, 4).reshape(
             batch_size * (self.num_nodes**2), seq_len, i
         )
-        branch_out = list()
-        for m in range(self.M):
-            lstm_out, hidden_list[m] = self.branch_models[m]["temporal"](
-                lstm_in, hidden_list[m]
-            )
 
-            gcn_in = lstm_out[:, -1, :].reshape(
-                batch_size, self.num_nodes, self.num_nodes, self.lstm_hidden_dim
-            )
+        branch_out = []
+
+        max_batch = 1024
+        for m in range(self.M):
+            outputs_chunks = []
+
+            B_total = lstm_in.size(0)
+            for start in range(0, B_total, max_batch):
+                end = min(start + max_batch, B_total)
+                chunk = lstm_in[start:end].contiguous()  # [chunk_batch, seq_len, input_size]
+
+                # hidden 按 chunk 初始化
+                h = torch.zeros(self.lstm_num_layers, chunk.size(0), self.lstm_hidden_dim, device=chunk.device)
+                c = torch.zeros(self.lstm_num_layers, chunk.size(0), self.lstm_hidden_dim, device=chunk.device)
+
+                lstm_out_chunk, (h, c) = self.branch_models[m]["temporal"](chunk, (h, c))
+                outputs_chunks.append(lstm_out_chunk)
+
+            lstm_out = torch.cat(outputs_chunks, dim=0)
+
+            # reshape for GCN
+            gcn_in = lstm_out[:, -1, :].reshape(batch_size, self.num_nodes, self.num_nodes, self.lstm_hidden_dim)
 
             for n in range(self.gcn_num_layers):
-                # print(G_list[m][0].isnan().any())
                 gcn_in = self.branch_models[m]["spatial"][n](gcn_in, G_list[m])
 
             fc_out = self.branch_models[m]["fc"](gcn_in)
@@ -448,4 +452,60 @@ class MPGCN(BaseModel):
         # ensemble
         ensemble_out = torch.mean(torch.stack(branch_out, dim=-1), dim=-1)
         res = ensemble_out.permute(0, 3, 1, 2)
-        return res  # match dim for single-step pred
+        return res
+
+    # def forward(self, x_seq: torch.Tensor, o, d):  # , G_list: list
+    #     """
+    #     :param x_seq: (batch, seq, O, D, 1)
+    #     :param G_list: static graph (K, N, N); dynamic OD graph tuple ((batch, K, N, N), (batch, K, N, N))
+    #     :return:
+    #     """
+    #     x_seq = x_seq.unsqueeze(4)
+
+    #     if self.G_tensor is None:
+    #         self.G = self.adj_preprocessor.process(
+    #             torch.from_numpy(self.G).float().unsqueeze(dim=0)
+    #         ).squeeze(dim=0)
+    #         self.G.to(device="cuda")
+    #         self.G_tensor = 1
+
+    #     G_list = [
+    #         self.G,
+    #         (
+    #             self.adj_preprocessor.process(o).to(device="cuda"),
+    #             self.adj_preprocessor.process(d).to(device="cuda"),
+    #         ),
+    #     ]
+
+
+    #     assert (len(x_seq.shape) == 5) & (
+    #         self.num_nodes == x_seq.shape[2] == x_seq.shape[3]
+    #     )
+    #     assert len(G_list) == self.M
+    #     batch_size, seq_len, _, _, i = x_seq.shape
+    #     hidden_list = self.init_hidden_list(batch_size)
+
+    #     lstm_in = x_seq.permute(0, 2, 3, 1, 4).reshape(
+    #         batch_size * (self.num_nodes**2), seq_len, i
+    #     )
+    #     branch_out = list()
+    #     for m in range(self.M):
+    #         lstm_out, hidden_list[m] = self.branch_models[m]["temporal"](
+    #             lstm_in, hidden_list[m]
+    #         )
+
+    #         gcn_in = lstm_out[:, -1, :].reshape(
+    #             batch_size, self.num_nodes, self.num_nodes, self.lstm_hidden_dim
+    #         )
+
+    #         for n in range(self.gcn_num_layers):
+    #             # print(G_list[m][0].isnan().any())
+    #             gcn_in = self.branch_models[m]["spatial"][n](gcn_in, G_list[m])
+
+    #         fc_out = self.branch_models[m]["fc"](gcn_in)
+    #         branch_out.append(fc_out)
+
+    #     # ensemble
+    #     ensemble_out = torch.mean(torch.stack(branch_out, dim=-1), dim=-1)
+    #     res = ensemble_out.permute(0, 3, 1, 2)
+    #     return res  # match dim for single-step pred

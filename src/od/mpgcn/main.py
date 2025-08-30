@@ -17,6 +17,7 @@ from utils.args import get_public_config, get_log_path, print_args, check_quanti
 from utils.dataloader import get_dataset_info, load_dataset, load_dataset_MPGCN
 from utils.log import get_logger
 
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -52,8 +53,6 @@ def get_config():
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--clip_grad_value", type=float, default=5)
     args = parser.parse_args()
-
-    # args.bs = 32  # test
 
     args.model_name = "MPGCN_OD"
     log_dir = get_log_path(args)

@@ -16,7 +16,7 @@ torch.set_num_threads(8)
 
 from ha_model import HA
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
-from utils.dataloader import load_dataset, get_dataset_info
+from utils.dataloader import load_dataset, get_dataset_info, load_dataset_plain
 from utils.log import get_logger
 
 
@@ -37,8 +37,7 @@ def get_config():
     args = parser.parse_args()
 
     args.model_name = "HA_OD"
-    args.mode = "test"
-    args.max_epochs = 1
+
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,
@@ -56,7 +55,7 @@ def main():
 
     data_path, _, node_num = get_dataset_info(args.dataset)
 
-    dataloader, scaler = load_dataset(data_path, args, logger)
+    dataloader, scaler = load_dataset_plain(data_path, args, logger)
     args, engine_template = check_quantile(args, HA_Engine, Quantile_Engine)
     model = HA(
         node_num=node_num,
@@ -67,9 +66,6 @@ def main():
     )
 
     loss_fn = "MSE"  # masked_mae
-    # optimizer = torch.optim.Adam(model.parameters())
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
-
     engine = engine_template(
         device=device,
         model=model,
@@ -93,7 +89,7 @@ def main():
     )
 
     if args.mode == "train":
-        engine.train()
+        engine.train(args.export)
     else:
         engine.evaluate(args.mode, args.model_path, args.export)
 

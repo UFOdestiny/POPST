@@ -338,10 +338,10 @@ class STTN(BaseModel):
     def forward(self, X, label=None):
         # batch_size, input_len, N, feature
 
-        X_t1 = self.TC1(X)
-        X_t2 = self.TC2(X_t1)
-        X_t3 = self.TC3(X_t2)
-        loc_t, scale_t = self.TGau(X_t3)
+        # X_t1 = self.TC1(X)
+        # X_t2 = self.TC2(X_t1)
+        # X_t3 = self.TC3(X_t2)
+        # loc_t, scale_t = self.TGau(X_t3)
         # print(X_1.shape)
 
         # X=X[:,:,:,0].permute(0,2,1)
@@ -350,8 +350,8 @@ class STTN(BaseModel):
         X_s3 = self.SC3(X_s2, self.A_q, self.A_h)
         loc_s, scale_s = self.SGau(X_s3)
         
-        loc_res = loc_s + loc_t
-        scale_res = scale_t + scale_s
+        loc_res = loc_s #+ loc_t
+        scale_res = scale_s #+ scale_t + 
 
         return loc_res, scale_res
 

@@ -2,7 +2,7 @@ import os
 import numpy as np
 import sys
 
-sys.path.append(os.path.abspath(__file__ + '/../../../../'))
+sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from base.engine import BaseEngine
@@ -13,9 +13,9 @@ import torch
 
 torch.set_num_threads(8)
 
-from arima_model import ARIMA
+from arima_model import ARIMA_
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
-from utils.dataloader import load_dataset, get_dataset_info
+from utils.dataloader import load_dataset, get_dataset_info, load_dataset_plain
 from utils.log import get_logger
 
 
@@ -36,10 +36,9 @@ def get_config():
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=5e-4)
     args = parser.parse_args()
-    
-    args.mode="test"
+
     args.model_name = "ARIMA"
-    args.max_epochs = 1
+
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,
@@ -53,27 +52,22 @@ def get_config():
 def main():
     args, log_dir, logger = get_config()
     set_seed(args.seed)
-    device = torch.device(args.device)
+    device = torch.device("cpu")
 
     data_path, _, node_num = get_dataset_info(args.dataset)
 
-    dataloader, scaler = load_dataset(data_path, args, logger)
+    dataloader, scaler = load_dataset_plain(data_path, args, logger)
     args, engine_template = check_quantile(args, ARIMA_Engine, Quantile_Engine)
-    
-    model = ARIMA(
+
+    model = ARIMA_(
+        order=(1, 1, 0),
+        n_threads=8,
         node_num=node_num,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
         seq_len=args.seq_len,
         horizon=args.horizon,
-        arima_order=args.arima_order
     )
-
-    loss_fn = "MSE"  # masked_mae
-    # optimizer = torch.optim.Adam(model.parameters())
-    # scheduler = torch.optim.lr_scheduler.StepLR(
-    #     optimizer, step_size=args.step_size, gamma=args.gamma
-    # )
 
     engine = engine_template(
         device=device,
@@ -81,7 +75,7 @@ def main():
         dataloader=dataloader,
         scaler=scaler,
         sampler=None,
-        loss_fn=loss_fn,
+        loss_fn="MSE",
         lrate=args.lrate,
         optimizer=None,
         scheduler=None,
@@ -98,7 +92,7 @@ def main():
     )
 
     if args.mode == "train":
-        engine.train()
+        engine.train(args.export)
     else:
         engine.evaluate(args.mode, args.model_path, args.export)
 

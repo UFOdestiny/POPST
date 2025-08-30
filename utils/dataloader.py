@@ -111,6 +111,16 @@ class DataLoader(object):
 
         return _wrapper()
 
+def load_dataset_plain(data_path, args, logger, drop=False):
+    ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
+    logger.info("Data shape: " + str(ptr["data"].shape))
+    X = ptr["data"]
+    xy=[]
+    dataloader = {}
+    for cat in ["train", "val", "test"]:  # , 'all'
+        idx = np.load(os.path.join(data_path, args.years, "idx_" + cat + ".npy"))
+        xy.append(X[idx])
+    return xy, LogScaler()
 
 def load_dataset(data_path, args, logger, drop=False):
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
@@ -150,6 +160,7 @@ class DataLoader_MPGCN(object):
         adj_D,
         name=None,
         pad_last_sample=False,
+        droplast=False,
     ):
         if pad_last_sample:
             num_padding = (bs - (len(idx) % bs)) % bs
@@ -161,6 +172,8 @@ class DataLoader_MPGCN(object):
         self.size = len(idx)
         self.bs = bs
         self.num_batch = int(self.size // self.bs)
+        if not droplast and self.size % self.bs != 0:
+            self.num_batch += 1
         self.current_ind = 0
         logger.info(
             f"{name} num: "
@@ -197,7 +210,7 @@ class DataLoader_MPGCN(object):
                 idx_ind = self.idx[start_ind:end_ind, ...]
 
                 # print(idx_ind)
-                adj_index = [i % 7 for i in idx_ind]
+                adj_index = [i % 6 for i in idx_ind]
 
                 x_shape = (
                     len(idx_ind),
@@ -245,7 +258,7 @@ class DataLoader_MPGCN(object):
 
 
 def construct_dyn_G(
-    OD_data: np.array, perceived_period: int = 7
+    OD_data: np.array, perceived_period: int = 6
 ):  # construct dynamic graphs based on OD history
     train_len = int(OD_data.shape[0] * 0.8)
     # print(OD_data.shape, OD_data.max(), OD_data.min(), OD_data.mean())
@@ -282,13 +295,7 @@ def load_dataset_MPGCN(data_path, args, logger):
 
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
     logger.info("Data shape: " + str(ptr["data"].shape))
-
-    if "_od" in data_path:
-        scaler = LogScaler()
-    else:
-        scaler = LogScaler()
-        # scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
-
+    scaler = LogScaler()
     X = ptr["data"]
 
     # unnormalized=(torch.from_numpy(X) - scaler.offset) * scaler.std + scaler.mean
@@ -350,6 +357,7 @@ def get_dataset_info(dataset):
         "sz_taxi_od": [base_dir + "sz_taxi_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_bike_od": [base_dir + "sz_bike_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_dd_od": [base_dir + "sz_dd_od", base_dir + "shenzhen/adj.npy", 491],
+        "sz_subway_od": [base_dir + "sz_subway_od", base_dir + "shenzhen/adj.npy", 491],
         "nyc_taxi_od": [base_dir + "nyc_taxi_od", base_dir + "nyc_taxi_od/adj.npy", 67],
         "nyc_bike_od": [base_dir + "nyc_bike_od", base_dir + "nyc_taxi_od/adj.npy", 67],
         "nyc_subway_od": [

@@ -29,8 +29,6 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    # parser.add_argument('--dataset', type=str, default="UAHGNN")
-    # parser.add_argument('--model_name', type=str, default="STGCN")
     parser.add_argument("--Kt", type=int, default=2)
     parser.add_argument("--Ks", type=int, default=3)
     parser.add_argument("--block_num", type=int, default=2)

@@ -42,7 +42,6 @@ def get_config():
     args = parser.parse_args()
 
     args.model_name = "GMEL"
-    # args.bs = 64
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,

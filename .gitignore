@@ -1,8 +1,9 @@
 *.sh
-*.ipynb
 *.zip
 *.vscode
 *.log
+.ipynb_*
+*.ipynb
 
 output
 res
