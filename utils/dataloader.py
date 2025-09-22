@@ -12,6 +12,7 @@ sys.path.append("/home/dy23a.fsu/st/")
 
 from utils.args import get_data_path
 from utils.generate import (
+    LogMinMaxScaler,
     LogScaler,
     StandardScaler,
     StandardScaler_OD,
@@ -21,7 +22,16 @@ from scipy.spatial import distance
 
 class DataLoader(object):
     def __init__(
-        self, data, idx, seq_len, horizon, bs, logger, name=None, pad_last_sample=False, droplast=False
+        self,
+        data,
+        idx,
+        seq_len,
+        horizon,
+        bs,
+        logger,
+        name=None,
+        pad_last_sample=False,
+        droplast=False,
     ):
         if pad_last_sample:
             num_padding = (bs - (len(idx) % bs)) % bs
@@ -111,16 +121,18 @@ class DataLoader(object):
 
         return _wrapper()
 
+
 def load_dataset_plain(data_path, args, logger, drop=False):
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
     logger.info("Data shape: " + str(ptr["data"].shape))
     X = ptr["data"]
-    xy=[]
+    xy = []
     dataloader = {}
     for cat in ["train", "val", "test"]:  # , 'all'
         idx = np.load(os.path.join(data_path, args.years, "idx_" + cat + ".npy"))
         xy.append(X[idx])
     return xy, LogScaler()
+
 
 def load_dataset(data_path, args, logger, drop=False):
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
@@ -135,14 +147,13 @@ def load_dataset(data_path, args, logger, drop=False):
         idx = np.load(os.path.join(data_path, args.years, "idx_" + cat + ".npy"))
 
         dataloader[cat + "_loader"] = DataLoader(
-            X, idx, args.seq_len, args.horizon, args.bs, logger, cat,droplast=drop
+            X, idx, args.seq_len, args.horizon, args.bs, logger, cat, droplast=drop
         )
 
-    if "_od" in data_path:
-        scaler = LogScaler()
-    else:
-        scaler = LogScaler()
-        # scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
+    scaler = LogScaler()
+    if "min" in ptr:
+        scaler = LogMinMaxScaler(ptr["min"], ptr["max"])
+    # scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
 
     return dataloader, scaler
 
@@ -353,6 +364,7 @@ def get_dataset_info(dataset):
             base_dir + "tallahassee/adj.npy",
             9,
         ],
+        "panhandle": [base_dir + "panhandle", base_dir + "panhandle/adj.npy", 924],
         # OD Prediction: N*N -> N*N
         "sz_taxi_od": [base_dir + "sz_taxi_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_bike_od": [base_dir + "sz_bike_od", base_dir + "shenzhen/adj.npy", 491],

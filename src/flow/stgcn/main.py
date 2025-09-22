@@ -25,8 +25,6 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    # parser.add_argument('--dataset', type=str, default="UAHGNN")
-    # parser.add_argument('--model_name', type=str, default="STGCN")
     parser.add_argument("--Kt", type=int, default=3)
     parser.add_argument("--Ks", type=int, default=3)
     parser.add_argument("--block_num", type=int, default=2)
@@ -56,8 +54,6 @@ def main():
     set_seed(args.seed)
     device = torch.device(0)
     data_path, adj_path, node_num = get_dataset_info(args.dataset)
-
-    # logger.info('Adj path: ' + adj_path)
 
     adj_mx = load_adj_from_numpy(adj_path)
     adj_mx = adj_mx - np.eye(node_num)

@@ -33,6 +33,9 @@ class ARIMA_Engine(BaseEngine):
         pred = torch.from_numpy(pred)
         test = torch.from_numpy(test)
 
+        if self._normalize:
+            pred, test = self._inverse_transform([pred, test],device="cpu")
+
         self.metric.compute_one_batch(
             pred,
             test,

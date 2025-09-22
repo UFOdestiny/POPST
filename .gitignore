@@ -3,7 +3,7 @@
 *.vscode
 *.log
 .ipynb_*
-*.ipynb
+# *.ipynb
 
 output
 res
@@ -11,6 +11,7 @@ result
 data
 dataset
 datasets
+bash
 
 __pycache__/
 *.py[cod]

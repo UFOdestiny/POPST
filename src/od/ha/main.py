@@ -3,7 +3,7 @@ import numpy as np
 import sys
 
 
-sys.path.append(os.path.abspath(__file__ + '/../../../../'))
+sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from base.engine import BaseEngine
@@ -51,13 +51,14 @@ def get_config():
 def main():
     args, log_dir, logger = get_config()
     set_seed(args.seed)
-    device = torch.device(args.device)
+    device = torch.device("cpu")
 
     data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset_plain(data_path, args, logger)
     args, engine_template = check_quantile(args, HA_Engine, Quantile_Engine)
     model = HA(
+        step=args.input_dim,
         node_num=node_num,
         input_dim=args.input_dim,
         output_dim=args.output_dim,

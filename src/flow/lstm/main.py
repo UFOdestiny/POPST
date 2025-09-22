@@ -58,7 +58,7 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
-    
+
     model = LSTM(
         node_num=node_num,
         input_dim=args.input_dim,

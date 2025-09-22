@@ -1,15 +1,19 @@
 import numpy as np
-from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX as SARIMA
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from base.model import BaseModel
+from sklearn.decomposition import TruncatedSVD
+from statsmodels.tsa.statespace.varmax import VARMAX
+import warnings
+
+warnings.filterwarnings("ignore")  # ARIMA 的未来警告略过
 
 
-class ARIMA_(BaseModel):
+class SARIMA_(BaseModel):
     def __init__(self, order=(6, 0, 0), n_threads=8, **args):
         super().__init__(**args)
         """
-        ARIMA 多序列预测（多线程版）
         :param order: tuple (p,d,q)
         :param n_threads: 并行线程数
         """
@@ -19,7 +23,7 @@ class ARIMA_(BaseModel):
     def _fit_forecast(self, ts, steps, idx):
         i, j = idx
         try:
-            model = ARIMA(ts, order=self.order)
+            model = SARIMA(ts, order=self.order)
             model_fit = model.fit()
             forecast = model_fit.forecast(steps=steps)
             return (i, j, forecast)
@@ -29,12 +33,12 @@ class ARIMA_(BaseModel):
 
     def forward(self, X_train, Y_test_len):
         """
-        拟合训练集并预测测试集长度
         :param X_train: numpy array, shape (T_train, N, N)
         :param Y_test_len: int, 测试集长度
         :return: Y_pred, shape (Y_test_len, N, N)
         """
         T_train, N, _ = X_train.shape
+
         Y_pred = np.zeros((Y_test_len, N, N))
 
         # 准备任务列表

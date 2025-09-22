@@ -2,7 +2,7 @@ import os
 import numpy as np
 import sys
 
-sys.path.append(os.path.abspath(__file__ + '/../../../../'))
+sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 from base.engine import BaseEngine
 from base.quantile_engine import Quantile_Engine
 
@@ -26,15 +26,18 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument('--step_size', type=int, default=10)
-    parser.add_argument('--gamma', type=float, default=0.95)
-    parser.add_argument('--lrate', type=float, default=1e-3)
-    parser.add_argument('--wdecay', type=float, default=5e-4)
+    parser.add_argument("--step_size", type=int, default=10)
+    parser.add_argument("--gamma", type=float, default=0.95)
+    parser.add_argument("--lrate", type=float, default=1e-3)
+    parser.add_argument("--wdecay", type=float, default=5e-4)
     args = parser.parse_args()
 
     args.model_name = "HL"
     log_dir = get_log_path(args)
-    logger = get_logger(log_dir, __name__, )
+    logger = get_logger(
+        log_dir,
+        __name__,
+    )
     print_args(logger, args)  # logger.info(args)
 
     return args, log_dir, logger
@@ -49,34 +52,37 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
-    model = HL(node_num=node_num,
-               input_dim=args.input_dim,
-               output_dim=args.output_dim)
+    model = HL(node_num=node_num, input_dim=args.seq_len, output_dim=args.output_dim)
 
     loss_fn = "MAE"  # masked_mae
     optimizer = torch.optim.Adam(model.parameters())
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer, step_size=args.step_size, gamma=args.gamma
+    )
 
-    engine = engine_template(device=device,
-                             model=model,
-                             dataloader=dataloader,
-                             scaler=scaler,
-                             sampler=None,
-                             loss_fn=loss_fn,
-                             lrate=args.lrate,
-                             optimizer=optimizer,
-                             scheduler=scheduler,
-                             clip_grad_value=0,
-                             max_epochs=args.max_epochs,
-                             patience=args.patience,
-                             log_dir=log_dir,
-                             logger=logger,
-                             seed=args.seed,
-                             normalize=args.normalize,
-                             alpha=args.quantile_alpha,
-                             )
+    engine = engine_template(
+        device=device,
+        model=model,
+        dataloader=dataloader,
+        scaler=scaler,
+        sampler=None,
+        loss_fn=loss_fn,
+        lrate=args.lrate,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        clip_grad_value=0,
+        max_epochs=args.max_epochs,
+        patience=args.patience,
+        log_dir=log_dir,
+        logger=logger,
+        seed=args.seed,
+        normalize=args.normalize,
+        alpha=args.quantile_alpha,
+        metric_list=["MAE", "MAPE", "RMSE"],
+        args=args,
+    )
 
-    if args.mode == 'train':
+    if args.mode == "train":
         engine.train()
     else:
         engine.evaluate(args.mode, args.model_path, args.export)

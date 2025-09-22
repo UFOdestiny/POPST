@@ -29,8 +29,8 @@ def get_config():
     parser.add_argument('--adj_type', type=str, default='doubletransition')
     parser.add_argument('--adp_adj', type=int, default=1)
     parser.add_argument('--init_dim', type=int, default=32)
-    parser.add_argument('--skip_dim', type=int, default=256)
-    parser.add_argument('--end_dim', type=int, default=512)
+    parser.add_argument('--skip_dim', type=int, default=128)
+    parser.add_argument('--end_dim', type=int, default=128)
 
     parser.add_argument('--lrate', type=float, default=1e-3)
     parser.add_argument('--wdecay', type=float, default=1e-4)

@@ -143,6 +143,31 @@ class LogScaler:
             return torch.exp(data).to(device=device) - 1
 
 
+class LogMinMaxScaler:
+    def __init__(self):
+        self.data_min_ = None
+        self.data_max_ = None
+
+    def fit(self, data):
+        log_data = np.log1p(data)
+        self.data_min_ = log_data.min()
+        self.data_max_ = log_data.max()
+        print(f"LogMinMaxScaler min: {self.data_min_}, max:{self.data_max_}")
+        return self
+
+    def transform(self, data):
+        log_data = np.log1p(data)
+        return (log_data - self.data_min_) / (self.data_max_ - self.data_min_)
+
+    def inverse_transform(self, data, device="cuda"):
+        if isinstance(data, torch.Tensor):
+            log_data = data * (self.data_max_ - self.data_min_) + self.data_min_
+            return torch.expm1(log_data.to(device=device))
+        else:
+            log_data = data * (self.data_max_ - self.data_min_) + self.data_min_
+            return np.expm1(log_data)
+
+
 class RatioScaler:
     def __init__(self, ratio=1000):
         self.ratio = ratio
@@ -152,6 +177,27 @@ class RatioScaler:
 
     def inverse_transform(self, data):
         return data * self.ratio.to(device="cuda")
+
+
+def split_dataset(data, args, tra_ratio, val_ratio, test_ratio):
+    seq_length_x, seq_length_y = args.seq_length_x, args.seq_length_y
+    x_offsets = np.arange(-(seq_length_x - 1), 1, 1)
+    y_offsets = np.arange(1, (seq_length_y + 1), 1)
+    min_t = abs(min(x_offsets))
+    max_t = abs(data.shape[0] - abs(max(y_offsets)))  # Exclusive
+    print(f"Index min: {min_t}, max: {max_t}")
+    idx = np.arange(min_t, max_t, 1)
+
+    N = len(idx)
+    val_ = int(round(val_ratio * N))
+    test_ = int(round(test_ratio * N))
+    train_ = N - val_ - test_
+
+    idx_train = idx[:train_]
+    idx_val = idx[train_ : train_ + val_]
+    idx_test = idx[train_ + val_ :]
+    idx_all = idx[:]
+    return idx_train, idx_val, idx_test, idx_all
 
 
 def generate_data_and_idx(df, x_offsets, y_offsets, add_time_of_day, add_day_of_week):
@@ -182,31 +228,22 @@ def generate_data_and_idx(df, x_offsets, y_offsets, add_time_of_day, add_day_of_
 
 
 def generate_flow(args):
-    seq_length_x, seq_length_y = args.seq_length_x, args.seq_length_y
-    x_offsets = np.arange(-(seq_length_x - 1), 1, 1)
-    y_offsets = np.arange(1, (seq_length_y + 1), 1)
-
     # data_path = "D:/OneDrive - Florida State University/datasets/shenzhen/shenzhen_1h/values_in.npy"
-    data_path = "D:/OneDrive - Florida State University/datasets/nyc/flow.npy"
+    # data_path = "D:/OneDrive - Florida State University/datasets/nyc/flow.npy"
+    data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph/pattern/flow2019.npy"
 
+    # N * D * T
     data = np.load(data_path)
-    data = data.transpose(2, 0, 1)
+    print(f"data shape: {data.shape}")
+    print(f"Original max: {data.max()}, min: {data.min()}, mean: {data.mean()}")
 
-    min_t = abs(min(x_offsets))
-    max_t = abs(data.shape[0] - abs(max(y_offsets)))  # Exclusive
-    print("idx min & max:", min_t, max_t)
-    idx = np.arange(min_t, max_t, 1)
-
-    print("final data shape:", data.shape, "idx shape:", idx.shape)
-    num_samples = len(idx)
-    num_train = round(num_samples * 0.8)
-    num_val = round(num_samples * 0.1)
+    if len(data.shape) == 3:
+        data = data.transpose(2, 0, 1)
+    else:
+        data = data[:, np.newaxis].transpose(2, 0, 1)
 
     # split idx
-    idx_train = idx[:num_train]
-    idx_val = idx[num_train : num_train + num_val]
-    idx_test = idx[num_train + num_val :]
-    idx_all = idx[:]
+    idx_train, idx_val, idx_test, idx_all = split_dataset(data, args, 0.8, 0.1, 0.1)
 
     # normalize
     # x_train = data[:idx_val[0] - args.seq_length_x, :, :]
@@ -215,7 +252,8 @@ def generate_flow(args):
     # data_hdm = data[:, :, 1:]
     # data = np.expand_dims(data[:, :, 0], axis=-1)
 
-    scaler = LogScaler()
+    scaler = LogMinMaxScaler()  # LogScaler()
+    scaler.fit(data)
     data = scaler.transform(data)
 
     # scaler = StandardScaler()
@@ -232,9 +270,7 @@ def generate_flow(args):
     # print(std)
     # print(offset)
 
-    print(data.max())
-    print(data.min())
-    print(data.mean())
+    print(f"Normalized max: {data.max()}, min: {data.min()}, mean: {data.mean()}")
 
     p = get_data_path()
     out_dir = args.dataset + "/" + args.years
@@ -244,7 +280,8 @@ def generate_flow(args):
 
     np.savez_compressed(
         os.path.join(path_, "his.npz"),
-        data=data,  # mean=mean, std=std, offset=offset
+        data=data,
+        min=scaler.data_min_,max=scaler.data_max_,
     )
     np.save(os.path.join(path_, "idx_train"), idx_train)
     np.save(os.path.join(path_, "idx_val"), idx_val)
@@ -324,9 +361,9 @@ def generate_od(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--dataset", type=str, default="nyc", help="dataset name")
-    parser.add_argument("--years", type=str, default="2024")
-    parser.add_argument("--seq_length_x", type=int, default=12, help="sequence Length")
+    parser.add_argument("--dataset", type=str, default="panhandle", help="dataset name")
+    parser.add_argument("--years", type=str, default="2018")
+    parser.add_argument("--seq_length_x", type=int, default=7, help="sequence Length")
     parser.add_argument("--seq_length_y", type=int, default=1, help="sequence Length")
     parser.add_argument("--tod", type=int, default=1, help="time of day")
     parser.add_argument("--dow", type=int, default=1, help="day of week")

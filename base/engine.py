@@ -103,9 +103,9 @@ class BaseEngine:
         else:
             return torch.tensor(nparray, dtype=torch.float32)
 
-    def _inverse_transform(self, tensors):
+    def _inverse_transform(self, tensors, device="cuda"):
         def inv(tensor):
-            return self._scaler.inverse_transform(tensor)
+            return self._scaler.inverse_transform(tensor, device=device)
 
         if isinstance(tensors, list):
             res = []

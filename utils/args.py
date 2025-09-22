@@ -9,12 +9,12 @@ def get_public_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
 
-    parser.add_argument("--dataset", type=str, default="sz_subway_od")  # NYC
-    parser.add_argument("--years", type=str, default="2025")
+    parser.add_argument("--dataset", type=str, default="panhandle")  # NYC
+    parser.add_argument("--years", type=str, default="2018")
     parser.add_argument("--model_name", type=str, default="")
 
     parser.add_argument("--bs", type=int, default=64)
-    parser.add_argument("--seq_len", type=int, default=6)  # flow 12 od 6
+    parser.add_argument("--seq_len", type=int, default=7)  # flow 12 od 6
     parser.add_argument("--horizon", type=int, default=1)
 
     parser.add_argument("--feature", type=int, default=1)
@@ -25,7 +25,7 @@ def get_public_config():
     parser.add_argument("--patience", type=int, default=25)
     parser.add_argument("--normalize", type=bool, default=True)  # Z-Score
 
-    parser.add_argument("--quantile", type=bool, default=False)
+    parser.add_argument("--quantile", type=bool, default=True)
     parser.add_argument("--quantile_alpha", type=float, default=0.1)
     parser.add_argument("--hour_day_month", type=bool, default=False)
 
@@ -33,7 +33,7 @@ def get_public_config():
     parser.add_argument("--seed", type=int, default=2025)
     parser.add_argument("--mode", type=str, default="train")
     parser.add_argument("--model_path", type=str, default="")
-    parser.add_argument("--export", type=bool, default=True)
+    parser.add_argument("--export", type=bool, default=False)
     parser.add_argument("--not_print_args", default=False, action="store_true")
 
     if platform.system().lower() == "linux":
@@ -78,8 +78,6 @@ def get_data_path():
         path = "/blue/gtyson.fsu/dy23a.fsu/datasets/"
     else:
         path = "D:/OneDrive - Florida State University/mycode/POPST/dataset/"
-
-    # path=""
     return path
 
 

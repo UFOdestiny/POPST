@@ -26,7 +26,7 @@ def set_seed(seed):
 def get_config():
     parser = get_public_config()
     parser.add_argument("--embed_dim", type=int, default=10)
-    parser.add_argument("--rnn_unit", type=int, default=64)
+    parser.add_argument("--rnn_unit", type=int, default=24)
     parser.add_argument("--num_layer", type=int, default=2)
     parser.add_argument("--cheb_k", type=int, default=2)
 
