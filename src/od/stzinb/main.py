@@ -5,7 +5,6 @@ import sys
 sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 sys.path.append("/home/dy23a.fsu/st/")
 
-from base.quantile_engine import Quantile_Engine
 import torch
 import numpy as np
 
@@ -17,7 +16,7 @@ from utils.args import get_public_config, get_log_path, print_args, check_quanti
 from utils.dataloader import load_adj_from_numpy, load_dataset, get_dataset_info
 from utils.log import get_logger
 from utils.graph_algo import normalize_adj_mx
-
+from base.quantile_engine import Quantile_Engine
 
 def set_seed(seed):
     np.random.seed(seed)

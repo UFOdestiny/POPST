@@ -281,7 +281,8 @@ def generate_flow(args):
     np.savez_compressed(
         os.path.join(path_, "his.npz"),
         data=data,
-        min=scaler.data_min_,max=scaler.data_max_,
+        min=scaler.data_min_,
+        max=scaler.data_max_,
     )
     np.save(os.path.join(path_, "idx_train"), idx_train)
     np.save(os.path.join(path_, "idx_val"), idx_val)
@@ -294,9 +295,9 @@ def generate_od(args):
     x_offsets = np.arange(-(seq_length_x - 1), 1, 1)
     y_offsets = np.arange(1, (seq_length_y + 1), 1)
 
-    # data_path = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/taxi.npy"
-    # data_path = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/bike.npy"
-    data_path = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/subway.npy"
+    data_path = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/taxi.npy"
+    data_path = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/bike.npy"
+    # data_path = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/subway.npy"
 
     # data_path = "/blue/gtyson.fsu/dy23a.fsu/switch/shenzhen/taxi.npy"
     # data_path2 = "/blue/gtyson.fsu/dy23a.fsu/switch/shenzhen/dd.npy"
@@ -358,15 +359,89 @@ def generate_od(args):
     np.save(os.path.join(path_, "idx_all"), idx_all)
 
 
+def generate_od_2(args):
+    seq_length_x, seq_length_y = args.seq_length_x, args.seq_length_y
+    x_offsets = np.arange(-(seq_length_x - 1), 1, 1)
+    y_offsets = np.arange(1, (seq_length_y + 1), 1)
+
+    # data_path1 = "/blue/gtyson.fsu/dy23a.fsu/switch/shenzhen/subway_.npy"
+    # data_path2 = "/blue/gtyson.fsu/dy23a.fsu/switch/shenzhen/bike.npy"
+    # data = np.load(data_path1).transpose(2, 0, 1)[:672,...]
+    # data_2 = np.load(data_path2).transpose(2, 0, 1)[:672,...]
+    
+    data_path1 = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/subway.npy"
+    data_path2 = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/bike.npy"
+    data = np.load(data_path1).transpose(2, 0, 1)
+    data_2 = np.load(data_path2).transpose(2, 0, 1)
+
+    data = np.concat((data, data_2, ), axis=0)
+    print(data.shape)
+    # exit()
+
+    min_t = abs(min(x_offsets))
+    max_t = abs(data.shape[0] - abs(max(y_offsets)))  # Exclusive
+    print("idx min & max:", min_t, max_t)
+    idx = np.arange(min_t, max_t, 1)
+
+    print("final data shape:", data.shape, "idx shape:", idx.shape)
+    num_samples = len(idx)
+    num_train = round(num_samples * 0.9)
+    num_val = 287#168
+    num_test = 287#168
+    num_train=num_samples-num_test-num_val
+    print(num_train, num_val, num_samples - num_train - num_val)
+
+    # split idx
+    idx_train = idx[:num_train]
+    idx_val = idx[num_train : num_train + num_val]
+    idx_test = idx[num_train + num_val :]
+    idx_all = idx[:]
+    # print(data[0][-1])
+    print("max, min, mean: ", data.max(), data.min(), data.mean())
+    # normalize
+    # x_train = data[:idx_val[0] - args.seq_length_x, :, :]
+
+    # scaler = StandardScaler_OD()
+    # scaler.fit(data)
+    # data = scaler.transform(data)
+    # mean = scaler.mean
+    # std = scaler.std
+    # offset = scaler.offset
+    # print("mean, std, offset: ", mean, std, offset)
+    # print("max, min, mean: ", data.max(), data.min(), data.mean())
+
+    scaler = LogScaler()
+    data = scaler.transform(data)
+    print("max, min, mean: ", data.max(), data.min(), data.mean())
+    d = scaler.inverse_transform(data)
+
+    print(d[0][-1])
+
+    p = get_data_path()
+    out_dir = args.dataset + "/" + args.years
+    path_ = os.path.join(p, out_dir)
+    if not os.path.exists(path_):
+        os.makedirs(path_)
+
+    print("save to: ", path_)
+    np.savez_compressed(os.path.join(path_, "his.npz"), data=data)
+    np.save(os.path.join(path_, "idx_train"), idx_train)
+    np.save(os.path.join(path_, "idx_val"), idx_val)
+    np.save(os.path.join(path_, "idx_test"), idx_test)
+    np.save(os.path.join(path_, "idx_all"), idx_all)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--dataset", type=str, default="panhandle", help="dataset name")
-    parser.add_argument("--years", type=str, default="2018")
-    parser.add_argument("--seq_length_x", type=int, default=7, help="sequence Length")
+    parser.add_argument(
+        "--dataset", type=str, default="nyc_subway_bike_od", help="dataset name"
+    )
+    parser.add_argument("--years", type=str, default="2025")
+    parser.add_argument("--seq_length_x", type=int, default=6, help="sequence Length")
     parser.add_argument("--seq_length_y", type=int, default=1, help="sequence Length")
     parser.add_argument("--tod", type=int, default=1, help="time of day")
     parser.add_argument("--dow", type=int, default=1, help="day of week")
 
     args = parser.parse_args()
-    generate_flow(args)
+    generate_od_2(args)

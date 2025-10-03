@@ -368,6 +368,11 @@ def get_dataset_info(dataset):
         # OD Prediction: N*N -> N*N
         "sz_taxi_od": [base_dir + "sz_taxi_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_bike_od": [base_dir + "sz_bike_od", base_dir + "shenzhen/adj.npy", 491],
+        "sz_subway_bike_od": [base_dir + "sz_subway_bike_od", base_dir + "shenzhen/adj.npy", 491],
+        "sz_subway_taxi_od": [base_dir + "sz_subway_taxi_od", base_dir + "shenzhen/adj.npy", 491],
+        "nyc_subway_bike_od": [base_dir + "nyc_subway_bike_od", base_dir + "nyc_taxi_od/adj.npy", 67],
+        "nyc_subway_taxi_od": [base_dir + "nyc_subway_taxi_od", base_dir + "nyc_taxi_od/adj.npy", 67],
+
         "sz_dd_od": [base_dir + "sz_dd_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_subway_od": [base_dir + "sz_subway_od", base_dir + "shenzhen/adj.npy", 491],
         "nyc_taxi_od": [base_dir + "nyc_taxi_od", base_dir + "nyc_taxi_od/adj.npy", 67],

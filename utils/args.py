@@ -9,23 +9,23 @@ def get_public_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
 
-    parser.add_argument("--dataset", type=str, default="panhandle")  # NYC
-    parser.add_argument("--years", type=str, default="2018")
+    parser.add_argument("--dataset", type=str, default="sz_taxi_bike_od")  # NYC
+    parser.add_argument("--years", type=str, default="2025")
     parser.add_argument("--model_name", type=str, default="")
 
     parser.add_argument("--bs", type=int, default=64)
-    parser.add_argument("--seq_len", type=int, default=7)  # flow 12 od 6
+    parser.add_argument("--seq_len", type=int, default=6)  # flow 12 od 6
     parser.add_argument("--horizon", type=int, default=1)
 
     parser.add_argument("--feature", type=int, default=1)
     parser.add_argument("--input_dim", type=int, default=1)  # feature
     parser.add_argument("--output_dim", type=int, default=1)
 
-    parser.add_argument("--max_epochs", type=int, default=500)
-    parser.add_argument("--patience", type=int, default=25)
+    parser.add_argument("--max_epochs", type=int, default=1000)
+    parser.add_argument("--patience", type=int, default=30)
     parser.add_argument("--normalize", type=bool, default=True)  # Z-Score
 
-    parser.add_argument("--quantile", type=bool, default=True)
+    parser.add_argument("--quantile", type=bool, default=False)
     parser.add_argument("--quantile_alpha", type=float, default=0.1)
     parser.add_argument("--hour_day_month", type=bool, default=False)
 
@@ -33,15 +33,17 @@ def get_public_config():
     parser.add_argument("--seed", type=int, default=2025)
     parser.add_argument("--mode", type=str, default="train")
     parser.add_argument("--model_path", type=str, default="")
-    parser.add_argument("--export", type=bool, default=False)
+    parser.add_argument("--export", type=bool, default=True)
     parser.add_argument("--not_print_args", default=False, action="store_true")
+    parser.add_argument("--proj", type=str, default="")
 
     if platform.system().lower() == "linux":
         parser.add_argument(
             "--result_path",
             type=str,
             # default="/home/ec2-user/POPST/res/",
-            default="/home/dy23a.fsu/st/res/",
+            # default="/home/dy23a.fsu/st/res/",
+            default="/blue/gtyson.fsu/dy23a.fsu/result/res/",
         )
     else:
         parser.add_argument(
@@ -58,8 +60,8 @@ def get_log_path(args):
         # log_dir = "/home/ec2-user/POPST/result/{}/{}/".format(
         #     args.model_name, args.dataset
         # )
-        log_dir = "/home/dy23a.fsu/st/result/{}/{}/".format(
-            args.model_name, args.dataset
+        log_dir = "/home/dy23a.fsu/st/result/{}/{}/{}/".format(
+            args.proj, args.model_name, args.dataset
         )
     else:
         log_dir = (
