@@ -3,8 +3,32 @@ import time
 
 import numpy as np
 import torch
-
 from base.metrics import compute_all_metrics, Metrics
+
+import torchvision.models as models
+from torch.profiler import profile, ProfilerActivity, record_function
+
+
+activities = [ProfilerActivity.CPU]
+if torch.cuda.is_available():
+    device = "cuda"
+    activities += [ProfilerActivity.CUDA]
+elif torch.xpu.is_available():
+    device = "xpu"
+    activities += [ProfilerActivity.XPU]
+else:
+    print(
+        "Neither CUDA nor XPU devices are available to demonstrate profiling on acceleration devices"
+    )
+    import sys
+    sys.exit(0)
+
+sort_by_keyword = "self_" + device + "_time_total"
+def trace_handler(p, path, print_=False):
+    output = p.key_averages().table(sort_by=sort_by_keyword, row_limit=20)
+    if print_:
+        print(output)
+    p.export_chrome_trace(f"{path}_{p.step_num}.json")
 
 
 class BaseEngine:
@@ -73,8 +97,6 @@ class BaseEngine:
         self.lower_bound = self.alpha / 2
         self.upper_bound = 1 - self.alpha / 2
         self.hour_day_month = hour_day_month
-
-
 
     def split_hour_day_month(self, X, Y):
         data = X[..., 0].unsqueeze(-1)
@@ -148,6 +170,12 @@ class BaseEngine:
     def train_batch(self):
         self.model.train()
         self._dataloader["train_loader"].shuffle()
+
+        # with profile(
+        #     activities=activities,
+        #     schedule=torch.profiler.schedule(wait=1, warmup=1, active=2),
+        #     on_trace_ready=lambda p: trace_handler(p, path=self._save_path, print_=False),
+        # ) as p:
         for X, label in self._dataloader["train_loader"].get_iterator():
             # print(X.shape, label.shape)
             self._optimizer.zero_grad()
@@ -182,6 +210,7 @@ class BaseEngine:
             self._optimizer.step()
 
             self._iter_cnt += 1
+                # p.step()
 
     def train(self):
         wait = 0
@@ -329,14 +358,15 @@ class BaseEngine:
         save_name = f"{self.args.model_name}-{self.args.dataset}-res.npy"
         if self.args.result_path:
             if self.args.proj:
-                self.args.result_path = os.path.join(self.args.result_path, self.args.proj)
+                self.args.result_path = os.path.join(
+                    self.args.result_path, self.args.proj
+                )
             os.makedirs(self.args.result_path, exist_ok=True)
             path = os.path.join(self.args.result_path, save_name)
         else:
             os.makedirs(self._save_path, exist_ok=True)
             path = os.path.join(self._save_path, save_name)
 
-        
         np.save(path, result)
         self._logger.info(f"Results Save Path: {path}")
 

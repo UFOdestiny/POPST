@@ -47,7 +47,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -76,7 +76,7 @@ def main():
         share_encoder=args.share_encoder,
     )
 
-    loss_fn = "MSE"  # masked_mae
+    loss_fn = "MSE"
     optimizer = torch.optim.Adam(model.parameters())
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=args.step_size, gamma=args.gamma

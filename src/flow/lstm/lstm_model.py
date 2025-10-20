@@ -26,7 +26,9 @@ class LSTM(BaseModel):
         b, f, n, t = x.shape
 
         x = x.transpose(1, 2).reshape(b * n, t, 1, f)
-        x = self.start_conv(x).squeeze()  # .transpose(0, 1)
+        x = self.start_conv(x).squeeze()
+        if len(x.shape)==3:
+            x=x.transpose(1, 2)
 
         x, _ = self.lstm(x)
 

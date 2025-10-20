@@ -43,7 +43,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -66,7 +66,7 @@ def main():
         horizon=args.horizon,
     )
 
-    loss_fn = "MSE"  # masked_mae
+    loss_fn = "MSE"
     engine = engine_template(
         device=device,
         model=model,

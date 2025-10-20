@@ -28,14 +28,15 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--gcn_depth", type=int, default=2)
+    parser.add_argument("--gcn_depth", type=int, default=3)
     parser.add_argument("--rnn_size", type=int, default=64)
     parser.add_argument("--hyperGNN_dim", type=int, default=16)
-    parser.add_argument("--node_dim", type=int, default=40)
+    parser.add_argument("--node_dim", type=int, default=32)
+    parser.add_argument("--middle_dim", type=int, default=2)
     parser.add_argument("--tanhalpha", type=int, default=3)
     parser.add_argument("--cl_decay_step", type=int, default=2000)
     parser.add_argument("--step_size", type=int, default=2500)
-    parser.add_argument("--tpd", type=int, default=96)
+    parser.add_argument("--tpd", type=int, default=24)
 
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=1e-4)
@@ -49,7 +50,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -78,16 +79,17 @@ def main():
         rnn_size=args.rnn_size,
         hyperGNN_dim=args.hyperGNN_dim,
         node_dim=args.node_dim,
-        middle_dim=2,
+        middle_dim=args.middle_dim,
         list_weight=[0.05, 0.95, 0.95],
         tpd=args.tpd,
         tanhalpha=args.tanhalpha,
         cl_decay_step=args.cl_decay_step,
         dropout=args.dropout,
         horizon=args.horizon,
+        seq_len=args.seq_len,
     )
 
-    loss_fn = "MAE"  # masked_mae
+    loss_fn = "MAE"
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lrate, weight_decay=args.wdecay
     )

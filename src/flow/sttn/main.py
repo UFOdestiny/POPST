@@ -45,7 +45,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 

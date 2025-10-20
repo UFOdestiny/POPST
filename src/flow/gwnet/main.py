@@ -9,7 +9,7 @@ import torch
 
 torch.set_num_threads(8)
 
-from gwnet_multi import GWNET_multi
+from gwnet_model import GWNET
 
 from base.quantile_engine import Quantile_Engine
 # from .gwnet import GWNET
@@ -51,7 +51,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -74,7 +74,7 @@ def main():
     if args.quantile:
         args.output_dim = 1
 
-    model = GWNET_multi(
+    model = GWNET(
         node_num=node_num,
         supports=supports,
         adp_adj=args.adp_adj,
@@ -86,9 +86,10 @@ def main():
         input_dim=args.input_dim,
         output_dim=args.output_dim,
         horizon=args.horizon,
+        seq_len=args.seq_len,
     )
 
-    loss_fn = "MAE"  # masked_mae
+    loss_fn = "MAE"
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lrate, weight_decay=args.wdecay
     )

@@ -43,7 +43,7 @@ def get_config():
     args.model_name = "GWNET_OD"
     log_dir = get_log_path(args)
     logger = get_logger(log_dir, __name__, )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
     
     return args, log_dir, logger
 

@@ -76,7 +76,7 @@ def main():
         horizon=args.horizon,
     )
 
-    loss_fn = "MSE"  # masked_mae
+    loss_fn = "MSE"
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lrate, weight_decay=args.wdecay
     )

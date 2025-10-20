@@ -38,7 +38,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -63,10 +63,10 @@ def main():
         num_layer=args.num_layer,
         cheb_k=args.cheb_k,
         seq_len=args.seq_len,
-        horizon=args.input_dim,
+        horizon=args.horizon,
     )
 
-    loss_fn = "MAE"  # masked_mae
+    loss_fn = "MAE"
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lrate, weight_decay=args.wdecay
     )

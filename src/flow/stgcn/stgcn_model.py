@@ -394,7 +394,7 @@ class STGCN(BaseModel):
     """
 
     def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, **args):
-        super(STGCN, self).__init__(**args)
+        super(STGCN, self).__init__(horizon=horizon, **args)
         # print(blocks)
         modules = []
         for l in range(len(blocks) - 3):

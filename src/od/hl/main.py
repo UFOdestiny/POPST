@@ -37,7 +37,7 @@ def get_config():
     args.model_name = "HL_OD"
     log_dir = get_log_path(args)
     logger = get_logger(log_dir, __name__, )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -57,7 +57,7 @@ def main():
                seq_len=args.seq_len,
                horizon=args.horizon)
 
-    loss_fn = "MSE"  # masked_mae
+    loss_fn = "MSE"
     optimizer = torch.optim.Adam(model.parameters())
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
 

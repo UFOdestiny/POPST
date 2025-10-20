@@ -90,7 +90,7 @@ def main():
         seq_len=args.seq_len,
     )
 
-    loss_fn = "MAE"  # masked_mae
+    loss_fn = "MAE"
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lrate, weight_decay=args.wdecay
     )

@@ -38,7 +38,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -52,9 +52,9 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
-    model = HL(node_num=node_num, input_dim=args.seq_len, output_dim=args.output_dim)
+    model = HL(node_num=node_num, input_dim=args.seq_len, output_dim=args.output_dim, seq_len=args.seq_len, horizon=args.horizon)
 
-    loss_fn = "MAE"  # masked_mae
+    loss_fn = "MAE"
     optimizer = torch.optim.Adam(model.parameters())
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=args.step_size, gamma=args.gamma

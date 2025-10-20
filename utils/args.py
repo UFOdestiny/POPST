@@ -9,17 +9,17 @@ def get_public_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
 
-    parser.add_argument("--dataset", type=str, default="sz_taxi_bike_od")  # NYC
-    parser.add_argument("--years", type=str, default="2025")
+    parser.add_argument("--dataset", type=str, default="panhandle")  # NYC
+    parser.add_argument("--years", type=str, default="2018")
     parser.add_argument("--model_name", type=str, default="")
 
     parser.add_argument("--bs", type=int, default=64)
-    parser.add_argument("--seq_len", type=int, default=6)  # flow 12 od 6
+    parser.add_argument("--seq_len", type=int, default=7)  # flow 12 od 6
     parser.add_argument("--horizon", type=int, default=1)
 
-    parser.add_argument("--feature", type=int, default=1)
-    parser.add_argument("--input_dim", type=int, default=1)  # feature
-    parser.add_argument("--output_dim", type=int, default=1)
+    parser.add_argument("--feature", type=int, default=4)
+    parser.add_argument("--input_dim", type=int, default=4)  # feature
+    parser.add_argument("--output_dim", type=int, default=4)
 
     parser.add_argument("--max_epochs", type=int, default=1000)
     parser.add_argument("--patience", type=int, default=30)
@@ -35,7 +35,7 @@ def get_public_config():
     parser.add_argument("--model_path", type=str, default="")
     parser.add_argument("--export", type=bool, default=True)
     parser.add_argument("--not_print_args", default=False, action="store_true")
-    parser.add_argument("--proj", type=str, default="")
+    parser.add_argument("--proj", type=str, default="ph")
 
     if platform.system().lower() == "linux":
         parser.add_argument(

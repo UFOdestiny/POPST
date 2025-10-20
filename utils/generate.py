@@ -144,9 +144,9 @@ class LogScaler:
 
 
 class LogMinMaxScaler:
-    def __init__(self):
-        self.data_min_ = None
-        self.data_max_ = None
+    def __init__(self, data_min, data_max):
+        self.data_min_ = torch.tensor(data_min)
+        self.data_max_ = torch.tensor(data_max)
 
     def fit(self, data):
         log_data = np.log1p(data)
@@ -230,7 +230,7 @@ def generate_data_and_idx(df, x_offsets, y_offsets, add_time_of_day, add_day_of_
 def generate_flow(args):
     # data_path = "D:/OneDrive - Florida State University/datasets/shenzhen/shenzhen_1h/values_in.npy"
     # data_path = "D:/OneDrive - Florida State University/datasets/nyc/flow.npy"
-    data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph/pattern/flow2019.npy"
+    data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph/pattern/flow.npy"
 
     # N * D * T
     data = np.load(data_path)
@@ -435,13 +435,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--dataset", type=str, default="nyc_subway_bike_od", help="dataset name"
+        "--dataset", type=str, default="panhandle", help="dataset name"
     )
-    parser.add_argument("--years", type=str, default="2025")
-    parser.add_argument("--seq_length_x", type=int, default=6, help="sequence Length")
+    parser.add_argument("--years", type=str, default="2018")
+    parser.add_argument("--seq_length_x", type=int, default=7, help="sequence Length")
     parser.add_argument("--seq_length_y", type=int, default=1, help="sequence Length")
     parser.add_argument("--tod", type=int, default=1, help="time of day")
     parser.add_argument("--dow", type=int, default=1, help="day of week")
 
     args = parser.parse_args()
-    generate_od_2(args)
+    generate_flow(args)

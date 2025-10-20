@@ -30,7 +30,9 @@ class DSTAGNN(BaseModel):
         need_concat = []
         res_att = 0
         for block in self.BlockList:
+            # print(f"Block Input:", x.shape, res_att.shape)
             x, res_att = block(x, res_att)
+            print(f"Block Output:", x.shape, res_att.shape)
             need_concat.append(x)
 
         final_x = torch.cat(need_concat, dim=-1)
@@ -56,7 +58,7 @@ class DSTAGNN_block(nn.Module):
         self.EmbedT = Embedding(seq_len, node_num, num_of_d, 'T', device)
         self.EmbedS = Embedding(node_num, d_model, num_of_d, 'S', device)
 
-        self.TAt = MultiHeadAttention(device, node_num, d_k, d_v, n_head, num_of_d)
+        self.TAt = MultiHeadAttention(device, node_num, d_k, d_v, n_head, num_of_d, seq_len)
         self.SAt = SMultiHeadAttention(device, d_model, d_k, d_v, K)
 
         self.cheb_conv_SAt = cheb_conv_withSAt(K, cheb_polynomials, in_channels, nb_chev_filter, node_num)
@@ -74,6 +76,9 @@ class DSTAGNN_block(nn.Module):
             nn.Linear(3 * seq_len - 12, seq_len),
             nn.Dropout(0.05),
         )
+
+        self.fcmy_2 = nn.Conv2d(in_channels=nb_time_filter, out_channels=in_channels, kernel_size=(1, 3 * seq_len - 12-seq_len+1), stride=(1, 1))
+
         self.ln = nn.LayerNorm(nb_time_filter)
 
 
@@ -104,24 +109,25 @@ class DSTAGNN_block(nn.Module):
         x_gtu.append(self.gtu5(X))
         x_gtu.append(self.gtu7(X))
         time_conv = torch.cat(x_gtu, dim=-1)
-        time_conv = self.fcmy(time_conv)
+        time_conv = self.fcmy(time_conv) # self.fcmy(time_conv)
 
         if num_of_features == 1:
             time_conv_output = self.relu(time_conv)
         else:
-            time_conv_output = self.relu(X + time_conv)
+            time_conv_output = self.relu(X + time_conv) #self.relu(X + time_conv)
 
         if num_of_features == 1:
             x_residual = self.residual_conv(x.permute(0, 2, 1, 3))
         else:
-            x_residual = x.permute(0, 2, 1, 3)
+            x_residual = x.permute(0, 2, 1, 3) #x.permute(0, 2, 1, 3)
 
         x_residual = self.ln(F.relu(x_residual + time_conv_output).permute(0, 3, 2, 1)).permute(0, 2, 3, 1)
+        
         return x_residual, re_At
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, device, d_model, d_k ,d_v, n_head, num_of_d):
+    def __init__(self, device, d_model, d_k ,d_v, n_head, num_of_d,seq_len):
         super(MultiHeadAttention, self).__init__()
         self.d_model = d_model
         self.d_k = d_k
@@ -129,6 +135,7 @@ class MultiHeadAttention(nn.Module):
         self.n_head = n_head
         self.num_of_d = num_of_d
         self.device = device
+        self.seq_len=seq_len
         self.W_Q = nn.Linear(d_model, d_k * n_head, bias=False)
         self.W_K = nn.Linear(d_model, d_k * n_head, bias=False)
         self.W_V = nn.Linear(d_model, d_v * n_head, bias=False)
@@ -147,6 +154,7 @@ class MultiHeadAttention(nn.Module):
         context, res_attn = ScaledDotProductAttention(self.d_k)(Q, K, V, attn_mask, res_att)
         context = context.transpose(2, 3).reshape(bs, self.num_of_d, -1, self.n_head * self.d_v)
         output = self.fc(context)
+        # residual = residual.permute(0,2,1,3)
         return nn.LayerNorm(self.d_model).to(self.device)(output + residual), res_attn
 
 

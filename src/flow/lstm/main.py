@@ -44,7 +44,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -69,6 +69,7 @@ def main():
         layer=args.layer,
         dropout=args.dropout,
         horizon=args.horizon,
+        seq_len=args.seq_len,
     )
 
     loss_fn = "MAE"

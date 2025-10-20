@@ -35,7 +35,7 @@ def calculate_random_walk_matrix(adj_mx):
 
 
 class GaussNorm_T(nn.Module):
-    def __init__(self, c_in, c_out, feature, seq_len):
+    def __init__(self, c_in, c_out, feature, seq_len,x):
         super(GaussNorm_T, self).__init__()
         self.c_in = c_in
         self.c_out = c_out
@@ -67,7 +67,7 @@ class GaussNorm_T(nn.Module):
 
 
 class GaussNorm_S(nn.Module):
-    def __init__(self, c_in, c_out, feature):
+    def __init__(self, c_in, c_out, feature,x):
         super(GaussNorm_S, self).__init__()
         self.c_in = c_in
         self.c_out = c_out
@@ -323,8 +323,8 @@ class ITCN(nn.Module):
 
 class UQGNN(BaseModel):
     def __init__(self, A, node_num, hidden_dim_t, hidden_dim_s, rank_t, rank_s,
-                 num_timesteps_input, num_timesteps_output, device, input_dim, output_dim, seq_len, min_vec, **args):
-        super(UQGNN, self).__init__(node_num, input_dim, output_dim, **args)
+                 num_timesteps_input, num_timesteps_output, device, input_dim, output_dim, seq_len, min_vec,**args):
+        super(UQGNN, self).__init__(node_num, input_dim, output_dim, seq_len,**args)
 
         self.num_feature = input_dim
         self.seq_len = seq_len
@@ -332,12 +332,12 @@ class UQGNN(BaseModel):
         self.TC1 = ITCN(node_num, hidden_dim_t, kernel_size=3).to(device=device)
         self.TC2 = ITCN(hidden_dim_t, rank_t, kernel_size=3, activation='linear').to(device=device)
         self.TC3 = ITCN(rank_t, hidden_dim_t, kernel_size=3).to(device=device)
-        self.TGau = mGaussNorm_T(hidden_dim_t, node_num, self.num_feature, self.seq_len, min_vec).to(device=device)
+        self.TGau = GaussNorm_T(hidden_dim_t, node_num, self.num_feature, self.seq_len, min_vec).to(device=device)
 
         self.SC1 = MDGCN(num_timesteps_input, hidden_dim_s, 3).to(device=device)
         self.SC2 = MDGCN(hidden_dim_s, rank_s, 2, activation='linear').to(device=device)
         self.SC3 = MDGCN(rank_s, hidden_dim_s, 2).to(device=device)
-        self.SGau = mGaussNorm_S(hidden_dim_s, num_timesteps_output, self.num_feature, min_vec).to(device=device)
+        self.SGau = GaussNorm_S(hidden_dim_s, num_timesteps_output, self.num_feature, min_vec).to(device=device)
 
         self.A = A
         self.A_q = torch.from_numpy(calculate_random_walk_matrix(self.A).T.astype('float32'))
@@ -356,16 +356,17 @@ class UQGNN(BaseModel):
         X_t3 = self.TC3(X_t2)
         loc_t, scale_t = self.TGau(X_t3)
 
+
         # X=X[:,:,:,0].permute(0,2,1)
         X_s1 = self.SC1(X, self.A_q, self.A_h)
         X_s2 = self.SC2(X_s1, self.A_q, self.A_h)
         X_s3 = self.SC3(X_s2, self.A_q, self.A_h)
         loc_s, scale_s = self.SGau(X_s3)
-        #
+
         loc_res = loc_s + loc_t
         scale_res = scale_t + scale_s
 
-        return loc_res, scale_res
+        return loc_res#, scale_res
 
 
 def sigma_to_matrix(sigma, feature, index, min_vec):

@@ -58,7 +58,7 @@ def get_config():
     )
     # logger.info(f"Comment: {args.comment}")
 
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
     return args, log_dir, logger
 
 

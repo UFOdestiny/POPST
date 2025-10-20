@@ -27,7 +27,7 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--n_filters", type=int, default=64)
+    parser.add_argument("--n_filters", type=int, default=16)
     parser.add_argument("--max_diffusion_step", type=int, default=2)
     parser.add_argument("--filter_type", type=str, default="doubletransition")
     parser.add_argument("--num_rnn_layers", type=int, default=2)
@@ -46,7 +46,7 @@ def get_config():
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -78,10 +78,11 @@ def main():
         filter_type=args.filter_type,
         num_rnn_layers=args.num_rnn_layers,
         cl_decay_steps=args.cl_decay_steps,
-        horizon=args.horizon
+        horizon=args.horizon,
+        seq_len=args.seq_len
     )
 
-    loss_fn = "MAE"  # masked_mae
+    loss_fn = "MAE"
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lrate, weight_decay=args.wdecay
     )

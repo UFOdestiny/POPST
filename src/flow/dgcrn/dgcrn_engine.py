@@ -54,8 +54,8 @@ class DGCRN_Engine(BaseEngine):
             self._iter_cnt += 1
 
 
-    def evaluate(self, mode, model_path=None, export=None):
-        if mode == "test":
+    def evaluate(self, mode, model_path=None, export=None, train_test=False):
+        if mode == "test" and train_test == False:
             if model_path:
                 self.load_exact_model(model_path)
             else:
@@ -96,18 +96,21 @@ class DGCRN_Engine(BaseEngine):
 
         if mode == "val":
             self.metric.compute_one_batch(pred, label, mask_value, "valid", scale=scale)
-
-        elif mode == "test":
-            self._logger.info(f"check mask value {mask_value}")
-
+        
+        elif mode == "test" or mode == "export":
             for i in range(self.model.horizon):
                 s = scales[:, i, :].unsqueeze(1) if len(scales) > 0 else None
                 self.metric.compute_one_batch(
-                    preds[:, i, :].unsqueeze(1), labels[:, i, :].unsqueeze(1), mask_value, "test", scale=s
+                    preds[:, i, :].unsqueeze(1),
+                    labels[:, i, :].unsqueeze(1),
+                    mask_value,
+                    "test",
+                    scale=s,
                 )
 
-            for i in self.metric.get_test_msg():
-                self._logger.info(i)
+            if not train_test:
+                for i in self.metric.get_test_msg():
+                    self._logger.info(i)
 
             if export:
                 self.save_result(preds, labels)

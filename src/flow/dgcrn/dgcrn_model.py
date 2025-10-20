@@ -156,14 +156,14 @@ class DGCRN(BaseModel):
     def compute_future_info(self, his):
         b, _, n, _ = his.shape
         tod, dow = his[:, 0, 0, :], his[:, 1, 0, :]
-        time_unit = 1 / self.tpd * self.horizon
+        time_unit = 1 / self.tpd * self.seq_len  #seq_len horizon
         day_unit = 1 / 7
 
         out_tod = torch.full_like(tod, 0)
         out_dow = torch.full_like(dow, 0)
         for i in range(b):
             temp = tod[i] + time_unit
-            temp2 = dow[i, -1].repeat(self.horizon)
+            temp2 = dow[i, -1].repeat(self.seq_len) #seq_len horizon
 
             idxs = torch.where(temp >= 1)[0]
             if len(idxs) != 0:

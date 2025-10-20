@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from base.model import BaseModel
 
-class GWNET_multi(BaseModel):
+class GWNET(BaseModel):
     '''
     Reference code: https://github.com/nnzhan/Graph-WaveNet
     '''
@@ -12,7 +12,7 @@ class GWNET_multi(BaseModel):
                  skip_channels, end_channels, horizon=1,
                  kernel_size=2, blocks=4, layers=2, **args):
 
-        super(GWNET_multi, self).__init__(**args)
+        super(GWNET, self).__init__(horizon=horizon,**args)
         self.supports = supports
         self.supports_len = len(supports)
         self.adp_adj = adp_adj

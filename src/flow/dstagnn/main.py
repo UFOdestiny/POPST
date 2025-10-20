@@ -36,7 +36,7 @@ def get_config():
     parser.add_argument("--time_stride", type=int, default=1)
     parser.add_argument("--d_model", type=int, default=256)
     parser.add_argument("--d_k", type=int, default=32)
-    parser.add_argument("--n_head", type=int, default=3)
+    parser.add_argument("--n_head", type=int, default=1)
 
     parser.add_argument("--lrate", type=float, default=1e-4)
     parser.add_argument("--wdecay", type=float, default=0)
@@ -44,15 +44,13 @@ def get_config():
     args = parser.parse_args()
 
     args.model_name = "DSTAGNN"
-    
-    args.seq_len=7
 
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,
         __name__,
     )
-    print_args(logger, args)  # logger.info(args)
+    print_args(logger, args)
 
     return args, log_dir, logger
 
@@ -106,7 +104,7 @@ def main():
         seq_len=args.seq_len
     )
 
-    loss_fn = "MAE"  # masked_mae
+    loss_fn = "MAE"
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lrate, weight_decay=args.wdecay
     )
