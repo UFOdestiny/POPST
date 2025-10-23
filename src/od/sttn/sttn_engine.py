@@ -110,9 +110,8 @@ class STTN_Engine(BaseEngine):
         labels = torch.cat(labels, dim=0)
 
         # handle the precision issue when performing inverse transform to label
-        mask_value = torch.tensor(0)
-        if labels.min() < 1:
-            mask_value = labels.min()
+        mask_value = torch.tensor(torch.nan)
+
 
         if mode == "val":
             self.metric.compute_one_batch(pred, label, mask_value, "valid", scale=scale)

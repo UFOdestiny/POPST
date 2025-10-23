@@ -36,9 +36,8 @@ class PGNN_Engine(BaseEngine):
             pred = self.model(X, X)
 
             # handle the precision issue when performing inverse transform to label
-            mask_value = torch.tensor(0)
-            if label.min() < 1:
-                mask_value = label.min()
+            mask_value = torch.tensor(torch.nan)
+
             if self._iter_cnt == 0:
                 self._logger.info(f'check mask value {mask_value}')
 
@@ -106,9 +105,8 @@ class PGNN_Engine(BaseEngine):
         labels = torch.cat(labels, dim=0)
 
         # handle the precision issue when performing inverse transform to label
-        mask_value = torch.tensor(0)
-        if labels.min() < 1:
-            mask_value = labels.min()
+        mask_value = torch.tensor(torch.nan)
+
 
         if mode == 'val':
             mae = masked_mae(pred, label, mask_value).item()
@@ -197,9 +195,8 @@ class PGNN_Engine_Quantile(Quantile_Engine):
             pred = self.model(X, X)
 
             # handle the precision issue when performing inverse transform to label
-            mask_value = torch.tensor(0)
-            if label.min() < 1:
-                mask_value = label.min()
+            mask_value = torch.tensor(torch.nan)
+
             if self._iter_cnt == 0:
                 self._logger.info(f'check mask value {mask_value}')
 
@@ -285,9 +282,8 @@ class PGNN_Engine_Quantile(Quantile_Engine):
         labels = torch.cat(labels, dim=0)
 
         # handle the precision issue when performing inverse transform to label
-        mask_value = torch.tensor(0)
-        if labels.min() < 1:
-            mask_value = labels.min()
+        mask_value = torch.tensor(torch.nan)
+
 
         if mode == 'val':
             mae = masked_mae(mid, label, mask_value).item()

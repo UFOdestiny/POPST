@@ -114,6 +114,7 @@ def main():
         step_size=args.step_size,
         horizon=args.horizon,
         metric_list=["MAE", "MAPE", "RMSE"],
+
         args=args,
     )
 

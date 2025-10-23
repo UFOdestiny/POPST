@@ -57,7 +57,7 @@ class Metrics:
         )
 
     # quantile=None, upper=None, lower=None
-    def compute_one_batch(self, preds, labels, null_val=None, mode="train", **kwargs):
+    def compute_one_batch(self, preds, labels, null_val, mode="train", **kwargs):
         grad_res = None
         for i, fname in enumerate(self.metric_lst):
             res = None
@@ -169,9 +169,21 @@ def get_mask(labels, null_val):
     else:
         mask = labels != null_val
     mask = mask.float()
-    mask /= torch.mean(mask)
-    mask = torch.where(torch.isnan(mask), torch.zeros_like(mask), mask)
+    # mask /= torch.mean(mask)
+    # mask = torch.where(torch.isnan(mask), torch.zeros_like(mask), mask)
     return mask
+
+
+def get_mask_mean(loss, labels, null_val):
+    mask = get_mask(labels, null_val)
+    valid_count = torch.sum(mask)
+    if valid_count == 0:
+        return torch.tensor(0.0, device=loss.device)
+    loss = loss * mask
+
+    loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
+    
+    return torch.sum(loss) / valid_count
 
 
 def masked_pinball(preds, labels, null_val, quantile):
@@ -191,16 +203,10 @@ def masked_pinball(preds, labels, null_val, quantile):
 
 
 def masked_mse(preds, labels, null_val):
-    # print(preds.shape, labels.shape)
-    # Batch size, Horizon, N, Features/N
-    assert preds.shape == labels.shape
-    # mask = get_mask(labels, null_val)
-
+    assert preds.shape == labels.shape, f"preds: {preds.shape}, labels: {labels.shape}"
     loss = (preds - labels) ** 2
-    # loss = loss * mask
-    loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-
-    return torch.mean(loss)
+    loss = get_mask_mean(loss, labels, null_val)
+    return loss
 
 
 def masked_rmse(preds, labels, null_val):
@@ -209,35 +215,25 @@ def masked_rmse(preds, labels, null_val):
 
 def masked_mae(preds, labels, null_val):
     # print("preds:", preds.shape, "labels:", labels.shape)
-    assert preds.shape == labels.shape
-    # mask = get_mask(labels, null_val)
-
+    assert preds.shape == labels.shape, f"preds: {preds.shape}, labels: {labels.shape}"
     loss = torch.abs(preds - labels)
-
-    # loss = loss * mask
-    # loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-
-    return torch.mean(loss)
+    loss = get_mask_mean(loss, labels, null_val)
+    return loss
 
 
 def masked_mape(preds, labels, null_val):
-    mask = get_mask(labels, null_val)
-    loss = torch.abs(preds - labels) / labels
-    loss = loss * mask
-    loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-
-    return torch.mean(loss) * 100  # percent
+    assert preds.shape == labels.shape, f"preds: {preds.shape}, labels: {labels.shape}"
+    loss = torch.abs(preds - labels) / labels 
+    # loss = torch.abs(preds - labels) / ((torch.abs(labels) + torch.abs(preds)) / 2)
+    loss = get_mask_mean(loss, labels, torch.tensor(0))
+    return loss * 100  # percent
 
 
 def masked_kl(preds, labels, null_val):
-    # mask = get_mask(labels, null_val)
-
+    assert preds.shape == labels.shape, f"preds: {preds.shape}, labels: {labels.shape}"
     loss = labels * torch.log((labels + 1e-5) / (preds + 1e-5))
-
-    # loss = loss * mask
-    loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-
-    return torch.mean(loss)
+    loss = get_mask_mean(loss, labels, null_val)
+    return loss
 
 
 def masked_mpiw(lower, upper, null_val=None):

@@ -32,9 +32,8 @@ class STGCN_Gaussian_Engine(BaseEngine):
                 pred, label = self._inverse_transform([pred, label])
 
             # handle the precision issue when performing inverse transform to label
-            mask_value = torch.tensor(0)
-            if label.min() < 1:
-                mask_value = label.min()
+            mask_value = torch.tensor(torch.nan)
+
             if self._iter_cnt == 0:
                 self._logger.info(f'check mask value {mask_value}')
 
@@ -127,9 +126,8 @@ class STGCN_Gaussian_Engine(BaseEngine):
         labels = torch.cat(labels, dim=0)
 
         # handle the precision issue when performing inverse transform to label
-        mask_value = torch.tensor(0)
-        if labels.min() < 1:
-            mask_value = labels.min()
+        mask_value = torch.tensor(torch.nan)
+
 
         if mode == 'val':
             mae = masked_mae(preds, labels, mask_value).item()

@@ -116,6 +116,7 @@ def main():
         normalize=args.normalize,
         # hour_day_month=args.hour_day_month,
         metric_list=["MAE", "MAPE", "RMSE"],
+
         args=args,
     )
 

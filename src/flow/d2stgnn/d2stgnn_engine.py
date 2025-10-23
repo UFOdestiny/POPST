@@ -27,9 +27,8 @@ class D2STGNN_Engine(BaseEngine):
             pred, label = self._inverse_transform([pred, label])
 
             # handle the precision issue when performing inverse transform to label
-            mask_value = torch.tensor(0)
-            if label.min() < 1:
-                mask_value = label.min()
+            mask_value = torch.tensor(torch.nan)
+
             if self._iter_cnt == 0:
                 self._logger.info(f'check mask value {mask_value}')
 
