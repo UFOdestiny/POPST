@@ -1,12 +1,15 @@
+import math
+import multiprocessing
 import numpy as np
 from statsmodels.tsa.arima.model import ARIMA
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from base.model import BaseModel
+import os
 
 
 class ARIMA_(BaseModel):
-    def __init__(self, order=(6, 0, 0), n_threads=8, **args):
+    def __init__(self, order=(6, 0, 0), n_threads=16, **args):
         super().__init__(**args)
         """
         ARIMA 多序列预测（多线程版）
@@ -14,7 +17,8 @@ class ARIMA_(BaseModel):
         :param n_threads: 并行线程数
         """
         self.order = order
-        self.n_threads = n_threads
+        self.n_threads = n_threads #multiprocessing.cpu_count()  # n_threads
+        print("self.n_threads", self.n_threads)
 
     def _fit_forecast(self, ts, steps, idx):
         i, j = idx
@@ -52,9 +56,7 @@ class ARIMA_(BaseModel):
             #     Y_pred[:, i, j] = forecast
 
             # tqdm()
-            for f in tqdm(
-                as_completed(futures), total=len(futures), desc="ARIMA predicting"
-            ):
+            for f in tqdm(as_completed(futures), total=len(futures), desc="ARIMA"):
                 i, j, forecast = f.result()
                 Y_pred[:, i, j] = forecast
 

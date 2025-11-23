@@ -47,12 +47,12 @@ class OutputBlock(nn.Module):
     def forward(self, x):
         x = self.tmp_conv1(x)
         # x = self.tmp_conv1(x)
-        x = self.tc1_ln(x.permute(0, 2, 3, 1))
-        x = self.fc1(x)
+        x = self.tc1_ln(x.permute(0, 2, 3, 1))  # (b, t, n, channels[0])
+        x = self.fc1(x)  # (b, t, n, channels[1])
         x = self.relu(x)
 
-        x = self.fc2(x)
-        x = x.permute(0, 1, 3, 2)
+        x = self.fc2(x)  # (b, t, n, end_channel)
+        x = x.permute(0, 3, 1, 2)  # (b, end_channel, t, n)
         # x = self.fc2(x).permute(0, 2, 1, 3)
         # print("OutputBlock",x.shape)
         return x
@@ -218,181 +218,10 @@ class CausalConv2d(nn.Conv2d):
         return result
 
 
-class STGCN_NB(BaseModel):
-    def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, **args):
-        super(STGCN_NB, self).__init__(**args)
-        # print(blocks)
-        modules = []
-        for l in range(len(blocks) - 3):
-            modules.append(
-                STConvBlock(
-                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
-                )
-            )
-        self.st_blocks = nn.Sequential(*modules)
-        Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
-        self.Ko = Ko
-
-        self.output_n = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
-        )
-        self.output_p = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
-        )
-        self.output_pi = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
-        )
-
-        # self.v = torch.tensor(0.9999)
-
-    def forward(self, x, label, i=None):  # (b, t, n, f)
-        x = x.permute(0, 3, 1, 2)  # b,f,t,n
-        x = self.st_blocks(x)
-
-        n = self.output_n(x).transpose(2, 3)
-        p = self.output_p(x).transpose(2, 3)
-        pi = self.output_pi(x).transpose(2, 3)
-
-        # n = F.softplus(n)
-        # p = F.sigmoid(p)
-        # pi = F.sigmoid(pi)
-
-        n = F.softplus(n) + 1e-6
-        p = torch.clamp(F.sigmoid(p), min=1e-4, max=1 - 1e-4)  # 避免 p 过于接近 0 或 1
-        pi = torch.clamp(F.sigmoid(pi), min=1e-4, max=1 - 1e-4)  # 避免 pi 过于接近边界
-
-        return n, p, pi
-
-
-class STGCN_Gaussian(BaseModel):
-    def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, **args):
-        super(STGCN_Gaussian, self).__init__(**args)
-        # print(blocks)
-        modules = []
-        for l in range(len(blocks) - 3):
-            modules.append(
-                STConvBlock(
-                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
-                )
-            )
-        self.st_blocks = nn.Sequential(*modules)
-        Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
-        self.Ko = Ko
-
-        self.output = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
-        )
-        self.output2 = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
-        )
-
-    def forward(self, x, label, i=None):  # (b, t, n, f)
-        x = x.permute(0, 3, 1, 2)  # b,f,t,n
-        x = self.st_blocks(x)
-
-        mu = self.output(x).transpose(2, 3)
-        sigma = self.output2(x).transpose(2, 3)
-
-        mu = F.softplus(mu)
-        sigma = F.sigmoid(sigma)
-
-        return mu, sigma
-
-
-class STGCN_mGau(BaseModel):
-    def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, min_vec, **args):
-        super(STGCN_mGau, self).__init__(**args)
-        # print(blocks)
-        modules = []
-        # modules2 = []
-        for l in range(len(blocks) - 3):
-            modules.append(
-                STConvBlock(
-                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
-                )
-            )
-            # modules2.append(STConvBlock(Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout))
-
-        self.st_blocks = nn.Sequential(*modules)
-        # self.st_blocks2 = nn.Sequential(*modules2)
-
-        Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
-        self.Ko = Ko
-
-        self.output_mu = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
-        )
-
-        self.half = (feature + 1) * feature // 2
-        self.full = feature**2
-        self.feature = feature
-        self.idx_up = torch.triu_indices(self.feature, self.feature)
-        self.idx_diag = list(range(self.feature))
-
-        self.output_sigma = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], self.half, self.node_num
-        )
-
-        # NYC: 1E-6 NYC M: 1e-5  SZ: 1e-1 Chicago: 1e-4
-        self.min_vec = min_vec
-        self.horizon = horizon
-
-    def forward(self, x, label, i=None):  # (b, t, n, f)
-        origin_x = x.permute(0, 3, 1, 2)  # b,f,t,n
-
-        x = self.st_blocks(origin_x)
-
-        mu = self.output_mu(x).transpose(2, 3)
-        sigma = self.output_sigma(x).transpose(2, 3)
-
-        mu = F.softplus(mu)
-        sigma = F.softplus(sigma)
-
-        # print(f"mu min:{mu.min()}, sigma min:{pd_matrix.min()}")
-
-        z = torch.zeros(*sigma.shape[:3], self.feature, self.feature).to(
-            device=sigma.device
-        )
-        z[..., self.idx_up[0], self.idx_up[1]] = sigma[..., :]
-        z[..., self.idx_up[1], self.idx_up[0]] = sigma[..., :]
-
-        # z[..., self.idx_diag, self.idx_diag] += 1e-2
-
-        # z = (z + z.transpose(-2, -1)) / 2
-        # eigval, eigvec = torch.linalg.eigh(z)
-        # adjusted_eigval = torch.clamp(eigval, min=self.min_vec)  # 防止过小的特征值
-        # pd_matrix = torch.matmul(eigvec, torch.diag_embed(adjusted_eigval))
-        # pd_matrix = torch.matmul(pd_matrix, eigvec.transpose(-2, -1))
-
-        # pd_matrix = torch.matmul(z, z.transpose(-2, -1))
-        # pd_matrix[..., self.idx_diag, self.idx_diag] += 1e-4
-
-        # eigval, eigvec = torch.linalg.eigh(z)
-        # adjusted_eigval = torch.clamp(eigval, min=self.min_vec)
-
-        # step1 = torch.matmul(eigvec, torch.diag_embed(adjusted_eigval))
-        # pd_matrix = torch.matmul(step1, eigvec.transpose(-2, -1))
-
-        # 1. matrix_exp
-        # pd_matrix = torch.linalg.matrix_exp(z)
-
-        # 2. Symmetrize and ensure positive definiteness
-        eigval, eigvec = torch.linalg.eigh(z)
-        clamp_eigval = torch.clamp(eigval, min=self.min_vec)
-        step1 = torch.matmul(eigvec, torch.diag_embed(clamp_eigval))
-        pd_matrix = torch.matmul(step1, eigvec.transpose(-2, -1))
-
-        # pd_matrix = 0.5 * (pd_matrix + pd_matrix.transpose(-2, -1))
-        # print(f"z min:{z.min()}, covariance min:{pd_matrix.min()}")
-
-        return mu, pd_matrix
-
-
 class STGCN(BaseModel):
     """
     Reference code: https://github.com/hazdzz/STGCN
     """
-
     def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, **args):
         super(STGCN, self).__init__(horizon=horizon, **args)
         # print(blocks)
@@ -425,58 +254,24 @@ class STGCN(BaseModel):
         result = None
 
         for i in range(self.horizon):
-            x = x.permute(0, 3, 1, 2)  # b,f,t,n
-            x = self.st_blocks(x)
+            x = x.permute(0, 3, 1, 2)  # (b, f, t, n) - reshape to channel-first format
+            x = self.st_blocks(x)  # Process through ST blocks: (b, f, t, n)
             if self.Ko > 1:
-                x = self.output(x)
+                x = self.output(x)  # (b, f, t, n)
             elif self.Ko == 0:
-                x = self.fc1(x.permute(0, 2, 3, 1))
+                x = self.fc1(x.permute(0, 2, 3, 1))  # (b, t, n, f) -> FC layer
                 x = self.relu(x)
-                x = self.fc2(x).permute(0, 3, 1, 2)
-            x = x.transpose(2, 3)
+                x = self.fc2(x).permute(0, 3, 1, 2)  # (b, f, t, n)
+            
+            # Convert back to (b, t, n, f) format
+            x = x.permute(0, 2, 3, 1)  # (b, t, n, f)
 
             if result is None:
                 result = x
             else:
-                result = torch.cat([result, x], dim=1)
+                result = torch.cat([result, x], dim=1)  # concatenate along time dimension
 
-            origin_x = torch.cat([origin_x, x], dim=1)
-            x = origin_x[:, -step:, :, :]
+            origin_x = torch.cat([origin_x, x], dim=1)  # (b, t+1, n, f)
+            x = origin_x[:, -step:, :, :]  # get last 'step' timesteps
 
         return result
-
-
-class STGCN_mNB(BaseModel):
-    def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, **args):
-        super(STGCN_mNB, self).__init__(**args)
-        # print(blocks)
-        modules = []
-        for l in range(len(blocks) - 3):
-            modules.append(
-                STConvBlock(
-                    Kt, Ks, self.node_num, blocks[l][-1], blocks[l + 1], gso, dropout
-                )
-            )
-        self.st_blocks = nn.Sequential(*modules)
-        Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
-        self.Ko = Ko
-
-        self.output = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
-        )
-        self.output2 = OutputBlock(
-            Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
-        )
-        self.horizon = horizon
-
-    def forward(self, x, label, i=None):  # (b, t, n, f)
-        origin_x = x.permute(0, 3, 1, 2)  # b,f,t,n
-        x = self.st_blocks(origin_x)
-
-        mu = self.output(x).transpose(2, 3)
-        p = self.output2(x).transpose(2, 3)
-
-        mu = F.softplus(mu)
-        p = F.sigmoid(p)
-
-        return mu, p

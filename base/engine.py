@@ -8,29 +8,6 @@ from base.metrics import compute_all_metrics, Metrics
 import torchvision.models as models
 from torch.profiler import profile, ProfilerActivity, record_function
 
-
-activities = [ProfilerActivity.CPU]
-if torch.cuda.is_available():
-    device = "cuda"
-    activities += [ProfilerActivity.CUDA]
-elif torch.xpu.is_available():
-    device = "xpu"
-    activities += [ProfilerActivity.XPU]
-else:
-    print(
-        "Neither CUDA nor XPU devices are available to demonstrate profiling on acceleration devices"
-    )
-    import sys
-    sys.exit(0)
-
-sort_by_keyword = "self_" + device + "_time_total"
-def trace_handler(p, path, print_=False):
-    output = p.key_averages().table(sort_by=sort_by_keyword, row_limit=20)
-    if print_:
-        print(output)
-    p.export_chrome_trace(f"{path}_{p.step_num}.json")
-
-
 class BaseEngine:
     def __init__(
         self,
@@ -353,13 +330,13 @@ class BaseEngine:
 
         result = np.vstack((preds, labels))
         save_name = f"{self.args.model_name}-{self.args.dataset}-res.npy"
-        if self.args.result_path:
+        if self._save_path:
             if self.args.proj:
-                self.args.result_path = os.path.join(
-                    self.args.result_path, self.args.proj
+                self._save_path = os.path.join(
+                    self._save_path, self.args.proj
                 )
-            os.makedirs(self.args.result_path, exist_ok=True)
-            path = os.path.join(self.args.result_path, save_name)
+            os.makedirs(self._save_path, exist_ok=True)
+            path = os.path.join(self._save_path, save_name)
         else:
             os.makedirs(self._save_path, exist_ok=True)
             path = os.path.join(self._save_path, save_name)

@@ -70,7 +70,7 @@ def main():
         blocks.append([128])
     elif Ko > 0:
         blocks.append([128, 128])
-    blocks.append([args.horizon])
+    blocks.append([args.input_dim])  # Output should match input feature dimension
 
     dataloader, scaler = load_dataset(data_path, args, logger)
 

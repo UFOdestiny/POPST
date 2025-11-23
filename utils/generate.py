@@ -144,7 +144,7 @@ class LogScaler:
 
 
 class LogMinMaxScaler:
-    def __init__(self, data_min, data_max):
+    def __init__(self, data_min=0, data_max=0):
         self.data_min_ = torch.tensor(data_min)
         self.data_max_ = torch.tensor(data_max)
 
@@ -230,7 +230,7 @@ def generate_data_and_idx(df, x_offsets, y_offsets, add_time_of_day, add_day_of_
 def generate_flow(args):
     # data_path = "D:/OneDrive - Florida State University/datasets/shenzhen/shenzhen_1h/values_in.npy"
     # data_path = "D:/OneDrive - Florida State University/datasets/nyc/flow.npy"
-    data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph/pattern/flow.npy"
+    data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph/pattern/panhandle.npy"
 
     # N * D * T
     data = np.load(data_path)

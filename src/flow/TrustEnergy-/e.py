@@ -171,8 +171,8 @@ class Quantile_Engine(BaseEngine):
 
         result = np.vstack((mids, lowers, uppers, labels))
         save_name = f"{self.args.model_name}-{self.args.dataset}-res.npy"
-        if self.args.result_path:
-            path = os.path.join(self.args.result_path, save_name)
+        if self._save_path:
+            path = os.path.join(self._save_path, save_name)
         else:
             path = os.path.join(self._save_path, save_name)
 

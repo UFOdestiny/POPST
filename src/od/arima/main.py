@@ -14,7 +14,7 @@ import torch
 torch.set_num_threads(8)
 
 from arima_model import ARIMA_
-from utils.args import get_public_config, get_log_path, print_args, check_quantile
+from utils.args import get_public_config, get_log_path, print_args, check_quantile, tuple_type
 from utils.dataloader import load_dataset, get_dataset_info, load_dataset_plain
 from utils.log import get_logger
 
@@ -29,8 +29,7 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--arima_order", type=tuple, default=(6, 0, 0))
-
+    parser.add_argument("--order", type=tuple_type, default=(6, 0, 0))
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
@@ -60,8 +59,8 @@ def main():
     args, engine_template = check_quantile(args, ARIMA_Engine, Quantile_Engine)
 
     model = ARIMA_(
-        order=(6, 0, 0),
-        n_threads=8,
+        order=args.order,
+        n_threads=16,
         node_num=node_num,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
