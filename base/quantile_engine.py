@@ -171,15 +171,15 @@ class Quantile_Engine(BaseEngine):
 
         result = np.vstack((mids, lowers, uppers, labels))
         save_name = f"{self.args.model_name}-{self.args.dataset}-res.npy"
-        if self._save_path:
-            if self.args.proj:
-                self._save_path = os.path.join(self._save_path, self.args.proj)
-            os.makedirs(self._save_path, exist_ok=True)
-            path = os.path.join(self._save_path, save_name)
-        else:
-            os.makedirs(self._save_path, exist_ok=True)
-            path = os.path.join(self._save_path, save_name)
-
+        # if self._save_path:
+        #     if self.args.proj:
+        #         self._save_path = os.path.join(self._save_path, self.args.proj)
+        #     os.makedirs(self._save_path, exist_ok=True)
+        #     path = os.path.join(self._save_path, save_name)
+        # else:
+        #     os.makedirs(self._save_path, exist_ok=True)
+        #     path = os.path.join(self._save_path, save_name)
+        path = os.path.join(self._save_path, save_name)
         np.save(path, result)
         self._logger.info(f"Results Save Path: {path}")
 

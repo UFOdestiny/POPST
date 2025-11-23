@@ -17,14 +17,11 @@ class DGCRN_Engine(BaseEngine):
         for X, label in self._dataloader["train_loader"].get_iterator():
             
             self._optimizer.zero_grad()
-            if (
-                self._iter_cnt % self._step_size == 0
-                and self._task_level < self._horizon
-            ):
+            if self._iter_cnt % self._step_size == 0 and self._task_level < self._horizon :
                 self._task_level += 1
             # X (b, t, n, f), label (b, t, n, 1)
             X, label = self._to_device(self._to_tensor([X, label]))
-            pred = self.model(X, label, self._iter_cnt, self._task_level)
+            pred = self.model(X, label, self._iter_cnt, self._horizon)
 
             # handle the precision issue when performing inverse transform to label
             mask_value = torch.tensor(torch.nan)
@@ -70,7 +67,7 @@ class DGCRN_Engine(BaseEngine):
             for X, label in self._dataloader[mode + "_loader"].get_iterator():
                 # X (b, t, n, f), label (b, t, n, 1)
                 X, label = self._to_device(self._to_tensor([X, label]))
-                pred = self.model(X, label, self._iter_cnt, self._task_level)
+                pred = self.model(X, label, self._iter_cnt, self._horizon)
                 scale = None
                 if type(pred) == tuple:
                     pred, scale = pred  # mean scale

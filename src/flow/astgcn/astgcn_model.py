@@ -14,7 +14,7 @@ class ASTGCN(BaseModel):
         self.BlockList = nn.ModuleList([ASTGCN_block(device, self.input_dim, order, nb_chev_filter, nb_time_filter, time_stride, cheb_poly, self.node_num, self.seq_len)])
         self.BlockList.extend([ASTGCN_block(device, nb_time_filter, order, nb_chev_filter, nb_time_filter, 1, cheb_poly, self.node_num, self.seq_len // time_stride) for _ in range(nb_block - 1)])
 
-        self.final_conv = nn.Conv2d(int(self.seq_len / time_stride), self.output_dim, kernel_size=(1, nb_time_filter))
+        self.final_conv = nn.Conv2d(int(self.seq_len / time_stride), self.output_dim*self.horizon, kernel_size=(1, nb_time_filter))
 
 
     def forward(self, x, label=None):  # (b, t, n, f)
@@ -24,8 +24,8 @@ class ASTGCN(BaseModel):
             x = block(x)
 
         output = self.final_conv(x.permute(0, 3, 1, 2))#[:, :, :, -1]  # (b, t, n)
-        # print(self.horizon,output.shape)
-        return output.permute(0,3,2,1)
+
+        return output.view(output.shape[0], self.horizon, output.shape[2], self.output_dim)
 
 
 class ASTGCN_block(nn.Module):

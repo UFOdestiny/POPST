@@ -15,13 +15,13 @@ def get_public_config():
 
     parser.add_argument("--bs", type=int, default=128)
     parser.add_argument("--seq_len", type=int, default=7)
-    parser.add_argument("--horizon", type=int, default=1)
+    parser.add_argument("--horizon", type=int, default=3)
 
-    parser.add_argument("--feature", type=int, default=1)
-    parser.add_argument("--input_dim", type=int, default=1)  # feature
-    parser.add_argument("--output_dim", type=int, default=1)
+    parser.add_argument("--feature", type=int, default=4)
+    parser.add_argument("--input_dim", type=int, default=4)  # feature
+    parser.add_argument("--output_dim", type=int, default=4)
 
-    parser.add_argument("--max_epochs", type=int, default=1000)
+    parser.add_argument("--max_epochs", type=int, default=2)
     parser.add_argument("--patience", type=int, default=30)
     parser.add_argument("--normalize", type=bool, default=True)  # Z-Score
 
@@ -35,7 +35,7 @@ def get_public_config():
     parser.add_argument("--model_path", type=str, default="")
     parser.add_argument("--export", type=bool, default=False)
     parser.add_argument("--not_print_args", default=False, action="store_true")
-    parser.add_argument("--proj", type=str, default="ph")
+    parser.add_argument("--proj", type=str, default="")
 
     return parser
 

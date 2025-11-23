@@ -244,7 +244,7 @@ class DGCRN(BaseModel):
                     decoder_input = label[:, :, :, i]
 
         outputs_final = torch.stack(outputs_final, dim=1)
-
+        # print(outputs_final.shape,task_level)
         outputs_final = outputs_final.view(
             batch_size, self.node_num, task_level, self.output_dim
         ).transpose(1, 2)

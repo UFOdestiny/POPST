@@ -439,7 +439,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--years", type=str, default="2018")
     parser.add_argument("--seq_length_x", type=int, default=7, help="sequence Length")
-    parser.add_argument("--seq_length_y", type=int, default=1, help="sequence Length")
+    parser.add_argument("--seq_length_y", type=int, default=3, help="sequence Length")
     parser.add_argument("--tod", type=int, default=1, help="time of day")
     parser.add_argument("--dow", type=int, default=1, help="day of week")
 

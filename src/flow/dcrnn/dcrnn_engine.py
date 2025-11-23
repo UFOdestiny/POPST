@@ -2,7 +2,14 @@ import torch
 import numpy as np
 from base.engine import BaseEngine
 from base.quantile_engine import Quantile_Engine
-from base.metrics import masked_mape, masked_rmse, masked_mae, masked_crps, masked_mpiw_ens, masked_kl
+from base.metrics import (
+    masked_mape,
+    masked_rmse,
+    masked_mae,
+    masked_crps,
+    masked_mpiw_ens,
+    masked_kl,
+)
 
 
 class DCRNN_Engine(BaseEngine):
@@ -84,33 +91,26 @@ class DCRNN_Engine(BaseEngine):
         # handle the precision issue when performing inverse transform to label
         mask_value = torch.tensor(torch.nan)
 
-
         if mode == "val":
             self.metric.compute_one_batch(pred, label, mask_value, "valid", scale=scale)
 
-        elif mode == "test":
-            self._logger.info(f"check mask value {mask_value}")
-
+        elif mode == "test" or mode == "export":
             for i in range(self.model.horizon):
                 s = scales[:, i, :].unsqueeze(1) if len(scales) > 0 else None
                 self.metric.compute_one_batch(
-                    preds[:, i, :].unsqueeze(1), labels[:, i, :].unsqueeze(1), mask_value, "test", scale=s
+                    preds[:, i, :].unsqueeze(1),
+                    labels[:, i, :].unsqueeze(1),
+                    mask_value,
+                    "test",
+                    scale=s,
                 )
-
-            for i in self.metric.get_test_msg():
-                self._logger.info(i)
 
             if not train_test:
                 for i in self.metric.get_test_msg():
                     self._logger.info(i)
+
             if export:
                 self.save_result(preds, labels)
-
-                # # metrics
-                # metrics = np.vstack(self.metric.export())
-                # np.save(f"{self._save_path}/metrics.npy", metrics)
-                # self._logger.info(f'metrics results shape: {metrics.shape} {self.metric.metric_lst})')
-
 
 class DCRNN_Engine_Quantile(Quantile_Engine):
     def __init__(self, **args):
@@ -194,16 +194,14 @@ class DCRNN_Engine_Quantile(Quantile_Engine):
                 lowers.append(lower.squeeze(-1).cpu())
                 uppers.append(upper.squeeze(-1).cpu())
                 labels.append(label.squeeze(-1).cpu())
-        
+
         mids = torch.cat(mids, dim=0)
         lowers = torch.cat(lowers, dim=0)
         uppers = torch.cat(uppers, dim=0)
         labels = torch.cat(labels, dim=0)
 
-
         # handle the precision issue when performing inverse transform to label
         mask_value = torch.tensor(torch.nan)
-
 
         if mode == "val":
             self.metric.compute_one_batch(

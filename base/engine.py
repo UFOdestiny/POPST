@@ -314,36 +314,27 @@ class BaseEngine:
             if export:
                 self.save_result(preds, labels)
 
-                # # metrics
-                # metrics = np.vstack(self.metric.export())
-                # np.save(f"{self._save_path}/metrics.npy", metrics)
-                # self._logger.info(f'metrics results shape: {metrics.shape} {self.metric.metric_lst})')
-
     def save_result(self, preds, labels):
-        # results
-        # self._logger.info(f"preds/labels shape: {preds.shape}")
+        # preds: (B, T, N, F)
+        # labels: (B, T, N, F)
 
-        preds.squeeze_(dim=1)
-        labels.squeeze_(dim=1)
-        preds.unsqueeze_(dim=0)
-        labels.unsqueeze_(dim=0)
+        if preds.ndim != 4 or labels.ndim != 4:
+            raise ValueError(f"Input must be 4D. Got preds {preds.shape}, labels {labels.shape}")
 
-        result = np.vstack((preds, labels))
+        # 5D: (1, B, T, N, F)
+        preds = preds.unsqueeze(0)
+        labels = labels.unsqueeze(0)
+
+        # → (2, B, T, N, F)
+        result = torch.cat([preds, labels], dim=0)
+
+        result_np = result.cpu().numpy()
+
         save_name = f"{self.args.model_name}-{self.args.dataset}-res.npy"
-        if self._save_path:
-            if self.args.proj:
-                self._save_path = os.path.join(
-                    self._save_path, self.args.proj
-                )
-            os.makedirs(self._save_path, exist_ok=True)
-            path = os.path.join(self._save_path, save_name)
-        else:
-            os.makedirs(self._save_path, exist_ok=True)
-            path = os.path.join(self._save_path, save_name)
+        path = os.path.join(self._save_path, save_name)
+        np.save(path, result_np)
 
-        np.save(path, result)
         self._logger.info(f"Results Save Path: {path}")
-
         self._logger.info(
-            f"Results Shape: {result.shape} (preds/labels, timesteps, region)\n\n"
+            f"Results Shape: {result_np.shape} (preds/labels, test size, horizon, region, channels)\n\n"
         )

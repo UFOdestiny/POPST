@@ -84,8 +84,8 @@ class STTN(BaseModel):
 
         x = x[..., -1:]
         out = F.relu(self.end_conv_1(x))
-        out = self.end_conv_2(out)
-        return out.permute(0, 3, 2, 1)
+        out = self.end_conv_2(out).permute(0, 3, 2, 1)
+        return out.view(out.shape[0], self.horizon, out.shape[2], self.output_dim)
 
 
 class TemporalTransformer(nn.Module):

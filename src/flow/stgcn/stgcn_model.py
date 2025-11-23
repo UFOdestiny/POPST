@@ -45,16 +45,16 @@ class OutputBlock(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = self.tmp_conv1(x)
-        # x = self.tmp_conv1(x)
-        x = self.tc1_ln(x.permute(0, 2, 3, 1))  # (b, t, n, channels[0])
+        # x: (b, c_in, t, n)
+        x = self.tmp_conv1(x)  # (b, channels[0], t, n)
+        # Convert to (b, t, n, channels[0]) for layer norm and FC layers
+        x = x.permute(0, 2, 3, 1)  # (b, t, n, channels[0])
+        x = self.tc1_ln(x)  # (b, t, n, channels[0])
         x = self.fc1(x)  # (b, t, n, channels[1])
         x = self.relu(x)
-
         x = self.fc2(x)  # (b, t, n, end_channel)
+        # Convert back to (b, end_channel, t, n)
         x = x.permute(0, 3, 1, 2)  # (b, end_channel, t, n)
-        # x = self.fc2(x).permute(0, 2, 1, 3)
-        # print("OutputBlock",x.shape)
         return x
 
 
@@ -263,15 +263,17 @@ class STGCN(BaseModel):
                 x = self.relu(x)
                 x = self.fc2(x).permute(0, 3, 1, 2)  # (b, f, t, n)
             
-            # Convert back to (b, t, n, f) format
-            x = x.permute(0, 2, 3, 1)  # (b, t, n, f)
+            # Take only the last timestep and convert back to (b, t, n, f) format
+            # x is (b, f, t, n), take last timestep -> (b, f, 1, n)
+            x_last = x[:, :, -1:, :]  # (b, f, 1, n)
+            x_last = x_last.permute(0, 2, 3, 1)  # (b, 1, n, f)
 
             if result is None:
-                result = x
+                result = x_last
             else:
-                result = torch.cat([result, x], dim=1)  # concatenate along time dimension
+                result = torch.cat([result, x_last], dim=1)  # concatenate along time dimension
 
-            origin_x = torch.cat([origin_x, x], dim=1)  # (b, t+1, n, f)
+            origin_x = torch.cat([origin_x, x_last], dim=1)  # (b, t+1, n, f)
             x = origin_x[:, -step:, :, :]  # get last 'step' timesteps
 
         return result
