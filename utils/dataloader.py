@@ -4,8 +4,6 @@ import pickle
 import sys
 import threading
 import numpy as np
-import torch
-import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
@@ -47,23 +45,16 @@ class DataLoader(object):
             self.num_batch += 1
 
         self.current_ind = 0
-        logger.info(
-            f"{name} num: "
-            + str(self.idx.shape[0])
-            + ", Batch num: "
-            + str(self.num_batch)
-        )
+        logger.info(f"{name} num: {self.idx.shape[0]}, Batch num: {self.num_batch}")
 
         self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
         self.y_offsets = np.arange(1, (horizon + 1), 1)
-        # print(self.x_offsets,self.y_offsets)
         self.seq_len = seq_len
         self.horizon = horizon
 
     def shuffle(self):
         perm = np.random.permutation(self.size)
-        idx = self.idx[perm]
-        self.idx = idx
+        self.idx = self.idx[perm]
 
     def write_to_shared_array(self, x, y, idx_ind, start_idx, end_idx):
         for i in range(start_idx, end_idx):
@@ -98,14 +89,12 @@ class DataLoader(object):
                 y = np.frombuffer(y_shared, dtype="f").reshape(y_shape)
 
                 array_size = len(idx_ind)
-                num_threads = len(idx_ind) // 2
-                chunk_size = array_size // num_threads
+                num_threads = max(1, min(mp.cpu_count(), array_size // 2))
+                chunk_size = (array_size + num_threads - 1) // num_threads
                 threads = []
                 for i in range(num_threads):
                     start_index = i * chunk_size
-                    end_index = (
-                        start_index + chunk_size if i < num_threads - 1 else array_size
-                    )
+                    end_index = min(start_index + chunk_size, array_size)
                     thread = threading.Thread(
                         target=self.write_to_shared_array,
                         args=(x, y, idx_ind, start_index, end_index),
@@ -124,36 +113,29 @@ class DataLoader(object):
 
 def load_dataset_plain(data_path, args, logger, drop=False):
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
-    logger.info("Data shape: " + str(ptr["data"].shape))
+    logger.info(f"Data shape: {ptr['data'].shape}")
     X = ptr["data"]
     xy = []
-    dataloader = {}
-    for cat in ["train", "val", "test"]:  # , 'all'
-        idx = np.load(os.path.join(data_path, args.years, "idx_" + cat + ".npy"))
+    for cat in ["train", "val", "test"]:
+        idx = np.load(os.path.join(data_path, args.years, f"idx_{cat}.npy"))
         xy.append(X[idx])
     return xy, LogScaler()
 
 
 def load_dataset(data_path, args, logger, drop=False):
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
-    logger.info("Data shape: " + str(ptr["data"].shape))
+    logger.info(f"Data shape: {ptr['data'].shape}")
 
     X = ptr["data"]
-    # if not args.hour_day_month:
-    #     X = X[..., : args.input_dim]
 
     dataloader = {}
-    for cat in ["train", "val", "test"]:  # , 'all'
-        idx = np.load(os.path.join(data_path, args.years, "idx_" + cat + ".npy"))
-
-        dataloader[cat + "_loader"] = DataLoader(
+    for cat in ["train", "val", "test"]:
+        idx = np.load(os.path.join(data_path, args.years, f"idx_{cat}.npy"))
+        dataloader[f"{cat}_loader"] = DataLoader(
             X, idx, args.seq_len, args.horizon, args.bs, logger, cat, droplast=drop
         )
 
-    scaler = LogScaler()
-    if "min" in ptr:
-        scaler = LogMinMaxScaler(ptr["min"], ptr["max"])
-    # scaler = StandardScaler(mean=ptr["mean"], std=ptr["std"], offset=ptr["offset"])
+    scaler = LogMinMaxScaler(ptr["min"], ptr["max"]) if "min" in ptr else LogScaler()
 
     return dataloader, scaler
 
@@ -186,16 +168,10 @@ class DataLoader_MPGCN(object):
         if not droplast and self.size % self.bs != 0:
             self.num_batch += 1
         self.current_ind = 0
-        logger.info(
-            f"{name} num: "
-            + str(self.idx.shape[0])
-            + ", Batch num: "
-            + str(self.num_batch)
-        )
+        logger.info(f"{name} num: {self.idx.shape[0]}, Batch num: {self.num_batch}")
 
         self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
         self.y_offsets = np.arange(1, (horizon + 1), 1)
-        # print(self.x_offsets,self.y_offsets)
         self.seq_len = seq_len
         self.horizon = horizon
         self.O = adj_O
@@ -203,8 +179,7 @@ class DataLoader_MPGCN(object):
 
     def shuffle(self):
         perm = np.random.permutation(self.size)
-        idx = self.idx[perm]
-        self.idx = idx
+        self.idx = self.idx[perm]
 
     def write_to_shared_array(self, x, y, idx_ind, start_idx, end_idx):
         for i in range(start_idx, end_idx):
@@ -242,14 +217,12 @@ class DataLoader_MPGCN(object):
                 y = np.frombuffer(y_shared, dtype="f").reshape(y_shape)
 
                 array_size = len(idx_ind)
-                num_threads = len(idx_ind) // 2
-                chunk_size = array_size // num_threads
+                num_threads = max(1, min(mp.cpu_count(), array_size // 2))
+                chunk_size = (array_size + num_threads - 1) // num_threads
                 threads = []
                 for i in range(num_threads):
                     start_index = i * chunk_size
-                    end_index = (
-                        start_index + chunk_size if i < num_threads - 1 else array_size
-                    )
+                    end_index = min(start_index + chunk_size, array_size)
                     thread = threading.Thread(
                         target=self.write_to_shared_array,
                         args=(x, y, idx_ind, start_index, end_index),
@@ -268,12 +241,12 @@ class DataLoader_MPGCN(object):
         return _wrapper()
 
 
-def construct_dyn_G(
-    OD_data: np.array, perceived_period: int = 6
-):  # construct dynamic graphs based on OD history
+def construct_dyn_G(OD_data: np.array, perceived_period: int = 6):
+    """Construct dynamic graphs based on OD history using vectorized distance computation."""
+    from scipy.spatial.distance import cdist
+
     train_len = int(OD_data.shape[0] * 0.8)
-    # print(OD_data.shape, OD_data.max(), OD_data.min(), OD_data.mean())
-    num_periods_in_history = train_len // perceived_period  # dump the remainder
+    num_periods_in_history = train_len // perceived_period
     OD_history = OD_data[: num_periods_in_history * perceived_period, :, :, :]
 
     O_dyn_G, D_dyn_G = [], []
@@ -281,47 +254,32 @@ def construct_dyn_G(
         OD_t_avg = np.mean(OD_history[t::perceived_period, :, :, :], axis=0).squeeze(
             axis=-1
         )
-        O, D = OD_t_avg.shape
 
-        O_G_t = np.zeros((O, O))  # initialize O graph at t
-        for i in range(O):
-            for j in range(O):
+        # Vectorized cosine distance computation
+        O_G_t = cdist(OD_t_avg, OD_t_avg, metric="cosine")
+        D_G_t = cdist(OD_t_avg.T, OD_t_avg.T, metric="cosine")
 
-                # if np.all(OD_t_avg[i, :] == 0) or np.all(OD_t_avg[j, :] == 0):
-                #     print(i,j)
-
-                O_G_t[i, j] = distance.cosine(OD_t_avg[i, :], OD_t_avg[j, :])  # eq (6)
-
-        D_G_t = np.zeros((D, D))  # initialize D graph at t
-        for i in range(D):
-            for j in range(D):
-                D_G_t[i, j] = distance.cosine(OD_t_avg[:, i], OD_t_avg[j, :])  # eq (7)
-
-        O_dyn_G.append(O_G_t), D_dyn_G.append(D_G_t)
+        O_dyn_G.append(O_G_t)
+        D_dyn_G.append(D_G_t)
 
     return np.stack(O_dyn_G, axis=-1), np.stack(D_dyn_G, axis=-1)
 
 
 def load_dataset_MPGCN(data_path, args, logger):
-
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
-    logger.info("Data shape: " + str(ptr["data"].shape))
-    scaler = LogScaler()
+    logger.info(f"Data shape: {ptr['data'].shape}")
     X = ptr["data"]
-
-    # unnormalized=(torch.from_numpy(X) - scaler.offset) * scaler.std + scaler.mean
-    # adjo, adjd = construct_dyn_G(unnormalized.numpy()[..., np.newaxis])
 
     adjo, adjd = construct_dyn_G(X[..., np.newaxis])
 
     dataloader = {}
-    for cat in ["train", "val", "test"]:  # , 'all'
-        idx = np.load(os.path.join(data_path, args.years, "idx_" + cat + ".npy"))
-
-        dataloader[cat + "_loader"] = DataLoader_MPGCN(
+    for cat in ["train", "val", "test"]:
+        idx = np.load(os.path.join(data_path, args.years, f"idx_{cat}.npy"))
+        dataloader[f"{cat}_loader"] = DataLoader_MPGCN(
             X, idx, args.seq_len, args.horizon, args.bs, logger, adjo, adjd, cat
         )
 
+    scaler = LogScaler()
     return dataloader, scaler
 
 
@@ -329,11 +287,11 @@ def load_adj_from_pickle(pickle_file):
     try:
         with open(pickle_file, "rb") as f:
             pickle_data = pickle.load(f)
-    except UnicodeDecodeError as e:
+    except UnicodeDecodeError:
         with open(pickle_file, "rb") as f:
             pickle_data = pickle.load(f, encoding="latin1")
     except Exception as e:
-        print("Unable to load data ", pickle_file, ":", e)
+        print(f"Unable to load data {pickle_file}: {e}")
         raise
     return pickle_data
 
@@ -368,11 +326,26 @@ def get_dataset_info(dataset):
         # OD Prediction: N*N -> N*N
         "sz_taxi_od": [base_dir + "sz_taxi_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_bike_od": [base_dir + "sz_bike_od", base_dir + "shenzhen/adj.npy", 491],
-        "sz_subway_bike_od": [base_dir + "sz_subway_bike_od", base_dir + "shenzhen/adj.npy", 491],
-        "sz_subway_taxi_od": [base_dir + "sz_subway_taxi_od", base_dir + "shenzhen/adj.npy", 491],
-        "nyc_subway_bike_od": [base_dir + "nyc_subway_bike_od", base_dir + "nyc_taxi_od/adj.npy", 67],
-        "nyc_subway_taxi_od": [base_dir + "nyc_subway_taxi_od", base_dir + "nyc_taxi_od/adj.npy", 67],
-
+        "sz_subway_bike_od": [
+            base_dir + "sz_subway_bike_od",
+            base_dir + "shenzhen/adj.npy",
+            491,
+        ],
+        "sz_subway_taxi_od": [
+            base_dir + "sz_subway_taxi_od",
+            base_dir + "shenzhen/adj.npy",
+            491,
+        ],
+        "nyc_subway_bike_od": [
+            base_dir + "nyc_subway_bike_od",
+            base_dir + "nyc_taxi_od/adj.npy",
+            67,
+        ],
+        "nyc_subway_taxi_od": [
+            base_dir + "nyc_subway_taxi_od",
+            base_dir + "nyc_taxi_od/adj.npy",
+            67,
+        ],
         "sz_dd_od": [base_dir + "sz_dd_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_subway_od": [base_dir + "sz_subway_od", base_dir + "shenzhen/adj.npy", 491],
         "nyc_taxi_od": [base_dir + "nyc_taxi_od", base_dir + "nyc_taxi_od/adj.npy", 67],

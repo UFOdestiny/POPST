@@ -12,7 +12,7 @@ data
 dataset
 datasets
 bash
-
+core.*
 
 __pycache__/
 *.py[cod]
