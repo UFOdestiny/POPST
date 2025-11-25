@@ -10,8 +10,7 @@ import torch
 
 torch.set_num_threads(8)
 
-# 使用改进版模型
-from src.flow.mamba2.mamba_model_v2 import myMamba2
+from src.flow.mamba2.mamba_model import Mamba2
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
 from utils.dataloader import load_dataset, get_dataset_info
 from utils.log import get_logger
@@ -27,10 +26,8 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--n_mamba_per_block", type=int, default=2)  # 减少每块层数，因为双向Mamba更强
+    parser.add_argument("--num_layers", type=int, default=3)
     parser.add_argument("--d_model", type=int, default=64)
-    parser.add_argument("--num_levels", type=int, default=3)
-    parser.add_argument("--use_bidirectional", action="store_true", default=True)  # 默认启用双向
 
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -58,17 +55,15 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
-    model = myMamba2(
+    model = Mamba2(
         node_num=node_num,
         input_dim=args.seq_len,
         output_dim=args.output_dim,
         seq_len=args.seq_len,
         horizon=args.horizon,
-        n_mamba_per_block=args.n_mamba_per_block,
-        num_levels=args.num_levels,
+        num_layers=args.num_layers,
         d_model=args.d_model,
         feature=args.feature,
-        use_bidirectional=args.use_bidirectional,
     )
 
     loss_fn = "MAE"

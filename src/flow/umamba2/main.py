@@ -10,11 +10,9 @@ import torch
 
 torch.set_num_threads(8)
 
-from src.flow.umamba2.mamba_model import UMamba2
-from src.flow.umamba2.graph_mamba_model import GraphUMamba
+from src.flow.umamba2.mamba_model import UNetMamba
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
-from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
-from utils.graph_algo import normalize_adj_mx
+from utils.dataloader import load_dataset, get_dataset_info
 from utils.log import get_logger
 
 
@@ -28,12 +26,8 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--n_mamba_per_block", type=int, default=3)
-    parser.add_argument("--d_model", type=int, default=64)
-    parser.add_argument("--num_levels", type=int, default=3)
-    parser.add_argument("--use_graph", action="store_true", help="Use graph-enhanced model")
-    parser.add_argument("--use_adaptive", action="store_true", default=True, help="Use adaptive graph learning")
-    parser.add_argument("--adj_type", type=str, default="doubletransition", help="Adjacency matrix normalization type")
+    parser.add_argument("--num_layers", type=int, default=2)
+    parser.add_argument("--d_model", type=int, default=32)
 
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -41,7 +35,7 @@ def get_config():
     parser.add_argument("--wdecay", type=float, default=5e-4)
     args = parser.parse_args()
 
-    args.model_name = "GraphMamba"
+    args.model_name = "UMamba2"
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,
@@ -57,47 +51,23 @@ def main():
     set_seed(args.seed)
     device = torch.device(args.device)
 
-    data_path, adj_path, node_num = get_dataset_info(args.dataset)
+    data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
-
-    if args.use_graph:
-        # 加载并规范化邻接矩阵
-        adj_mx = load_adj_from_numpy(adj_path)
-        adj_mx = normalize_adj_mx(adj_mx, args.adj_type)
-        supports = [torch.tensor(i).float().to(device) for i in adj_mx]
-        logger.info(f"Using graph-enhanced model with {len(supports)} adjacency matrices")
-
-        model = GraphUMamba(
-            node_num=node_num,
-            input_dim=args.seq_len,
-            output_dim=args.output_dim,
-            seq_len=args.seq_len,
-            horizon=args.horizon,
-            n_mamba_per_block=args.n_mamba_per_block,
-            num_levels=args.num_levels,
-            d_model=args.d_model,
-            feature=args.feature,
-            predefined_adj=supports,
-            use_adaptive=args.use_adaptive,
-            dropout=0.1,
-        )
-    else:
-        model = UMamba2(
-            node_num=node_num,
-            input_dim=args.seq_len,
-            output_dim=args.output_dim,
-            seq_len=args.seq_len,
-            horizon=args.horizon,
-            n_mamba_per_block=args.n_mamba_per_block,
-            num_levels=args.num_levels,
-            d_model=args.d_model,
-            feature=args.feature,
-        )
+    model = UNetMamba(
+        node_num=node_num,
+        input_dim=args.seq_len,
+        output_dim=args.output_dim,
+        seq_len=args.seq_len,
+        horizon=args.horizon,
+        num_layers=args.num_layers,
+        d_model=args.d_model,
+        feature=args.feature,
+    )
 
     loss_fn = "MAE"
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lrate, weight_decay=args.wdecay)
+    optimizer = torch.optim.Adam(model.parameters())
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=args.step_size, gamma=args.gamma
     )
