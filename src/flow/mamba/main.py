@@ -26,8 +26,10 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--num_layers", type=int, default=2)
-    parser.add_argument("--d_model", type=int, default=8)
+    parser.add_argument("--n_mamba_per_block", type=int, default=3)
+    parser.add_argument("--d_model", type=int, default=64)
+    parser.add_argument("--num_levels", type=int, default=3)
+    # parser.add_argument("--num_layers", type=int, default=3)
 
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -61,8 +63,9 @@ def main():
         output_dim=args.output_dim,
         seq_len=args.seq_len,
         horizon=args.horizon,
-
-        num_layers=args.num_layers,
+        n_mamba_per_block=args.n_mamba_per_block,
+        num_levels=args.num_levels,
+        # num_layers=args.num_layers,
         d_model=args.d_model,
         feature=args.feature,
     )
