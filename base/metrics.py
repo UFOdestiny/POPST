@@ -7,8 +7,6 @@ from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
 import torch.nn.functional as F
 
-zero = torch.tensor(0.0)
-
 
 class Metrics:
     def __init__(self, loss_func, metric_lst, horizon=1, early_stop_method="MAE"):
@@ -42,58 +40,48 @@ class Metrics:
         self.formatter()
 
     def formatter(self):
-        self.train_msg = "Epoch: {:d}, Tr Loss: {:.3f}, "
-        for i in self.metric_lst[1:]:
-            self.train_msg += "Tr " + i + ": {:.3f}, "
-        self.train_msg += "V Loss: {:.3f}, "
-        for i in self.metric_lst[1:]:
-            self.train_msg += "V " + i + ": {:.3f}, "
-        self.train_msg += "Te Loss: {:.3f}, "
-        for i in self.metric_lst[1:]:
-            self.train_msg += "Te " + i + ": {:.3f}, "
-
-        self.train_msg += (
+        msg_parts = ["Epoch: {:d}, Tr Loss: {:.3f}, "]
+        msg_parts.extend([f"Tr {m}: {{:.3f}}, " for m in self.metric_lst[1:]])
+        msg_parts.append("V Loss: {:.3f}, ")
+        msg_parts.extend([f"V {m}: {{:.3f}}, " for m in self.metric_lst[1:]])
+        msg_parts.append("Te Loss: {:.3f}, ")
+        msg_parts.extend([f"Te {m}: {{:.3f}}, " for m in self.metric_lst[1:]])
+        msg_parts.append(
             "LR: {:.4e}, Tr Time: {:.3f} s/epoch, V Time: {:.3f} s, Te Time: {:.3f} s"
         )
+        self.train_msg = "".join(msg_parts)
 
-    # quantile=None, upper=None, lower=None
     def compute_one_batch(self, preds, labels, null_val, mode="train", **kwargs):
         grad_res = None
+        res_storage = {
+            "train": self.train_res,
+            "valid": self.valid_res,
+            "test": self.test_res,
+        }
+        current_storage = res_storage.get(mode, self.test_res)
+
         for i, fname in enumerate(self.metric_lst):
-            res = None
             if fname in ["MAE", "MSE", "MAPE", "RMSE", "KL", "CRPS"]:
                 res = self.metric_func[i](preds, labels, null_val)
-
-            elif fname in ["MGAU"]:
+            elif fname == "MGAU":
                 res = self.metric_func[i](preds, labels, null_val, kwargs["scale"])
-
             elif fname in ["WINK", "COV"]:
                 res = self.metric_func[i](
                     kwargs["lower"], kwargs["upper"], labels, alpha=0.1
                 )
-
-            elif fname in ["MPIW"]:
+            elif fname == "MPIW":
                 res = self.metric_func[i](kwargs["lower"], kwargs["upper"])
-
-            elif fname in ["Quantile"]:
+            elif fname == "Quantile":
                 res = self.metric_func[i](
                     kwargs["lower"], preds, kwargs["upper"], labels
                 )
             else:
-                raise ValueError("Invalid metric name")
+                raise ValueError(f"Invalid metric name: {fname}")
 
             if i == 0 and mode == "train":
-
                 grad_res = res
 
-                # res.backward()  # loss function
-
-            if mode == "train":
-                self.train_res[i].append(res.item())
-            elif mode == "valid":
-                self.valid_res[i].append(res.item())
-            else:
-                self.test_res[i].append(res.item())
+            current_storage[i].append(res.item())
 
         return grad_res
 
@@ -114,9 +102,6 @@ class Metrics:
         return np.mean(self.test_res[self.early_stop_method_index])
 
     def get_epoch_msg(self, epoch, lr, training_time, valid_time, test_time):
-        # print([len(i) for i in self.train_res ])
-        # print([len(i) for i in self.valid_res])
-
         train_lst = [np.mean(i) for i in self.train_res]
         valid_lst = [np.mean(i) for i in self.valid_res]
         test_lst = [np.mean(i) for i in self.test_res]
@@ -132,29 +117,25 @@ class Metrics:
             test_time,
         )
 
+        self._reset_metrics()
+        return msg
+
+    def _reset_metrics(self):
         self.train_res = [[] for _ in range(self.N)]
         self.valid_res = [[] for _ in range(self.N)]
         self.test_res = [[] for _ in range(self.N)]
-        return msg
 
     def get_test_msg(self):
+        metric_fmt = ", ".join([f"{m}: {{:.3f}}" for m in self.metric_lst])
         msgs = []
+
         for i in range(self.horizon):
-            self.test_msg = f"Test Horizon: {i + 1}, "
-            for j in self.metric_lst:
-                self.test_msg += j + ": {:.3f}, "
-            self.test_msg = self.test_msg[:-2]  # remove the last ", "
             test_lst = [k[i] for k in self.test_res]
-            msg = self.test_msg.format(*test_lst)
+            msg = f"Test Horizon: {i + 1}, " + metric_fmt.format(*test_lst)
             msgs.append(msg)
 
-        self.test_msg = f"Average: "
-        for i in self.metric_lst:
-            self.test_msg += i + ": {:.3f}, "
-        self.test_msg = self.test_msg[:-2]
-        test_lst = [np.mean(i) for i in self.test_res]
-        msg = self.test_msg.format(*test_lst)
-        msgs.append(msg)
+        avg_lst = [np.mean(i) for i in self.test_res]
+        msgs.append("Average: " + metric_fmt.format(*avg_lst))
 
         self.test_res = [[] for _ in range(self.N)]
         return msgs
@@ -182,23 +163,14 @@ def get_mask_mean(loss, labels, null_val):
     loss = loss * mask
 
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-    
+
     return torch.sum(loss) / valid_count
 
 
 def masked_pinball(preds, labels, null_val, quantile):
-    mask = get_mask(labels, null_val)
-
-    loss = torch.zeros_like(labels, dtype=torch.float)
     error = preds - labels
-    smaller_index = error < 0
-    bigger_index = 0 < error
-    loss[smaller_index] = quantile * (abs(error)[smaller_index])
-    loss[bigger_index] = (1 - quantile) * (abs(error)[bigger_index])
-
-    # loss = loss * mask
-    # loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-
+    abs_error = torch.abs(error)
+    loss = torch.where(error < 0, quantile * abs_error, (1 - quantile) * abs_error)
     return torch.mean(loss)
 
 
@@ -223,10 +195,9 @@ def masked_mae(preds, labels, null_val):
 
 def masked_mape(preds, labels, null_val):
     assert preds.shape == labels.shape, f"preds: {preds.shape}, labels: {labels.shape}"
-    loss = torch.abs(preds - labels) / labels 
-    # loss = torch.abs(preds - labels) / ((torch.abs(labels) + torch.abs(preds)) / 2)
+    loss = torch.abs(preds - labels) / torch.abs(labels)
     loss = get_mask_mean(loss, labels, torch.tensor(0))
-    return loss * 100  # percent
+    return loss * 100
 
 
 def masked_kl(preds, labels, null_val):
@@ -241,6 +212,7 @@ def masked_mpiw(lower, upper, null_val=None):
 
 
 def masked_wink(lower, upper, labels, alpha=0.1):
+    zero = torch.tensor(0.0, device=lower.device)
     score = upper - lower
     score += (2 / alpha) * torch.maximum(lower - labels, zero)
     score += (2 / alpha) * torch.maximum(labels - upper, zero)

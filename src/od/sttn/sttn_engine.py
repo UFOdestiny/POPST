@@ -40,7 +40,7 @@ class STTN_Engine(BaseEngine):
 
             if test_loss < min_loss_test:
                 self._logger.info(
-                    "Test loss decrease from {:.3f} to {:.3f}".format(
+                    "Test loss: {:.3f} -> {:.3f}".format(
                         min_loss_test, test_loss
                     )
                 )
@@ -54,7 +54,7 @@ class STTN_Engine(BaseEngine):
 
                 self.save_model(self._save_path)
                 self._logger.info(
-                    "Val loss decrease from {:.3f} to {:.3f}".format(
+                    "Val  loss: {:.3f} -> {:.3f}".format(
                         min_loss_val, valid_loss
                     )
                 )

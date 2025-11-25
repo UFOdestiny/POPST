@@ -11,8 +11,14 @@ import torch
 torch.set_num_threads(8)
 
 from src.flow.umamba.umamba_model import UMamba
-from utils.args import get_public_config, get_log_path, print_args, check_quantile
-from utils.dataloader import load_dataset, get_dataset_info
+from utils.args import (
+    get_public_config,
+    get_log_path,
+    print_args,
+    check_quantile,
+    get_data_path,
+)
+from utils.dataloader import load_dataset, get_dataset_info, load_adj_from_numpy
 from utils.log import get_logger
 
 
@@ -37,6 +43,11 @@ def get_config():
     - gamma: 学习率衰减系数（新学习率 = 旧学习率 * gamma）
     - lrate: 初始学习率（推荐1e-3到1e-4）
     - wdecay: L2正则化权重（推荐1e-4到1e-3）
+
+    ========== 图结构参数说明 ==========
+    - use_adaptive_adj: 是否使用自适应邻接矩阵学习（从DGCRN灵感）
+    - gcn_enabled: 是否启用图卷积层用于空间依赖建模
+    - num_heads: 多头图卷积的头数（推荐1-4）
     """
     parser = get_public_config()
 
@@ -83,6 +94,26 @@ def get_config():
         help="权重衰减/L2正则化（建议值: 1e-5到1e-3）",
     )
 
+    # ========== 图结构参数 ==========
+    parser.add_argument(
+        "--use_adaptive_adj",
+        type=bool,
+        default=True,
+        help="是否使用自适应邻接矩阵学习（从数据中学习图结构，推荐True）",
+    )
+    parser.add_argument(
+        "--gcn_enabled",
+        type=bool,
+        default=True,
+        help="是否启用图卷积层用于空间依赖建模（推荐True以提升性能）",
+    )
+    parser.add_argument(
+        "--num_heads",
+        type=int,
+        default=1,
+        help="多头图卷积的头数（推荐值: 1-4，增加可提升表达能力）",
+    )
+
     args = parser.parse_args()
 
     args.model_name = "UMamba"
@@ -101,8 +132,8 @@ def main():
     主训练函数。流程如下：
     1. 配置参数和日志
     2. 设置随机种子保证可复现性
-    3. 加载数据集
-    4. 构建U-Net Mamba模型
+    3. 加载数据集和邻接矩阵
+    4. 构建U-Net Mamba模型，融入图结构
     5. 设置优化器和学习率调度
     6. 创建训练引擎并执行训练或评估
     """
@@ -112,25 +143,43 @@ def main():
     set_seed(args.seed)
     device = torch.device(args.device)
 
-    # ========== 2. 加载数据 ==========
-    data_path, _, node_num = get_dataset_info(args.dataset)
+    # ========== 2. 加载数据和邻接矩阵 ==========
+    data_path, adj_path, node_num = get_dataset_info(args.dataset)
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
 
-    # ========== 3. 构建模型 ==========
-    # 详细参数说明参见UMamba类的__init__方法
+    # ========== 加载邻接矩阵用于图结构 ==========
+    # 邻接矩阵形状: (node_num, node_num)
+    # 如果启用图卷积，则传入邻接矩阵；否则为None
+    if args.gcn_enabled:
+        try:
+            predefined_adj = load_adj_from_numpy(adj_path)
+            # 转换为torch tensor
+            predefined_adj = torch.from_numpy(predefined_adj).float()
+        except Exception as e:
+            predefined_adj = torch.ones(node_num, node_num)
+    else:
+        predefined_adj = None
+
+    # ========== 3. 构建改进的U-Net Mamba模型 ==========
+    # 融入图结构、自适应邻接矩阵和GCN层
     model = UMamba(
         node_num=node_num,
         input_dim=args.seq_len,
         output_dim=args.output_dim,
         seq_len=args.seq_len,
         horizon=args.horizon,
-        # U-Net Mamba特有参数
-        n_mamba_per_block=args.n_mamba_per_block,
-        num_levels=args.num_levels,
-        d_model=args.d_model,
-        dropout=args.dropout,
+        # 基础参数
         feature=args.feature,
+        d_model=args.d_model,
+        num_levels=args.num_levels,
+        n_mamba_per_block=args.n_mamba_per_block,
+        dropout=args.dropout,
+        # 图结构参数（改进关键）
+        predefined_adj=predefined_adj,
+        use_adaptive_adj=args.use_adaptive_adj,
+        gcn_enabled=args.gcn_enabled,
+        num_heads=args.num_heads,
     )
 
     # ========== 4. 损失函数和优化器 ==========

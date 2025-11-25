@@ -3,10 +3,8 @@ import time
 
 import numpy as np
 import torch
-from base.metrics import compute_all_metrics, Metrics
+from base.metrics import Metrics
 
-import torchvision.models as models
-from torch.profiler import profile, ProfilerActivity, record_function
 
 class BaseEngine:
     def __init__(
@@ -86,21 +84,18 @@ class BaseEngine:
 
     def _to_device(self, tensors):
         if isinstance(tensors, list):
-            return [tensor.to(self._device) for tensor in tensors]
-        else:
-            return tensors.to(self._device)
+            return [t.to(self._device) for t in tensors]
+        return tensors.to(self._device)
 
     def _to_numpy(self, tensors):
         if isinstance(tensors, list):
-            return [tensor.detach().cpu().numpy() for tensor in tensors]
-        else:
-            return tensors.detach().cpu().numpy()
+            return [t.detach().cpu().numpy() for t in tensors]
+        return tensors.detach().cpu().numpy()
 
     def _to_tensor(self, nparray):
         if isinstance(nparray, list):
-            return [torch.tensor(array, dtype=torch.float32) for array in nparray]
-        else:
-            return torch.tensor(nparray, dtype=torch.float32)
+            return [torch.tensor(arr, dtype=torch.float32) for arr in nparray]
+        return torch.tensor(nparray, dtype=torch.float32)
 
     def _inverse_transform(self, tensors, device="cuda"):
         def inv(tensor):
@@ -109,13 +104,12 @@ class BaseEngine:
         if isinstance(tensors, list):
             res = []
             for t in tensors:
-                if type(t) == tuple:
+                if isinstance(t, tuple):
                     res.append([inv(j) for j in t])
                 else:
                     res.append(inv(t))
             return res
-        else:
-            return inv(tensors)
+        return inv(tensors)
 
     def save_model(self, save_path):
         if not os.path.exists(save_path):
@@ -125,19 +119,19 @@ class BaseEngine:
         torch.save(self.model.state_dict(), os.path.join(save_path, filename))
 
     def load_model(self, save_path):
-        # filename = 'final_model_s{}.pt'.format(self._seed)
         filename = self._time_model
         f = os.path.join(save_path, filename)
         if not os.path.exists(f):
-            models = [i for i in os.listdir(save_path) if i[-3:] == ".pt"]
-            if len(models) == 0:
+            models = [i for i in os.listdir(save_path) if i.endswith(".pt")]
+            if not models:
                 self._logger.info(f"Model {f} Not Exist. No More Models.")
                 exit()
 
             models.sort(key=lambda fn: os.path.getmtime(os.path.join(save_path, fn)))
-            m = os.path.join(save_path, models[-1])
-            self._logger.info(f"Model {f} Not Exist. Try the Newest Model {m}.")
-            f = m
+            f = os.path.join(save_path, models[-1])
+            self._logger.info(
+                f"Model {filename} Not Exist. Try the Newest Model {os.path.basename(f)}."
+            )
 
         self.model.load_state_dict(torch.load(f, weights_only=False))
 
@@ -147,28 +141,22 @@ class BaseEngine:
     def train_batch(self):
         self.model.train()
         self._dataloader["train_loader"].shuffle()
+        mask_value = torch.tensor(torch.nan)
 
-        # with profile(
-        #     activities=activities,
-        #     schedule=torch.profiler.schedule(wait=1, warmup=1, active=2),
-        #     on_trace_ready=lambda p: trace_handler(p, path=self._save_path, print_=False),
-        # ) as p:
         for X, label in self._dataloader["train_loader"].get_iterator():
-            # print(X.shape, label.shape)
             self._optimizer.zero_grad()
 
             # X (b, t, n, f), label (b, t, n, 1)
             X, label = self._to_device(self._to_tensor([X, label]))
             pred = self._predict(X)
 
-            # handle the precision issue when performing inverse transform to label
-            mask_value = torch.tensor(torch.nan)
             if self._iter_cnt == 0:
-                self._logger.info(f"check mask value {mask_value}")
+                self._logger.info("=" * 50)
+                self._logger.info(f"Mask value: {mask_value}")
 
             scale = None
-            if type(pred) == tuple:
-                pred, scale = pred  # mean scale
+            if isinstance(pred, tuple):
+                pred, scale = pred
 
             if self._normalize:
                 pred, label = self._inverse_transform([pred, label])
@@ -183,9 +171,7 @@ class BaseEngine:
                     self.model.parameters(), self._clip_grad_value
                 )
             self._optimizer.step()
-
             self._iter_cnt += 1
-                # p.step()
 
     def train(self):
         wait = 0
@@ -220,9 +206,7 @@ class BaseEngine:
 
             if test_loss < min_loss_test:
                 self._logger.info(
-                    "Test loss decrease from {:.3f} to {:.3f}".format(
-                        min_loss_test, test_loss
-                    )
+                    "Test loss: {:.3f} -> {:.3f}".format(min_loss_test, test_loss)
                 )
                 min_loss_test = test_loss
 
@@ -234,9 +218,7 @@ class BaseEngine:
 
                 self.save_model(self._save_path)
                 self._logger.info(
-                    "Val loss decrease from {:.3f} to {:.3f}".format(
-                        min_loss_val, valid_loss
-                    )
+                    "Val  loss: {:.3f} -> {:.3f}".format(min_loss_val, valid_loss)
                 )
                 min_loss_val = valid_loss
                 wait = 0
@@ -253,7 +235,7 @@ class BaseEngine:
         self.evaluate("test", export=self.args.export)
 
     def evaluate(self, mode, model_path=None, export=None, train_test=False):
-        if mode == "test" and train_test == False:
+        if mode == "test" and not train_test:
             if model_path:
                 self.load_exact_model(model_path)
             else:
@@ -261,18 +243,16 @@ class BaseEngine:
 
         self.model.eval()
 
-        preds = []
-        labels = []
-        scales = []
+        preds, labels, scales = [], [], []
+        mask_value = torch.tensor(torch.nan)
 
         with torch.no_grad():
             for X, label in self._dataloader[mode + "_loader"].get_iterator():
-                # X (b, t, n, f), label (b, t, n, 1)
                 X, label = self._to_device(self._to_tensor([X, label]))
                 pred = self._predict(X)
                 scale = None
-                if type(pred) == tuple:
-                    pred, scale = pred  # mean scale
+                if isinstance(pred, tuple):
+                    pred, scale = pred
 
                 if self._normalize:
                     pred, label = self._inverse_transform([pred, label])
@@ -281,24 +261,18 @@ class BaseEngine:
                 labels.append(label.squeeze(-1).cpu())
                 if scale is not None:
                     scales.append(scale.squeeze(-1).cpu())
-        if scales:
-            scales = torch.cat(scales, dim=0)
 
+        scales = torch.cat(scales, dim=0) if scales else torch.tensor([])
         preds = torch.cat(preds, dim=0)
         labels = torch.cat(labels, dim=0)
-
-        # handle the precision issue when performing inverse transform to label
-        mask_value = torch.tensor(torch.nan)
-
 
         if mode == "val":
             self.metric.compute_one_batch(
                 preds, labels, mask_value, "valid", scale=scale
             )
-
         elif mode == "test" or mode == "export":
             for i in range(self.model.horizon):
-                s = scales[:, i, :].unsqueeze(1) if len(scales) > 0 else None
+                s = scales[:, i, :].unsqueeze(1) if scales.numel() > 0 else None
                 self.metric.compute_one_batch(
                     preds[:, i, :].unsqueeze(1),
                     labels[:, i, :].unsqueeze(1),
@@ -308,8 +282,8 @@ class BaseEngine:
                 )
 
             if not train_test:
-                for i in self.metric.get_test_msg():
-                    self._logger.info(i)
+                for msg in self.metric.get_test_msg():
+                    self._logger.info(msg)
 
             if export:
                 self.save_result(preds, labels)
@@ -319,7 +293,9 @@ class BaseEngine:
         # labels: (B, T, N, F)
 
         if preds.ndim != 4 or labels.ndim != 4:
-            raise ValueError(f"Input must be 4D. Got preds {preds.shape}, labels {labels.shape}")
+            raise ValueError(
+                f"Input must be 4D. Got preds {preds.shape}, labels {labels.shape}"
+            )
 
         # 5D: (1, B, T, N, F)
         preds = preds.unsqueeze(0)
