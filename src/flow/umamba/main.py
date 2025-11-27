@@ -12,7 +12,12 @@ torch.set_num_threads(8)
 
 from src.flow.umamba.umamba_model import UMamba
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
-from utils.dataloader import load_dataset, get_dataset_info
+from utils.dataloader import (
+    load_dataset,
+    get_dataset_info,
+    load_adj_from_numpy,
+    load_adj_from_pickle,
+)
 from utils.log import get_logger
 
 
@@ -23,13 +28,13 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = False
 
-
+# 2,32,2
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--n_mamba_per_block", type=int, default=3)
-    parser.add_argument("--d_model", type=int, default=64)
-    parser.add_argument("--num_levels", type=int, default=3)
-    # parser.add_argument("--num_layers", type=int, default=3)
+    parser.add_argument("--num_layers", type=int, default=4)
+    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--unet_depth", type=int, default=4)
+    parser.add_argument("--dropout", type=float, default=0.1)
 
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -53,7 +58,12 @@ def main():
     set_seed(args.seed)
     device = torch.device(args.device)
 
-    data_path, _, node_num = get_dataset_info(args.dataset)
+    data_path, adj_path, node_num = get_dataset_info(args.dataset)
+
+    if adj_path.endswith(".npy") or adj_path.endswith(".npz"):
+        adjacency = load_adj_from_numpy(adj_path)
+    else:
+        adjacency = load_adj_from_pickle(adj_path)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
@@ -64,11 +74,12 @@ def main():
         seq_len=args.seq_len,
         horizon=args.horizon,
 
-        n_mamba_per_block=args.n_mamba_per_block,
-        num_levels=args.num_levels,
-        # num_layers=args.num_layers,
+        num_layers=args.num_layers,
         d_model=args.d_model,
         feature=args.feature,
+        depth=args.unet_depth,
+        dropout=args.dropout,
+        adjacency=adjacency,
     )
 
     loss_fn = "MAE"

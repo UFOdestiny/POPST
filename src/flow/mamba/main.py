@@ -23,11 +23,13 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = False
 
-
+# 2,32,2
 def get_config():
     parser = get_public_config()
     parser.add_argument("--num_layers", type=int, default=2)
-    parser.add_argument("--d_model", type=int, default=8)
+    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--unet_depth", type=int, default=2)
+    parser.add_argument("--dropout", type=float, default=0.1)
 
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -65,6 +67,8 @@ def main():
         num_layers=args.num_layers,
         d_model=args.d_model,
         feature=args.feature,
+        depth=args.unet_depth,
+        dropout=args.dropout,
     )
 
     loss_fn = "MAE"

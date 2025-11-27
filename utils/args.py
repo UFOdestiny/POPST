@@ -22,7 +22,7 @@ def get_public_config():
     parser.add_argument("--input_dim", type=int, default=4)  # feature
     parser.add_argument("--output_dim", type=int, default=4)
 
-    parser.add_argument("--max_epochs", type=int, default=1000)
+    parser.add_argument("--max_epochs", type=int, default=2000)
     parser.add_argument("--patience", type=int, default=30)
     parser.add_argument("--normalize", action="store_true", default=True)
     parser.add_argument("--no_normalize", action="store_false", dest="normalize")

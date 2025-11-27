@@ -48,6 +48,7 @@ class BaseEngine:
         self._logger = logger
         self._seed = seed
         self.args = args
+        self._mask_value = torch.tensor(float("nan"))
 
         self.model = model
         self.model.to(self._device)
@@ -86,6 +87,9 @@ class BaseEngine:
         if isinstance(tensors, list):
             return [t.to(self._device) for t in tensors]
         return tensors.to(self._device)
+
+    def _prepare_batch(self, batch):
+        return self._to_device(self._to_tensor(batch))
 
     def _to_numpy(self, tensors):
         if isinstance(tensors, list):
@@ -141,13 +145,13 @@ class BaseEngine:
     def train_batch(self):
         self.model.train()
         self._dataloader["train_loader"].shuffle()
-        mask_value = torch.tensor(torch.nan)
+        mask_value = self._mask_value.to(self._device)
 
         for X, label in self._dataloader["train_loader"].get_iterator():
             self._optimizer.zero_grad()
 
             # X (b, t, n, f), label (b, t, n, 1)
-            X, label = self._to_device(self._to_tensor([X, label]))
+            X, label = self._prepare_batch([X, label])
             pred = self._predict(X)
 
             if self._iter_cnt == 0:
@@ -159,7 +163,9 @@ class BaseEngine:
                 pred, scale = pred
 
             if self._normalize:
-                pred, label = self._inverse_transform([pred, label])
+                pred, label = self._inverse_transform(
+                    [pred, label], device=self._device.type
+                )
 
             res = self.metric.compute_one_batch(
                 pred, label, mask_value, "train", scale=scale
@@ -244,35 +250,45 @@ class BaseEngine:
         self.model.eval()
 
         preds, labels, scales = [], [], []
-        mask_value = torch.tensor(torch.nan)
 
         with torch.no_grad():
             for X, label in self._dataloader[mode + "_loader"].get_iterator():
-                X, label = self._to_device(self._to_tensor([X, label]))
+                X, label = self._prepare_batch([X, label])
                 pred = self._predict(X)
                 scale = None
                 if isinstance(pred, tuple):
                     pred, scale = pred
 
                 if self._normalize:
-                    pred, label = self._inverse_transform([pred, label])
+                    pred, label = self._inverse_transform(
+                        [pred, label], device=self._device.type
+                    )
 
-                preds.append(pred.squeeze(-1).cpu())
-                labels.append(label.squeeze(-1).cpu())
-                if scale is not None:
-                    scales.append(scale.squeeze(-1).cpu())
+                if mode == "val":
+                    self.metric.compute_one_batch(
+                        pred,
+                        label,
+                        self._mask_value.to(pred.device),
+                        "valid",
+                        scale=scale,
+                    )
+                else:
+                    preds.append(pred.squeeze(-1).cpu())
+                    labels.append(label.squeeze(-1).cpu())
+                    if scale is not None:
+                        scales.append(scale.squeeze(-1).cpu())
 
-        scales = torch.cat(scales, dim=0) if scales else torch.tensor([])
+        if mode == "val":
+            return
+
+        scales = torch.cat(scales, dim=0) if scales else None
         preds = torch.cat(preds, dim=0)
         labels = torch.cat(labels, dim=0)
 
-        if mode == "val":
-            self.metric.compute_one_batch(
-                preds, labels, mask_value, "valid", scale=scale
-            )
-        elif mode == "test" or mode == "export":
+        if mode in {"test", "export"}:
+            mask_value = torch.tensor(float("nan"))
             for i in range(self.model.horizon):
-                s = scales[:, i, :].unsqueeze(1) if scales.numel() > 0 else None
+                s = scales[:, i, :].unsqueeze(1) if scales is not None else None
                 self.metric.compute_one_batch(
                     preds[:, i, :].unsqueeze(1),
                     labels[:, i, :].unsqueeze(1),

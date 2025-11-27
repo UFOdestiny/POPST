@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,171 +7,184 @@ from base.model import BaseModel
 from mamba_ssm import Mamba
 
 
-class EncoderBlock(nn.Module):
-    def __init__(self, d_model, n_mamba_layers=1):
+class MambaBlock(nn.Module):
+    """Residual Mamba block with lightweight normalization."""
+
+    def __init__(self, d_model, dropout):
         super().__init__()
-        self.mambas = nn.ModuleList(
-            [Mamba(d_model=d_model) for _ in range(n_mamba_layers)]
-        )
-        # downsample conv on time: in_channels=d_model, out_channels=d_model, stride=2
-        self.down = nn.Conv1d(
-            in_channels=d_model,
-            out_channels=d_model,
-            kernel_size=3,
-            padding=1,
-            stride=2,
-        )
+        self.mamba = Mamba(d_model=d_model)
         self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):  # x: (B*N, T, d_model)
-        for m in self.mambas:
-            x = m(x)  # expect (B*N, T, d_model)
-        # conv expects (B, C, L)
-        x_c = x.permute(0, 2, 1)  # (B*N, d_model, T)
-        x_down = self.down(x_c)  # (B*N, d_model, T_down)
-        x_down = x_down.permute(0, 2, 1)  # (B*N, T_down, d_model)
-        x_down = self.norm(x_down)
-        return (
-            x_down,
-            x,
-        )  # return downsampled and skip (pre-downsample) for skip-connection
-
-
-class DecoderBlock(nn.Module):
-    def __init__(self, d_model, n_mamba_layers=1):
-        super().__init__()
-        # upsample convtranspose: doubles time dimension
-        self.up = nn.ConvTranspose1d(
-            in_channels=d_model,
-            out_channels=d_model,
-            kernel_size=4,
-            stride=2,
-            padding=1,
-        )
-        # after concat along channel (2*d_model) -> project back to d_model via 1x1 conv
-        self.merge_conv = nn.Conv1d(
-            in_channels=2 * d_model, out_channels=d_model, kernel_size=1
-        )
-        self.mambas = nn.ModuleList(
-            [Mamba(d_model=d_model) for _ in range(n_mamba_layers)]
-        )
-        self.norm = nn.LayerNorm(d_model)
-
-    def forward(self, x, skip):
-        # x: (B*N, T_low, d_model), skip: (B*N, T_skip, d_model)
-        x_c = x.permute(0, 2, 1)  # (B*N, d_model, T_low)
-        x_up = self.up(x_c)  # (B*N, d_model, T_up) -- ideally equals T_skip
-        x_up = x_up.permute(0, 2, 1)  # (B*N, T_up, d_model)
-
-        # if lengths mismatch, align by interpolation or cropping
-        T_up = x_up.shape[1]
-        T_skip = skip.shape[1]
-        if T_up != T_skip:
-            # try to align: if T_up < T_skip -> interpolate x_up; if > -> crop
-            if T_up < T_skip:
-                x_up = F.interpolate(
-                    x_up.permute(0, 2, 1),
-                    size=T_skip,
-                    mode="linear",
-                    align_corners=False,
-                ).permute(0, 2, 1)
-            else:
-                x_up = x_up[:, :T_skip, :]
-
-        # concat on channel axis: conv expects (B, C, L)
-        cat = torch.cat(
-            [x_up.permute(0, 2, 1), skip.permute(0, 2, 1)], dim=1
-        )  # (B*N, 2*d_model, T)
-        merged = self.merge_conv(cat)  # (B*N, d_model, T)
-        merged = merged.permute(0, 2, 1)  # (B*N, T, d_model)
-        merged = self.norm(merged)
-
-        out = merged
-        for m in self.mambas:
-            out = m(out)  # (B*N, T, d_model)
-        return out
+    def forward(self, x):
+        residual = x
+        x = self.mamba(x)
+        x = self.dropout(x)
+        return self.norm(x + residual)
 
 
 class UMamba(BaseModel):
     def __init__(
-        self, d_model, feature, num_levels=3, n_mamba_per_block=1, **args
+        self,
+        d_model,
+        num_layers,
+        feature,
+        depth=2,
+        dropout=0.1,
+        adjacency=None,
+        **args,
     ):
         super(UMamba, self).__init__(**args)
         self.d_model = d_model
+        self.num_layers = max(1, num_layers)
         self.feature = feature
-        self.num_levels = num_levels
-        self.n_mamba_per_block = n_mamba_per_block
+        self.depth = max(1, depth)
+        self.dropout = dropout
+        self.graph_dim = max(1, min(self.feature, self.d_model))
 
-        # projections
+        # project F → d_model
         self.input_proj = nn.Linear(self.feature, self.d_model)
-        self.output_proj = nn.Linear(self.d_model, self.feature)
 
-        # build encoder and decoder stacks
-        self.encoders = nn.ModuleList(
+        # lightweight adaptive graph mixing before temporal modeling
+        self.query_proj = nn.Linear(self.feature, self.graph_dim, bias=False)
+        self.key_proj = nn.Linear(self.feature, self.graph_dim, bias=False)
+        self.graph_alpha = nn.Parameter(torch.tensor(0.5))
+
+        if adjacency is not None:
+            if not torch.is_tensor(adjacency):
+                adjacency = torch.from_numpy(adjacency).float()
+            else:
+                adjacency = adjacency.float()
+            if adjacency.dim() == 2:
+                adjacency = adjacency.unsqueeze(0)
+            adjacency = adjacency / (adjacency.sum(dim=-1, keepdim=True) + 1e-6)
+            self.register_buffer("static_adj", adjacency)
+        else:
+            self.static_adj = None
+
+        # U-Net style encoder/decoder built from residual Mamba blocks
+        self.encoder_stages = nn.ModuleList(
+            [self._build_stage() for _ in range(self.depth)]
+        )
+
+        down_blocks = max(0, self.depth - 1)
+        self.downsamples = nn.ModuleList(
             [
-                EncoderBlock(self.d_model, n_mamba_layers=self.n_mamba_per_block)
-                for _ in range(self.num_levels)
+                nn.Conv1d(self.d_model, self.d_model, kernel_size=3, stride=2, padding=1)
+                for _ in range(down_blocks)
             ]
         )
-        self.decoders = nn.ModuleList(
+        self.upsamples = nn.ModuleList(
             [
-                DecoderBlock(self.d_model, n_mamba_layers=self.n_mamba_per_block)
-                for _ in range(self.num_levels)
+                nn.ConvTranspose1d(
+                    self.d_model, self.d_model, kernel_size=4, stride=2, padding=1
+                )
+                for _ in range(down_blocks)
             ]
         )
-
-        # bottleneck Mamba layers (after lowest downsample)
-        self.bottleneck = nn.ModuleList(
-            [Mamba(d_model=self.d_model) for _ in range(self.n_mamba_per_block)]
+        self.decoder_stages = nn.ModuleList(
+            [self._build_stage() for _ in range(down_blocks)]
         )
-        self.bottleneck_norm = nn.LayerNorm(self.d_model)
+        self.skip_projs = nn.ModuleList(
+            [nn.Linear(self.d_model * 2, self.d_model) for _ in range(down_blocks)]
+        )
 
-        # temporal projection from seq_len -> horizon
+        self.bottleneck_stage = self._build_stage()
+
+        # project sequence length T → H
         self.time_proj = nn.Linear(self.seq_len, self.horizon)
 
-    def forward(self, x):  # x: (B, T, N, F)
+        # project d_model → F
+        self.output_proj = nn.Linear(self.d_model, self.feature)
+
+    def _build_stage(self):
+        return nn.Sequential(
+            *[MambaBlock(self.d_model, self.dropout) for _ in range(self.num_layers)]
+        )
+
+    def _apply_downsample(self, x, layer):
+        x = x.permute(0, 2, 1)
+        x = layer(x)
+        return x.permute(0, 2, 1)
+
+    def _apply_upsample(self, x, layer):
+        x = x.permute(0, 2, 1)
+        x = layer(x)
+        return x.permute(0, 2, 1)
+
+    def _match_length(self, tensor, target_len):
+        current_len = tensor.size(1)
+        if current_len == target_len:
+            return tensor
+        if current_len > target_len:
+            return tensor[:, :target_len, :]
+        pad = target_len - current_len
+        return F.pad(tensor, (0, 0, 0, pad))
+
+    def _adaptive_mix(self, x):
+        # compute batch-wise node affinities from averaged temporal features
+        node_state = x.mean(dim=1)  # (B, N, F)
+        query = self.query_proj(node_state)
+        key = self.key_proj(node_state)
+        attn = torch.matmul(query, key.transpose(1, 2)) / math.sqrt(self.graph_dim)
+        attn = F.softmax(attn, dim=-1)
+        if getattr(self, "static_adj", None) is not None:
+            attn = attn * self.static_adj
+            attn = attn / (attn.sum(dim=-1, keepdim=True) + 1e-6)
+        mixed = torch.einsum("btnf,bnm->btmf", x, attn)
+        mix_coeff = torch.sigmoid(self.graph_alpha)
+        return mix_coeff * mixed + (1 - mix_coeff) * x
+
+    def forward(self, x):  # (B, T, N, F)
         B, T, N, F = x.shape
-        # merge batch and nodes
+
+        x = self._adaptive_mix(x)
+
+        # merge batch and nodes → treat each node independently
         x = x.permute(0, 2, 1, 3).reshape(B * N, T, F)  # (B*N, T, F)
 
-        # input feature projection
+        # feature projection
         x = self.input_proj(x)  # (B*N, T, d_model)
 
-        # ---- Encoder ----
+        # encoder
         skips = []
-        cur = x
-        for enc in self.encoders:
-            cur, skip = enc(cur)  # cur is downsampled, skip is pre-downsample
-            skips.append(skip)
+        for idx, stage in enumerate(self.encoder_stages):
+            x = stage(x)
+            if idx < len(self.downsamples):
+                skips.append(x)
+                x = self._apply_downsample(x, self.downsamples[idx])
 
-        # ---- Bottleneck ----
-        for m in self.bottleneck:
-            cur = m(cur)
-        cur = self.bottleneck_norm(cur)
+        # bottleneck
+        x = self.bottleneck_stage(x)
 
-        # ---- Decoder (reverse order) ----
-        for dec, skip in zip(self.decoders, reversed(skips)):
-            cur = dec(cur, skip)
+        # decoder with skip connections
+        for stage, upsample, proj in zip(
+            reversed(self.decoder_stages),
+            reversed(self.upsamples),
+            reversed(self.skip_projs),
+        ):
+            x = self._apply_upsample(x, upsample)
+            skip = skips.pop()
+            target_len = skip.size(1)
+            x = self._match_length(x, target_len)
+            skip = self._match_length(skip, target_len)
+            x = torch.cat([x, skip], dim=-1)
+            x = proj(x)
+            x = stage(x)
 
-        # Now cur should be (B*N, T_recon, d_model). Ideally T_recon == original T
-        T_recon = cur.shape[1]
-        if T_recon != T:
-            # try to align to original T by interpolation or cropping
-            if T_recon < T:
-                cur = F.interpolate(
-                    cur.permute(0, 2, 1), size=T, mode="linear", align_corners=False
-                ).permute(0, 2, 1)
-            else:
-                cur = cur[:, :T, :]
+        # make sure sequence length matches the original input for downstream projection
+        x = self._match_length(x, self.seq_len)
 
-        # ---- time projection T -> H ----
-        cur = cur.permute(0, 2, 1)  # (B*N, d_model, T)
-        cur = self.time_proj(cur)  # (B*N, d_model, H)
-        cur = cur.permute(0, 2, 1)  # (B*N, H, d_model)
+        # project T → H
+        x = x.permute(0, 2, 1)  # (B*N, d_model, T)
+        x = self.time_proj(x)  # (B*N, d_model, H)
+        x = x.permute(0, 2, 1)  # (B*N, H, d_model)
 
-        # project back to original feature dim
-        cur = self.output_proj(cur)  # (B*N, H, F)
+        # project feature back
+        x = self.output_proj(x)  # (B*N, H, F)
 
         # reshape back to (B, H, N, F)
-        cur = cur.reshape(B, N, self.horizon, F).permute(0, 2, 1, 3)
-        return cur
+        x = x.reshape(B, N, self.horizon, F)
+        x = x.permute(0, 2, 1, 3)
+
+        return x

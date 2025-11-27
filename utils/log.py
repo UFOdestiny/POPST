@@ -49,7 +49,7 @@ def get_logger(log_dir: str, name: str, log_filename: str = None, level: int = L
     file_handler = RotatingFileHandler(
         log_path,
         maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=5,  # 保留5个备份
+        backupCount=10,  # 保留5个备份
         encoding='utf-8'
     )
     file_handler.setFormatter(formatter)

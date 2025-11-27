@@ -30,6 +30,12 @@ class Metrics:
         early_stop_method = loss_func
         self.early_stop_method_index = self.metric_lst.index(early_stop_method)
 
+        self._basic_metrics = {"MAE", "MSE", "MAPE", "RMSE", "KL", "CRPS"}
+        self._scale_metrics = {"MGAU"}
+        self._interval_metrics = {"MPIW"}
+        self._interval_with_target = {"WINK", "COV"}
+        self._quantile_metric = {"Quantile"}
+
         self.N = len(self.metric_lst)  # loss function
         self.train_res = [[] for _ in range(self.N)]
         self.valid_res = [[] for _ in range(self.N)]
@@ -60,30 +66,55 @@ class Metrics:
         }
         current_storage = res_storage.get(mode, self.test_res)
 
+        null_tensor = self._align_tensor(null_val, preds)
+
         for i, fname in enumerate(self.metric_lst):
-            if fname in ["MAE", "MSE", "MAPE", "RMSE", "KL", "CRPS"]:
-                res = self.metric_func[i](preds, labels, null_val)
-            elif fname == "MGAU":
-                res = self.metric_func[i](preds, labels, null_val, kwargs["scale"])
-            elif fname in ["WINK", "COV"]:
-                res = self.metric_func[i](
-                    kwargs["lower"], kwargs["upper"], labels, alpha=0.1
-                )
-            elif fname == "MPIW":
-                res = self.metric_func[i](kwargs["lower"], kwargs["upper"])
-            elif fname == "Quantile":
-                res = self.metric_func[i](
-                    kwargs["lower"], preds, kwargs["upper"], labels
-                )
+            func = self.metric_func[i]
+            if fname in self._basic_metrics:
+                res = func(preds, labels, null_tensor)
+            elif fname in self._scale_metrics:
+                res = func(preds, labels, null_tensor, self._require_kw("scale", kwargs))
+            elif fname in self._interval_metrics:
+                lower, upper = self._require_interval(kwargs, preds)
+                res = func(lower, upper, null_tensor)
+            elif fname in self._interval_with_target:
+                lower, upper = self._require_interval(kwargs, labels)
+                res = func(lower, upper, labels, alpha=kwargs.get("alpha", 0.1))
+            elif fname in self._quantile_metric:
+                lower, upper = self._require_interval(kwargs, preds)
+                res = func(lower, preds, upper, labels)
             else:
                 raise ValueError(f"Invalid metric name: {fname}")
 
             if i == 0 and mode == "train":
                 grad_res = res
 
-            current_storage[i].append(res.item())
+            current_storage[i].append(self._to_scalar(res))
 
         return grad_res
+
+    @staticmethod
+    def _align_tensor(value, reference):
+        if torch.is_tensor(value):
+            return value.to(device=reference.device, dtype=reference.dtype)
+        return torch.tensor(value, device=reference.device, dtype=reference.dtype)
+
+    @staticmethod
+    def _require_kw(key, storage):
+        if key not in storage:
+            raise KeyError(f"Metric computation requires '{key}' in kwargs.")
+        return storage[key]
+
+    def _require_interval(self, storage, reference):
+        lower = self._align_tensor(self._require_kw("lower", storage), reference)
+        upper = self._align_tensor(self._require_kw("upper", storage), reference)
+        return lower, upper
+
+    @staticmethod
+    def _to_scalar(value):
+        if torch.is_tensor(value):
+            return value.detach().item()
+        return float(value)
 
     def get_loss(self, mode="valid", method="MAE"):
         index_ = self.metric_lst.index(method)
@@ -145,6 +176,11 @@ class Metrics:
 
 
 def get_mask(labels, null_val):
+    if not torch.is_tensor(null_val):
+        null_val = torch.tensor(null_val, device=labels.device, dtype=labels.dtype)
+    else:
+        null_val = null_val.to(device=labels.device, dtype=labels.dtype)
+
     if torch.isnan(null_val):
         mask = ~torch.isnan(labels)
     else:
@@ -196,7 +232,7 @@ def masked_mae(preds, labels, null_val):
 def masked_mape(preds, labels, null_val):
     assert preds.shape == labels.shape, f"preds: {preds.shape}, labels: {labels.shape}"
     loss = torch.abs(preds - labels) / torch.abs(labels)
-    loss = get_mask_mean(loss, labels, torch.tensor(0))
+    loss = get_mask_mean(loss, labels, labels.new_tensor(0.0))
     return loss * 100
 
 
@@ -477,16 +513,11 @@ def laplace_loss(preds, labels, null_val):
 
 
 def masked_crps(preds, labels, null_val):
-    mask = get_mask(labels, null_val)
-
-    # m, v = preds
-    # if v.shape != m.shape:
-    #     v = torch.diagonal(v, dim1=-2, dim2=-1)
-
-    # loss = ps.crps_gaussian(labels, mu=m, sig=v)
-    loss = ps.crps_ensemble(labels.cpu().numpy(), preds.cpu().detach().numpy())
-
-    return loss.mean()
+    _ = get_mask(labels, null_val)  # keep API for consistency
+    preds_np = preds.detach().cpu().numpy()
+    labels_np = labels.detach().cpu().numpy()
+    loss = ps.crps_ensemble(labels_np, preds_np)
+    return torch.tensor(loss.mean(), device=preds.device, dtype=preds.dtype)
 
 
 def masked_quantile(

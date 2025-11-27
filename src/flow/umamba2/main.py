@@ -26,8 +26,8 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--num_layers", type=int, default=2)
-    parser.add_argument("--d_model", type=int, default=32)
+    parser.add_argument("--num_layers", type=int, default=4)
+    parser.add_argument("--d_model", type=int, default=128)
 
     parser.add_argument("--step_size", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.95)

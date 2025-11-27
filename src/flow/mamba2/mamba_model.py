@@ -1,185 +1,145 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from base.model import BaseModel
 from mamba_ssm import Mamba
 
 
-class MambaEncoderBlock(nn.Module):
-    """Mamba encoder block with downsampling"""
-    def __init__(self, d_model, downsample_factor=2):
+class MambaBlock(nn.Module):
+    """Residual Mamba block with lightweight normalization."""
+
+    def __init__(self, d_model, dropout):
         super().__init__()
         self.mamba = Mamba(d_model=d_model)
         self.norm = nn.LayerNorm(d_model)
-        self.downsample_factor = downsample_factor
-        # Downsample in time dimension
-        self.downsample = nn.Linear(downsample_factor, 1)
-        
-    def forward(self, x):  # (B, T, D)
-        # Mamba processing with residual
-        residual = x
-        x = self.mamba(x)
-        x = self.norm(x + residual)
-        
-        B, T, D = x.shape
-        # Downsample: group consecutive time steps
-        if T % self.downsample_factor != 0:
-            # Pad if necessary
-            pad_len = self.downsample_factor - (T % self.downsample_factor)
-            x = nn.functional.pad(x, (0, 0, 0, pad_len))
-            T = T + pad_len
-        
-        x = x.reshape(B, T // self.downsample_factor, self.downsample_factor, D)
-        x = x.permute(0, 1, 3, 2)  # (B, T//2, D, 2)
-        x = self.downsample(x).squeeze(-1)  # (B, T//2, D)
-        
-        return x
+        self.dropout = nn.Dropout(dropout)
 
-
-class MambaDecoderBlock(nn.Module):
-    """Mamba decoder block with upsampling and skip connection"""
-    def __init__(self, d_model, upsample_factor=2):
-        super().__init__()
-        self.mamba = Mamba(d_model=d_model)
-        self.norm = nn.LayerNorm(d_model)
-        self.upsample_factor = upsample_factor
-        # Upsample in time dimension
-        self.upsample = nn.Linear(1, upsample_factor)
-        # Fusion layer for skip connection
-        self.skip_fusion = nn.Linear(d_model * 2, d_model)
-        
-    def forward(self, x, skip):  # x: (B, T, D), skip: (B, T*2, D)
-        B, T, D = x.shape
-        
-        # Upsample
-        x = x.unsqueeze(-1)  # (B, T, D, 1)
-        x = self.upsample(x)  # (B, T, D, 2)
-        x = x.permute(0, 1, 3, 2)  # (B, T, 2, D)
-        x = x.reshape(B, T * self.upsample_factor, D)  # (B, T*2, D)
-        
-        # Match skip connection size if needed
-        if x.shape[1] != skip.shape[1]:
-            # Interpolate to match
-            x = x.permute(0, 2, 1)  # (B, D, T*2)
-            x = nn.functional.interpolate(x, size=skip.shape[1], mode='linear', align_corners=False)
-            x = x.permute(0, 2, 1)  # (B, T_skip, D)
-        
-        # Skip connection fusion
-        x = torch.cat([x, skip], dim=-1)  # (B, T, D*2)
-        x = self.skip_fusion(x)  # (B, T, D)
-        
-        # Mamba processing with residual
-        residual = x
-        x = self.mamba(x)
-        x = self.norm(x + residual)
-        
-        return x
-
-
-class MambaBottleneck(nn.Module):
-    """Bottleneck Mamba block"""
-    def __init__(self, d_model):
-        super().__init__()
-        self.mamba = Mamba(d_model=d_model)
-        self.norm = nn.LayerNorm(d_model)
-        
     def forward(self, x):
         residual = x
         x = self.mamba(x)
-        x = self.norm(x + residual)
-        return x
+        x = self.dropout(x)
+        return self.norm(x + residual)
 
 
-class Mamba2(BaseModel):
-    """
-    UNet-style Mamba architecture for spatio-temporal prediction.
-    
-    Architecture:
-    - Encoder: Multiple Mamba blocks with downsampling
-    - Bottleneck: Mamba block at lowest resolution
-    - Decoder: Multiple Mamba blocks with upsampling and skip connections
-    """
-    def __init__(self, d_model, num_layers, feature, **args):
-        super(Mamba2, self).__init__(**args)
+class myMamba2(BaseModel):
+    def __init__(self, d_model, num_layers, feature, depth=2, dropout=0.1, **args):
+        super(myMamba2, self).__init__(**args)
         self.d_model = d_model
-        self.num_layers = num_layers  # Number of encoder/decoder levels
+        self.num_layers = max(1, num_layers)
         self.feature = feature
-        
-        # Input projection: F → d_model
+        self.depth = max(1, depth)
+        self.dropout = dropout
+
+        # project F → d_model
         self.input_proj = nn.Linear(self.feature, self.d_model)
-        
-        # Encoder blocks (downsampling path)
-        self.encoders = nn.ModuleList([
-            MambaEncoderBlock(d_model=self.d_model, downsample_factor=2)
-            for _ in range(self.num_layers)
-        ])
-        
-        # Bottleneck
-        self.bottleneck = MambaBottleneck(d_model=self.d_model)
-        
-        # Decoder blocks (upsampling path with skip connections)
-        self.decoders = nn.ModuleList([
-            MambaDecoderBlock(d_model=self.d_model, upsample_factor=2)
-            for _ in range(self.num_layers)
-        ])
-        
-        # Output projection layers
+
+        # U-Net style encoder/decoder built from residual Mamba blocks
+        self.encoder_stages = nn.ModuleList(
+            [self._build_stage() for _ in range(self.depth)]
+        )
+
+        down_blocks = max(0, self.depth - 1)
+        self.downsamples = nn.ModuleList(
+            [
+                nn.Conv1d(self.d_model, self.d_model, kernel_size=3, stride=2, padding=1)
+                for _ in range(down_blocks)
+            ]
+        )
+        self.upsamples = nn.ModuleList(
+            [
+                nn.ConvTranspose1d(
+                    self.d_model, self.d_model, kernel_size=4, stride=2, padding=1
+                )
+                for _ in range(down_blocks)
+            ]
+        )
+        self.decoder_stages = nn.ModuleList(
+            [self._build_stage() for _ in range(down_blocks)]
+        )
+        self.skip_projs = nn.ModuleList(
+            [nn.Linear(self.d_model * 2, self.d_model) for _ in range(down_blocks)]
+        )
+
+        self.bottleneck_stage = self._build_stage()
+
+        # project sequence length T → H
         self.time_proj = nn.Linear(self.seq_len, self.horizon)
+
+        # project d_model → F
         self.output_proj = nn.Linear(self.d_model, self.feature)
-        
-        # Final refinement Mamba layer
-        self.final_mamba = Mamba(d_model=self.d_model)
-        self.final_norm = nn.LayerNorm(self.d_model)
+
+    def _build_stage(self):
+        return nn.Sequential(
+            *[MambaBlock(self.d_model, self.dropout) for _ in range(self.num_layers)]
+        )
+
+    def _apply_downsample(self, x, layer):
+        x = x.permute(0, 2, 1)
+        x = layer(x)
+        return x.permute(0, 2, 1)
+
+    def _apply_upsample(self, x, layer):
+        x = x.permute(0, 2, 1)
+        x = layer(x)
+        return x.permute(0, 2, 1)
+
+    def _match_length(self, tensor, target_len):
+        current_len = tensor.size(1)
+        if current_len == target_len:
+            return tensor
+        if current_len > target_len:
+            return tensor[:, :target_len, :]
+        pad = target_len - current_len
+        return F.pad(tensor, (0, 0, 0, pad))
 
     def forward(self, x):  # (B, T, N, F)
         B, T, N, F = x.shape
-        
-        # Merge batch and nodes → treat each node independently
+
+        # merge batch and nodes → treat each node independently
         x = x.permute(0, 2, 1, 3).reshape(B * N, T, F)  # (B*N, T, F)
-        
-        # Input projection
+
+        # feature projection
         x = self.input_proj(x)  # (B*N, T, d_model)
-        
-        # Store original for global skip
-        x_input = x
-        
-        # ========== Encoder Path ==========
-        skip_connections = []
-        for encoder in self.encoders:
-            skip_connections.append(x)  # Store before downsampling
-            x = encoder(x)
-        
-        # ========== Bottleneck ==========
-        x = self.bottleneck(x)
-        
-        # ========== Decoder Path ==========
-        for i, decoder in enumerate(self.decoders):
-            # Get corresponding skip connection (reverse order)
-            skip = skip_connections[-(i + 1)]
-            x = decoder(x, skip)
-        
-        # Match original sequence length if needed
-        if x.shape[1] != T:
-            x = x.permute(0, 2, 1)  # (B*N, d_model, T')
-            x = nn.functional.interpolate(x, size=T, mode='linear', align_corners=False)
-            x = x.permute(0, 2, 1)  # (B*N, T, d_model)
-        
-        # Global skip connection
-        x = x + x_input
-        
-        # Final refinement
-        x = self.final_mamba(x)
-        x = self.final_norm(x)
-        
-        # Project T → H
+
+        # encoder
+        skips = []
+        for idx, stage in enumerate(self.encoder_stages):
+            x = stage(x)
+            if idx < len(self.downsamples):
+                skips.append(x)
+                x = self._apply_downsample(x, self.downsamples[idx])
+
+        # bottleneck
+        x = self.bottleneck_stage(x)
+
+        # decoder with skip connections
+        for stage, upsample, proj in zip(
+            reversed(self.decoder_stages),
+            reversed(self.upsamples),
+            reversed(self.skip_projs),
+        ):
+            x = self._apply_upsample(x, upsample)
+            skip = skips.pop()
+            target_len = skip.size(1)
+            x = self._match_length(x, target_len)
+            skip = self._match_length(skip, target_len)
+            x = torch.cat([x, skip], dim=-1)
+            x = proj(x)
+            x = stage(x)
+
+        # make sure sequence length matches the original input for downstream projection
+        x = self._match_length(x, self.seq_len)
+
+        # project T → H
         x = x.permute(0, 2, 1)  # (B*N, d_model, T)
         x = self.time_proj(x)  # (B*N, d_model, H)
         x = x.permute(0, 2, 1)  # (B*N, H, d_model)
-        
-        # Project feature back
+
+        # project feature back
         x = self.output_proj(x)  # (B*N, H, F)
-        
-        # Reshape back to (B, H, N, F)
+
+        # reshape back to (B, H, N, F)
         x = x.reshape(B, N, self.horizon, F)
         x = x.permute(0, 2, 1, 3)
-        
+
         return x
