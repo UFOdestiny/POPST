@@ -30,7 +30,7 @@ def get_config():
     parser.add_argument("--hid_dim", type=int, default=64)
     parser.add_argument("--end_dim", type=int, default=512)
     parser.add_argument("--layer", type=int, default=2)
-    parser.add_argument("--step_size", type=int, default=10)
+    parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=1e-4)

@@ -32,7 +32,7 @@ def get_config():
     parser.add_argument("--Kt", type=int, default=2)
     parser.add_argument("--Ks", type=int, default=3)
     parser.add_argument("--block_num", type=int, default=2)
-    parser.add_argument("--step_size", type=int, default=10)
+    parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
 
     parser.add_argument("--lrate", type=float, default=1e-3)

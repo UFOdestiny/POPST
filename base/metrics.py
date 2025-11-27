@@ -25,10 +25,23 @@ class Metrics:
         }
         self.horizon = horizon
 
-        self.metric_lst = [loss_func] + metric_lst
+        cleaned_metrics = []
+        seen = set()
+        for m in metric_lst:
+            if m not in self.dic:
+                raise ValueError(f"Unsupported metric: {m}")
+            if m not in seen:
+                cleaned_metrics.append(m)
+                seen.add(m)
+
+        if loss_func not in seen:
+            cleaned_metrics.insert(0, loss_func)
+            seen.add(loss_func)
+
+        self.loss_name = loss_func
+        self.metric_lst = cleaned_metrics
         self.metric_func = [self.dic[i] for i in self.metric_lst]
-        early_stop_method = loss_func
-        self.early_stop_method_index = self.metric_lst.index(early_stop_method)
+        self.early_stop_method_index = self.metric_lst.index(self.loss_name)
 
         self._basic_metrics = {"MAE", "MSE", "MAPE", "RMSE", "KL", "CRPS"}
         self._scale_metrics = {"MGAU"}
@@ -46,14 +59,15 @@ class Metrics:
         self.formatter()
 
     def formatter(self):
-        msg_parts = ["Epoch: {:d}, Tr Loss: {:.3f}, "]
-        msg_parts.extend([f"Tr {m}: {{:.3f}}, " for m in self.metric_lst[1:]])
-        msg_parts.append("V Loss: {:.3f}, ")
-        msg_parts.extend([f"V {m}: {{:.3f}}, " for m in self.metric_lst[1:]])
-        msg_parts.append("Te Loss: {:.3f}, ")
-        msg_parts.extend([f"Te {m}: {{:.3f}}, " for m in self.metric_lst[1:]])
+        def _section(prefix):
+            return [f"{prefix} {m}: {{:.3f}}, " for m in self.metric_lst]
+
+        msg_parts = ["Epoch: {:d}, "]
+        msg_parts.extend(_section("Tr"))
+        msg_parts.extend(_section("V"))
+        msg_parts.extend(_section("Te"))
         msg_parts.append(
-            "LR: {:.4e}, Tr Time: {:.3f} s/epoch, V Time: {:.3f} s, Te Time: {:.3f} s"
+            "LR: {:.4e}, Tr Time: {:.3f} s, V Time: {:.3f} s, Te Time: {:.3f} s"
         )
         self.train_msg = "".join(msg_parts)
 
@@ -73,7 +87,9 @@ class Metrics:
             if fname in self._basic_metrics:
                 res = func(preds, labels, null_tensor)
             elif fname in self._scale_metrics:
-                res = func(preds, labels, null_tensor, self._require_kw("scale", kwargs))
+                res = func(
+                    preds, labels, null_tensor, self._require_kw("scale", kwargs)
+                )
             elif fname in self._interval_metrics:
                 lower, upper = self._require_interval(kwargs, preds)
                 res = func(lower, upper, null_tensor)
@@ -86,7 +102,7 @@ class Metrics:
             else:
                 raise ValueError(f"Invalid metric name: {fname}")
 
-            if i == 0 and mode == "train":
+            if fname == self.loss_name and mode == "train":
                 grad_res = res
 
             current_storage[i].append(self._to_scalar(res))

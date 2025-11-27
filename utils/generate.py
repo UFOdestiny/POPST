@@ -1,6 +1,9 @@
 import argparse
 import os
 import sys
+from pathlib import Path
+from typing import Optional, Union
+
 import torch
 import numpy as np
 
@@ -9,6 +12,19 @@ sys.path.append(os.path.abspath(__file__ + "/../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from utils.args import get_data_path
+
+
+def _resolve_device(data=None, device: Optional[Union[str, torch.device]] = None):
+    if device is not None:
+        return torch.device(device)
+    if isinstance(data, torch.Tensor):
+        return data.device
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _ensure_dir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class MinMaxScaler:
@@ -62,20 +78,28 @@ class StandardScaler:
     def transform(self, data):
         if self.mean is None or self.std is None or self.offset is None:
             raise ValueError(
-                "StandardScaler is not fitted yet. Call 'fit' with training data first."
+                "StandardScaler_OD is not fitted yet. Call 'fit' with training data first."
             )
         normalized_data = (data - self.mean) / self.std
         return normalized_data + self.offset
 
-    def inverse_transform(self, data):
+    def inverse_transform(self, data, device=None):
         if self.mean is None or self.std is None or self.offset is None:
             raise ValueError(
-                "StandardScaler is not fitted yet. Call 'fit' with training data first."
+                "StandardScaler_OD is not fitted yet. Call 'fit' with training data first."
             )
-        unshifted_data = data - self.offset.to(device="cuda")
-        return (unshifted_data * self.std.to(device="cuda")) + self.mean.to(
-            device="cuda"
-        )
+        dev = _resolve_device(data, device)
+        offset = self.offset.to(device=dev)
+        std = self.std.to(device=dev)
+        mean = self.mean.to(device=dev)
+
+        if isinstance(data, torch.Tensor):
+            unshifted_data = data - offset
+            return unshifted_data * std + mean
+
+        tensor_data = torch.tensor(data, device=dev)
+        restored = (tensor_data - offset) * std + mean
+        return restored.cpu().numpy()
 
 
 class StandardScaler_OD:
@@ -118,15 +142,23 @@ class StandardScaler_OD:
         normalized_data = (data - self.mean) / self.std
         return normalized_data + self.offset
 
-    def inverse_transform(self, data, device="cuda"):
+    def inverse_transform(self, data, device=None):
         if self.mean is None or self.std is None or self.offset is None:
             raise ValueError(
                 "StandardScaler is not fitted yet. Call 'fit' with training data first."
             )
-        unshifted_data = data - self.offset.to(device=device)
-        return (unshifted_data * self.std.to(device=device)) + self.mean.to(
-            device=device
-        )
+        dev = _resolve_device(data, device)
+        offset = self.offset.to(device=dev)
+        std = self.std.to(device=dev)
+        mean = self.mean.to(device=dev)
+
+        if isinstance(data, torch.Tensor):
+            unshifted_data = data - offset
+            return unshifted_data * std + mean
+
+        tensor_data = torch.tensor(data, device=dev)
+        restored = (tensor_data - offset) * std + mean
+        return restored.cpu().numpy()
 
 
 class LogScaler:
@@ -136,11 +168,11 @@ class LogScaler:
     def transform(self, data):
         return np.log(data + 1)
 
-    def inverse_transform(self, data, device="cuda"):
-        if type(data) == np.ndarray:
+    def inverse_transform(self, data, device=None):
+        if isinstance(data, np.ndarray):
             return np.exp(data) - 1
-        else:
-            return torch.exp(data).to(device=device) - 1
+        dev = _resolve_device(data, device)
+        return torch.exp(data).to(device=dev) - 1
 
 
 class LogMinMaxScaler:
@@ -159,13 +191,14 @@ class LogMinMaxScaler:
         log_data = np.log1p(data)
         return (log_data - self.data_min_) / (self.data_max_ - self.data_min_)
 
-    def inverse_transform(self, data, device="cuda"):
+    def inverse_transform(self, data, device=None):
+        span = self.data_max_ - self.data_min_
         if isinstance(data, torch.Tensor):
-            log_data = data * (self.data_max_ - self.data_min_) + self.data_min_
-            return torch.expm1(log_data.to(device=device))
-        else:
-            log_data = data * (self.data_max_ - self.data_min_) + self.data_min_
-            return np.expm1(log_data)
+            log_data = data * span + self.data_min_
+            return torch.expm1(log_data.to(device=_resolve_device(data, device)))
+
+        log_data = data * span.cpu().numpy() + self.data_min_.cpu().numpy()
+        return np.expm1(log_data)
 
 
 class RatioScaler:
@@ -176,7 +209,7 @@ class RatioScaler:
         return data / self.ratio
 
     def inverse_transform(self, data):
-        return data * self.ratio.to(device="cuda")
+        return data * self.ratio
 
 
 def split_dataset(data, args, tra_ratio, val_ratio, test_ratio):
@@ -272,22 +305,14 @@ def generate_flow(args):
 
     print(f"Normalized max: {data.max()}, min: {data.min()}, mean: {data.mean()}")
 
-    p = get_data_path()
-    out_dir = args.dataset + "/" + args.years
-    path_ = os.path.join(p, out_dir)
-    if not os.path.exists(path_):
-        os.makedirs(path_)
-
+    base_dir = _ensure_dir(Path(get_data_path()) / args.dataset / args.years)
     np.savez_compressed(
-        os.path.join(path_, "his.npz"),
+        base_dir / "his.npz",
         data=data,
         min=scaler.data_min_,
         max=scaler.data_max_,
     )
-    np.save(os.path.join(path_, "idx_train"), idx_train)
-    np.save(os.path.join(path_, "idx_val"), idx_val)
-    np.save(os.path.join(path_, "idx_test"), idx_test)
-    np.save(os.path.join(path_, "idx_all"), idx_all)
+    _save_indices(base_dir, idx_train, idx_val, idx_test, idx_all)
 
 
 def generate_od(args):
@@ -345,18 +370,10 @@ def generate_od(args):
 
     print(d[0][-1])
 
-    p = get_data_path()
-    out_dir = args.dataset + "/" + args.years
-    path_ = os.path.join(p, out_dir)
-    if not os.path.exists(path_):
-        os.makedirs(path_)
-
-    print("save to: ", path_)
-    np.savez_compressed(os.path.join(path_, "his.npz"), data=data)
-    np.save(os.path.join(path_, "idx_train"), idx_train)
-    np.save(os.path.join(path_, "idx_val"), idx_val)
-    np.save(os.path.join(path_, "idx_test"), idx_test)
-    np.save(os.path.join(path_, "idx_all"), idx_all)
+    base_dir = _ensure_dir(Path(get_data_path()) / args.dataset / args.years)
+    print("save to: ", base_dir)
+    np.savez_compressed(base_dir / "his.npz", data=data)
+    _save_indices(base_dir, idx_train, idx_val, idx_test, idx_all)
 
 
 def generate_od_2(args):
@@ -368,13 +385,13 @@ def generate_od_2(args):
     # data_path2 = "/blue/gtyson.fsu/dy23a.fsu/switch/shenzhen/bike.npy"
     # data = np.load(data_path1).transpose(2, 0, 1)[:672,...]
     # data_2 = np.load(data_path2).transpose(2, 0, 1)[:672,...]
-    
+
     data_path1 = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/subway.npy"
     data_path2 = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/bike.npy"
     data = np.load(data_path1).transpose(2, 0, 1)
     data_2 = np.load(data_path2).transpose(2, 0, 1)
 
-    data = np.concat((data, data_2, ), axis=0)
+    data = np.concatenate((data, data_2), axis=0)
     print(data.shape)
     # exit()
 
@@ -386,9 +403,9 @@ def generate_od_2(args):
     print("final data shape:", data.shape, "idx shape:", idx.shape)
     num_samples = len(idx)
     num_train = round(num_samples * 0.9)
-    num_val = 287#168
-    num_test = 287#168
-    num_train=num_samples-num_test-num_val
+    num_val = 287  # 168
+    num_test = 287  # 168
+    num_train = num_samples - num_test - num_val
     print(num_train, num_val, num_samples - num_train - num_val)
 
     # split idx
@@ -417,26 +434,23 @@ def generate_od_2(args):
 
     print(d[0][-1])
 
-    p = get_data_path()
-    out_dir = args.dataset + "/" + args.years
-    path_ = os.path.join(p, out_dir)
-    if not os.path.exists(path_):
-        os.makedirs(path_)
+    base_dir = _ensure_dir(Path(get_data_path()) / args.dataset / args.years)
+    print("save to: ", base_dir)
+    np.savez_compressed(base_dir / "his.npz", data=data)
+    _save_indices(base_dir, idx_train, idx_val, idx_test, idx_all)
 
-    print("save to: ", path_)
-    np.savez_compressed(os.path.join(path_, "his.npz"), data=data)
-    np.save(os.path.join(path_, "idx_train"), idx_train)
-    np.save(os.path.join(path_, "idx_val"), idx_val)
-    np.save(os.path.join(path_, "idx_test"), idx_test)
-    np.save(os.path.join(path_, "idx_all"), idx_all)
+
+def _save_indices(base_dir: Path, idx_train, idx_val, idx_test, idx_all):
+    np.save(base_dir / "idx_train", idx_train)
+    np.save(base_dir / "idx_val", idx_val)
+    np.save(base_dir / "idx_test", idx_test)
+    np.save(base_dir / "idx_all", idx_all)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument(
-        "--dataset", type=str, default="panhandle", help="dataset name"
-    )
+    parser.add_argument("--dataset", type=str, default="panhandle", help="dataset name")
     parser.add_argument("--years", type=str, default="2018")
     parser.add_argument("--seq_length_x", type=int, default=7, help="sequence Length")
     parser.add_argument("--seq_length_y", type=int, default=3, help="sequence Length")

@@ -1,21 +1,42 @@
-import multiprocessing as mp
+import math
 import os
 import pickle
 import sys
-import threading
+from pathlib import Path
+
 import numpy as np
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from utils.args import get_data_path
-from utils.generate import (
-    LogMinMaxScaler,
-    LogScaler,
-    StandardScaler,
-    StandardScaler_OD,
-)
+from utils.generate import LogMinMaxScaler, LogScaler
 from scipy.spatial import distance
+
+
+def _pad_indices(indices, batch_size):
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    remainder = len(indices) % batch_size
+    if remainder == 0:
+        return indices
+    num_padding = batch_size - remainder
+    padding = np.repeat(indices[-1:], num_padding, axis=0)
+    return np.concatenate([indices, padding], axis=0)
+
+
+def _compute_num_batches(size, batch_size, droplast):
+    if droplast:
+        return size // batch_size
+    return math.ceil(size / batch_size) if batch_size else 0
+
+
+def _load_data_dir(data_path, years):
+    return Path(data_path) / years
+
+
+def _load_indices(data_dir, split):
+    return np.load(data_dir / f"idx_{split}.npy")
 
 
 class DataLoader(object):
@@ -32,20 +53,18 @@ class DataLoader(object):
         droplast=False,
     ):
         if pad_last_sample:
-            num_padding = (bs - (len(idx) % bs)) % bs
-            idx_padding = np.repeat(idx[-1:], num_padding, axis=0)
-            idx = np.concatenate([idx, idx_padding], axis=0)
+            idx = _pad_indices(idx, bs)
 
-        self.data = data
-        self.idx = idx
-        self.size = len(idx)
+        self.data = np.asarray(data)
+        self.idx = np.asarray(idx)
+        self.size = len(self.idx)
         self.bs = bs
-        self.num_batch = int(self.size // self.bs)
-        if not droplast and self.size % self.bs != 0:
-            self.num_batch += 1
+        self.droplast = droplast
+        self.num_batch = _compute_num_batches(self.size, self.bs, droplast)
 
         self.current_ind = 0
-        logger.info(f"{name} num: {self.idx.shape[0]}, Batch num: {self.num_batch}")
+        loader_name = name or "loader"
+        logger.info(f"{loader_name} num: {self.idx.shape[0]}, Batch num: {self.num_batch}")
 
         self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
         self.y_offsets = np.arange(1, (horizon + 1), 1)
@@ -56,11 +75,6 @@ class DataLoader(object):
         perm = np.random.permutation(self.size)
         self.idx = self.idx[perm]
 
-    def write_to_shared_array(self, x, y, idx_ind, start_idx, end_idx):
-        for i in range(start_idx, end_idx):
-            x[i] = self.data[idx_ind[i] + self.x_offsets, ...]
-            y[i] = self.data[idx_ind[i] + self.y_offsets, ...]  # dimension
-
     def get_iterator(self):
         self.current_ind = 0
 
@@ -68,42 +82,18 @@ class DataLoader(object):
             while self.current_ind < self.num_batch:
                 start_ind = self.bs * self.current_ind
                 end_ind = min(self.size, self.bs * (self.current_ind + 1))
-                idx_ind = self.idx[start_ind:end_ind, ...]
+                idx_ind = np.asarray(self.idx[start_ind:end_ind]).reshape(-1)
+                if len(idx_ind) == 0:
+                    break
+                if self.droplast and len(idx_ind) < self.bs:
+                    self.current_ind += 1
+                    continue
 
-                x_shape = (
-                    len(idx_ind),
-                    self.seq_len,
-                    self.data.shape[1],
-                    self.data.shape[-1],
-                )
-                x_shared = mp.RawArray("f", int(np.prod(x_shape)))
-                x = np.frombuffer(x_shared, dtype="f").reshape(x_shape)
+                x_indices = idx_ind[:, None] + self.x_offsets
+                y_indices = idx_ind[:, None] + self.y_offsets
 
-                y_shape = (
-                    len(idx_ind),
-                    self.horizon,
-                    self.data.shape[1],
-                    self.data.shape[-1],
-                )
-                y_shared = mp.RawArray("f", int(np.prod(y_shape)))
-                y = np.frombuffer(y_shared, dtype="f").reshape(y_shape)
-
-                array_size = len(idx_ind)
-                num_threads = max(1, min(mp.cpu_count(), array_size // 2))
-                chunk_size = (array_size + num_threads - 1) // num_threads
-                threads = []
-                for i in range(num_threads):
-                    start_index = i * chunk_size
-                    end_index = min(start_index + chunk_size, array_size)
-                    thread = threading.Thread(
-                        target=self.write_to_shared_array,
-                        args=(x, y, idx_ind, start_index, end_index),
-                    )
-                    thread.start()
-                    threads.append(thread)
-
-                for thread in threads:
-                    thread.join()
+                x = self.data[x_indices, ...].astype(np.float32, copy=False)
+                y = self.data[y_indices, ...].astype(np.float32, copy=False)
 
                 yield x, y
                 self.current_ind += 1
@@ -112,25 +102,27 @@ class DataLoader(object):
 
 
 def load_dataset_plain(data_path, args, logger, drop=False):
-    ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
+    data_dir = _load_data_dir(data_path, args.years)
+    ptr = np.load(data_dir / "his.npz")
     logger.info(f"Data shape: {ptr['data'].shape}")
     X = ptr["data"]
     xy = []
     for cat in ["train", "val", "test"]:
-        idx = np.load(os.path.join(data_path, args.years, f"idx_{cat}.npy"))
+        idx = _load_indices(data_dir, cat)
         xy.append(X[idx])
     return xy, LogScaler()
 
 
 def load_dataset(data_path, args, logger, drop=False):
-    ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
+    data_dir = _load_data_dir(data_path, args.years)
+    ptr = np.load(data_dir / "his.npz")
     logger.info(f"Data shape: {ptr['data'].shape}")
 
     X = ptr["data"]
 
     dataloader = {}
     for cat in ["train", "val", "test"]:
-        idx = np.load(os.path.join(data_path, args.years, f"idx_{cat}.npy"))
+        idx = _load_indices(data_dir, cat)
         dataloader[f"{cat}_loader"] = DataLoader(
             X, idx, args.seq_len, args.horizon, args.bs, logger, cat, droplast=drop
         )
@@ -156,19 +148,17 @@ class DataLoader_MPGCN(object):
         droplast=False,
     ):
         if pad_last_sample:
-            num_padding = (bs - (len(idx) % bs)) % bs
-            idx_padding = np.repeat(idx[-1:], num_padding, axis=0)
-            idx = np.concatenate([idx, idx_padding], axis=0)
+            idx = _pad_indices(idx, bs)
 
-        self.data = data
-        self.idx = idx
-        self.size = len(idx)
+        self.data = np.asarray(data)
+        self.idx = np.asarray(idx)
+        self.size = len(self.idx)
         self.bs = bs
-        self.num_batch = int(self.size // self.bs)
-        if not droplast and self.size % self.bs != 0:
-            self.num_batch += 1
+        self.droplast = droplast
+        self.num_batch = _compute_num_batches(self.size, self.bs, droplast)
         self.current_ind = 0
-        logger.info(f"{name} num: {self.idx.shape[0]}, Batch num: {self.num_batch}")
+        loader_name = name or "loader"
+        logger.info(f"{loader_name} num: {self.idx.shape[0]}, Batch num: {self.num_batch}")
 
         self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
         self.y_offsets = np.arange(1, (horizon + 1), 1)
@@ -181,11 +171,6 @@ class DataLoader_MPGCN(object):
         perm = np.random.permutation(self.size)
         self.idx = self.idx[perm]
 
-    def write_to_shared_array(self, x, y, idx_ind, start_idx, end_idx):
-        for i in range(start_idx, end_idx):
-            x[i] = self.data[idx_ind[i] + self.x_offsets, ...]
-            y[i] = self.data[idx_ind[i] + self.y_offsets, ...]  # dimension
-
     def get_iterator(self):
         self.current_ind = 0
 
@@ -193,57 +178,31 @@ class DataLoader_MPGCN(object):
             while self.current_ind < self.num_batch:
                 start_ind = self.bs * self.current_ind
                 end_ind = min(self.size, self.bs * (self.current_ind + 1))
-                idx_ind = self.idx[start_ind:end_ind, ...]
+                idx_ind = np.asarray(self.idx[start_ind:end_ind]).reshape(-1)
+                if len(idx_ind) == 0:
+                    break
+                if self.droplast and len(idx_ind) < self.bs:
+                    self.current_ind += 1
+                    continue
 
-                # print(idx_ind)
-                adj_index = [i % 6 for i in idx_ind]
+                x_indices = idx_ind[:, None] + self.x_offsets
+                y_indices = idx_ind[:, None] + self.y_offsets
+                x = self.data[x_indices, ...].astype(np.float32, copy=False)
+                y = self.data[y_indices, ...].astype(np.float32, copy=False)
 
-                x_shape = (
-                    len(idx_ind),
-                    self.seq_len,
-                    self.data.shape[1],
-                    self.data.shape[-1],
-                )
-                x_shared = mp.RawArray("f", int(np.prod(x_shape)))
-                x = np.frombuffer(x_shared, dtype="f").reshape(x_shape)
+                period = self.O.shape[-1]
+                adj_index = np.mod(idx_ind, period)
+                adj_o = self.O[:, :, adj_index].transpose(2, 0, 1)
+                adj_d = self.D[:, :, adj_index].transpose(2, 0, 1)
 
-                y_shape = (
-                    len(idx_ind),
-                    self.horizon,
-                    self.data.shape[1],
-                    self.data.shape[-1],
-                )
-                y_shared = mp.RawArray("f", int(np.prod(y_shape)))
-                y = np.frombuffer(y_shared, dtype="f").reshape(y_shape)
-
-                array_size = len(idx_ind)
-                num_threads = max(1, min(mp.cpu_count(), array_size // 2))
-                chunk_size = (array_size + num_threads - 1) // num_threads
-                threads = []
-                for i in range(num_threads):
-                    start_index = i * chunk_size
-                    end_index = min(start_index + chunk_size, array_size)
-                    thread = threading.Thread(
-                        target=self.write_to_shared_array,
-                        args=(x, y, idx_ind, start_index, end_index),
-                    )
-                    thread.start()
-                    threads.append(thread)
-
-                for thread in threads:
-                    thread.join()
-
-                yield x, y, self.O[:, :, adj_index].transpose(2, 0, 1), self.D[
-                    :, :, adj_index
-                ].transpose(2, 0, 1)
+                yield x, y, adj_o, adj_d
                 self.current_ind += 1
 
         return _wrapper()
 
 
 def construct_dyn_G(OD_data: np.array, perceived_period: int = 6):
-    """Construct dynamic graphs based on OD history using vectorized distance computation."""
-    from scipy.spatial.distance import cdist
+    """Construct dynamic graphs based on OD history using vectorized cosine distance."""
 
     train_len = int(OD_data.shape[0] * 0.8)
     num_periods_in_history = train_len // perceived_period
@@ -256,8 +215,8 @@ def construct_dyn_G(OD_data: np.array, perceived_period: int = 6):
         )
 
         # Vectorized cosine distance computation
-        O_G_t = cdist(OD_t_avg, OD_t_avg, metric="cosine")
-        D_G_t = cdist(OD_t_avg.T, OD_t_avg.T, metric="cosine")
+        O_G_t = distance.cdist(OD_t_avg, OD_t_avg, metric="cosine")
+        D_G_t = distance.cdist(OD_t_avg.T, OD_t_avg.T, metric="cosine")
 
         O_dyn_G.append(O_G_t)
         D_dyn_G.append(D_G_t)
@@ -266,7 +225,8 @@ def construct_dyn_G(OD_data: np.array, perceived_period: int = 6):
 
 
 def load_dataset_MPGCN(data_path, args, logger):
-    ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
+    data_dir = _load_data_dir(data_path, args.years)
+    ptr = np.load(data_dir / "his.npz")
     logger.info(f"Data shape: {ptr['data'].shape}")
     X = ptr["data"]
 
@@ -274,7 +234,7 @@ def load_dataset_MPGCN(data_path, args, logger):
 
     dataloader = {}
     for cat in ["train", "val", "test"]:
-        idx = np.load(os.path.join(data_path, args.years, f"idx_{cat}.npy"))
+        idx = _load_indices(data_dir, cat)
         dataloader[f"{cat}_loader"] = DataLoader_MPGCN(
             X, idx, args.seq_len, args.horizon, args.bs, logger, adjo, adjd, cat
         )

@@ -30,7 +30,7 @@ def get_config():
     parser = get_public_config()
     parser.add_argument("--arima_order", type=tuple, default=(6, 0, 0))
 
-    parser.add_argument("--step_size", type=int, default=10)
+    parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=5e-4)

@@ -35,7 +35,7 @@ def get_config():
     parser.add_argument("--middle_dim", type=int, default=2)
     parser.add_argument("--tanhalpha", type=int, default=3)
     parser.add_argument("--cl_decay_step", type=int, default=2000)
-    parser.add_argument("--step_size", type=int, default=2500)
+    parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--tpd", type=int, default=24)
 
     parser.add_argument("--lrate", type=float, default=1e-3)

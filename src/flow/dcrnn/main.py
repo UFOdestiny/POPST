@@ -35,7 +35,7 @@ def get_config():
 
     parser.add_argument("--lrate", type=float, default=1e-2)
     parser.add_argument("--wdecay", type=float, default=0)
-    parser.add_argument("--step_size", type=int, default=10)
+    parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--clip_grad_value", type=float, default=5)
     args = parser.parse_args()
