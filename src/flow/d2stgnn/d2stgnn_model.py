@@ -74,7 +74,7 @@ class D2STGNN(BaseModel):
         return static_graph, dynamic_graph
 
     def _prepare_inputs(self, history_data):
-        
+
         num_feat = self._model_args["num_feat"]
 
         node_emb_u = self.node_emb_u

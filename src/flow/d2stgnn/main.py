@@ -1,11 +1,8 @@
 import os
 import numpy as np
-
 import sys
 
-
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
-
 import torch
 
 torch.set_num_threads(8)
@@ -63,10 +60,10 @@ def main():
     args, log_dir, logger = get_config()
     set_seed(args.seed)
     device = torch.device(args.device)
-    
+
     data_path, adj_path, node_num = get_dataset_info(args.dataset)
     # logger.info('Adj path: ' + adj_path)
-    args.num_feat=args.input_dim
+    args.num_feat = args.input_dim
     adj_mx = load_adj_from_numpy(adj_path)
     adj_mx = normalize_adj_mx(adj_mx, "doubletransition")
     args.adjs = [torch.tensor(i).to(device) for i in adj_mx]
@@ -75,12 +72,15 @@ def main():
     cl_step = args.cl_epoch * dataloader["train_loader"].num_batch
     warm_step = args.warm_epoch * dataloader["train_loader"].num_batch
 
-    args, engine_template = check_quantile(args, D2STGNN_Engine, AGCRN_Engine_Quantile)
+    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
 
     model = D2STGNN(
         node_num=node_num,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
+        # feature=args.feature,
+        horizon=args.horizon,
+        seq_len=args.seq_len,
         model_args=vars(args),
     )
 
@@ -112,7 +112,6 @@ def main():
         # warm_step=warm_step,
         # horizon=args.horizon,
         metric_list=["MAE", "MAPE", "RMSE"],
-
         args=args,
     )
 

@@ -9,19 +9,60 @@ class DSTAGNN(BaseModel):
     Reference code: https://github.com/SYLan2019/DSTAGNN
     '''
     def __init__(self, device, cheb_poly, order, nb_block, nb_chev_filter, nb_time_filter, \
-                 time_stride, adj_pa, d_model, d_k, d_v, n_head, **args):
+                 time_stride, adj_pa, d_model, d_k, d_v, n_head, mask_rank=8, **args):
         super(DSTAGNN, self).__init__(**args)
 
-        self.BlockList = nn.ModuleList([DSTAGNN_block(device, self.input_dim, self.input_dim, order,
-                                                     nb_chev_filter, nb_time_filter, time_stride, cheb_poly,
-                                                     adj_pa, self.node_num, self.seq_len, d_model, d_k, d_v, n_head)])
+        self.BlockList = nn.ModuleList(
+            [
+                DSTAGNN_block(
+                    device,
+                    self.input_dim,
+                    self.input_dim,
+                    order,
+                    nb_chev_filter,
+                    nb_time_filter,
+                    time_stride,
+                    cheb_poly,
+                    adj_pa,
+                    self.node_num,
+                    self.seq_len,
+                    d_model,
+                    d_k,
+                    d_v,
+                    n_head,
+                    mask_rank,
+                )
+            ]
+        )
 
-        self.BlockList.extend([DSTAGNN_block(device, self.input_dim * nb_time_filter, nb_chev_filter, order,
-                                            nb_chev_filter, nb_time_filter, 1, cheb_poly,
-                                            adj_pa, self.node_num, self.seq_len // time_stride, d_model, d_k, d_v, n_head) for _ in range(nb_block - 1)])
+        if nb_block > 1:
+            self.BlockList.extend(
+                [
+                    DSTAGNN_block(
+                        device,
+                        nb_time_filter,
+                        nb_time_filter,
+                        order,
+                        nb_chev_filter,
+                        nb_time_filter,
+                        1,
+                        cheb_poly,
+                        adj_pa,
+                        self.node_num,
+                        self.seq_len // time_stride,
+                        d_model,
+                        d_k,
+                        d_v,
+                        n_head,
+                        mask_rank,
+                    )
+                    for _ in range(nb_block - 1)
+                ]
+            )
 
-        self.final_conv = nn.Conv2d(int((self.seq_len / time_stride) * nb_block), 128, kernel_size=(1, nb_time_filter))
-        self.final_fc = nn.Linear(128, self.horizon)
+        total_seq = int((self.seq_len / time_stride) * nb_block)
+        self.final_conv = nn.Conv2d(total_seq, 128, kernel_size=(1, nb_time_filter))
+        self.final_fc = nn.Linear(128, self.horizon * self.output_dim)
 
 
     def forward(self, x, label=None):  # (b, t, n, f)
@@ -30,28 +71,28 @@ class DSTAGNN(BaseModel):
         need_concat = []
         res_att = 0
         for block in self.BlockList:
-            # print(f"Block Input:", x.shape, res_att.shape)
             x, res_att = block(x, res_att)
-            print(f"Block Output:", x.shape, res_att.shape)
             need_concat.append(x)
 
         final_x = torch.cat(need_concat, dim=-1)
         output = self.final_conv(final_x.permute(0, 3, 1, 2))[:, :, :, -1].permute(0, 2, 1)
         output = self.final_fc(output)
-
-        output = output.unsqueeze(-1).transpose(1, 2)
+        output = output.view(output.size(0), output.size(1), self.horizon, self.output_dim)
+        output = output.permute(0, 2, 1, 3)
         return output
 
 
 class DSTAGNN_block(nn.Module):
     def __init__(self, device, num_of_d, in_channels, K, nb_chev_filter, nb_time_filter, time_stride,
-                 cheb_polynomials, adj_pa, node_num, seq_len, d_model, d_k, d_v, n_head):
+                 cheb_polynomials, adj_pa, node_num, seq_len, d_model, d_k, d_v, n_head, mask_rank):
         super(DSTAGNN_block, self).__init__()
         self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
         self.relu = nn.ReLU(inplace=True)
 
         self.adj_pa = adj_pa
+        self.nb_time_filter = nb_time_filter
+        self.time_stride = time_stride
 
         self.pre_conv = nn.Conv2d(seq_len, d_model, kernel_size=(1, num_of_d))
 
@@ -61,7 +102,14 @@ class DSTAGNN_block(nn.Module):
         self.TAt = MultiHeadAttention(device, node_num, d_k, d_v, n_head, num_of_d, seq_len)
         self.SAt = SMultiHeadAttention(device, d_model, d_k, d_v, K)
 
-        self.cheb_conv_SAt = cheb_conv_withSAt(K, cheb_polynomials, in_channels, nb_chev_filter, node_num)
+        self.cheb_conv_SAt = cheb_conv_withSAt(
+            K,
+            cheb_polynomials,
+            in_channels,
+            nb_chev_filter,
+            node_num,
+            mask_rank=mask_rank,
+        )
 
         self.gtu3 = GTU(nb_time_filter, time_stride, 3)
         self.gtu5 = GTU(nb_time_filter, time_stride, 5)
@@ -116,12 +164,16 @@ class DSTAGNN_block(nn.Module):
         else:
             time_conv_output = self.relu(X + time_conv) #self.relu(X + time_conv)
 
-        if num_of_features == 1:
-            x_residual = self.residual_conv(x.permute(0, 2, 1, 3))
-        else:
-            x_residual = x.permute(0, 2, 1, 3) #x.permute(0, 2, 1, 3)
+        x_residual = x.permute(0, 2, 1, 3)
+        if (
+            x_residual.size(1) != self.nb_time_filter
+            or self.time_stride != 1
+        ):
+            x_residual = self.residual_conv(x_residual)
 
-        x_residual = self.ln(F.relu(x_residual + time_conv_output).permute(0, 3, 2, 1)).permute(0, 2, 3, 1)
+        x_residual = self.ln(
+            F.relu(x_residual + time_conv_output).permute(0, 3, 2, 1)
+        ).permute(0, 2, 3, 1)
         
         return x_residual, re_At
 
@@ -165,7 +217,11 @@ class ScaledDotProductAttention(nn.Module):
 
 
     def forward(self, Q, K, V, attn_mask, res_att):
-        scores = torch.matmul(Q, K.transpose(-1, -2)) / np.sqrt(self.d_k) + res_att
+        scores = torch.matmul(Q, K.transpose(-1, -2)) / np.sqrt(self.d_k)
+        if isinstance(res_att, torch.Tensor) and res_att.shape == scores.shape:
+            scores = scores + res_att
+        elif res_att is not None and not isinstance(res_att, torch.Tensor):
+            scores = scores + res_att
         if attn_mask is not None:
             scores.masked_fill_(attn_mask, -1e9)
         attn = F.softmax(scores, dim=3)
@@ -211,18 +267,30 @@ class SScaledDotProductAttention(nn.Module):
 
 
 class cheb_conv_withSAt(nn.Module):
-    def __init__(self, K, cheb_polynomials, in_channels, out_channels, node_num):
+    def __init__(self, K, cheb_polynomials, in_channels, out_channels, node_num, mask_rank=8):
         super(cheb_conv_withSAt, self).__init__()
         self.K = K
         self.cheb_polynomials = cheb_polynomials
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.device = cheb_polynomials[0].device
+        self.mask_rank = mask_rank
         self.relu = nn.ReLU(inplace=True)
         self.Theta = nn.ParameterList(
             [nn.Parameter(torch.FloatTensor(in_channels, out_channels).to(self.device)) for _ in range(K)])
-        self.mask = nn.ParameterList(
-            [nn.Parameter(torch.FloatTensor(node_num,node_num).to(self.device)) for _ in range(K)])
+        self.mask_left = nn.ParameterList(
+            [nn.Parameter(torch.FloatTensor(node_num, mask_rank).to(self.device)) for _ in range(K)]
+        )
+        self.mask_right = nn.ParameterList(
+            [nn.Parameter(torch.FloatTensor(node_num, mask_rank).to(self.device)) for _ in range(K)]
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for theta in self.Theta:
+            nn.init.xavier_uniform_(theta)
+        for mat in list(self.mask_left) + list(self.mask_right):
+            nn.init.xavier_uniform_(mat)
 
 
     def forward(self, x, spatial_attention, adj_pa):
@@ -235,7 +303,7 @@ class cheb_conv_withSAt(nn.Module):
             output = torch.zeros(bs, node_num, self.out_channels).to(self.device)
             for k in range(self.K):
                 T_k = self.cheb_polynomials[k]
-                mask = self.mask[k]
+                mask = torch.matmul(self.mask_left[k], self.mask_right[k].transpose(0, 1))
 
                 myspatial_attention = spatial_attention[:, k, :, :] + adj_pa.mul(mask)
                 myspatial_attention = F.softmax(myspatial_attention, dim=1)

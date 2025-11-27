@@ -3,6 +3,7 @@ import numpy as np
 from base.engine import BaseEngine
 from base.metrics import masked_mape, masked_rmse
 
+
 class D2STGNN_Engine(BaseEngine):
     def __init__(self, cl_step, warm_step, horizon, **args):
         super(D2STGNN_Engine, self).__init__(**args)
@@ -11,15 +12,14 @@ class D2STGNN_Engine(BaseEngine):
         self._horizon = horizon
         self._cl_len = 0
 
-
     def train_batch(self):
         self.model.train()
 
         train_loss = []
         train_mape = []
         train_rmse = []
-        self._dataloader['train_loader'].shuffle()
-        for X, label in self._dataloader['train_loader'].get_iterator():
+        self._dataloader["train_loader"].shuffle()
+        for X, label in self._dataloader["train_loader"].get_iterator():
             self._optimizer.zero_grad()
 
             X, label = self._to_device(self._to_tensor([X, label]))
@@ -30,7 +30,7 @@ class D2STGNN_Engine(BaseEngine):
             mask_value = torch.tensor(torch.nan)
 
             if self._iter_cnt == 0:
-                self._logger.info(f'check mask value {mask_value}')
+                self._logger.info(f"check mask value {mask_value}")
 
             self._iter_cnt += 1
             if self._iter_cnt < self._warm_step:
@@ -38,11 +38,13 @@ class D2STGNN_Engine(BaseEngine):
             elif self._iter_cnt == self._warm_step:
                 self._cl_len = 1
             else:
-                if (self._iter_cnt - self._warm_step) % self._cl_step == 0 and self._cl_len < self._horizon:
+                if (
+                    self._iter_cnt - self._warm_step
+                ) % self._cl_step == 0 and self._cl_len < self._horizon:
                     self._cl_len += 1
 
-            pred = pred[:, :self._cl_len, :, :]
-            label = label[:, :self._cl_len, :, :]
+            pred = pred[:, : self._cl_len, :, :]
+            label = label[:, : self._cl_len, :, :]
 
             loss = self._loss_fn(pred, label, mask_value)
             mape = masked_mape(pred, label, mask_value).item()
@@ -50,7 +52,9 @@ class D2STGNN_Engine(BaseEngine):
 
             loss.backward()
             if self._clip_grad_value != 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self._clip_grad_value)
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), self._clip_grad_value
+                )
             self._optimizer.step()
 
             train_loss.append(loss.item())

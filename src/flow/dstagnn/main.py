@@ -31,12 +31,13 @@ def get_config():
     parser = get_public_config()
     parser.add_argument("--order", type=int, default=2)
     parser.add_argument("--nb_block", type=int, default=2)
-    parser.add_argument("--nb_chev_filter", type=int, default=32)
-    parser.add_argument("--nb_time_filter", type=int, default=32)
+    parser.add_argument("--nb_chev_filter", type=int, default=16)
+    parser.add_argument("--nb_time_filter", type=int, default=16)
     parser.add_argument("--time_stride", type=int, default=1)
-    parser.add_argument("--d_model", type=int, default=256)
-    parser.add_argument("--d_k", type=int, default=32)
+    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--d_k", type=int, default=16)
     parser.add_argument("--n_head", type=int, default=1)
+    parser.add_argument("--cheb_mask_rank", type=int, default=8)
 
     parser.add_argument("--lrate", type=float, default=1e-4)
     parser.add_argument("--wdecay", type=float, default=0)
@@ -101,7 +102,8 @@ def main():
         d_v=args.d_k,
         n_head=args.n_head,
         horizon=args.horizon,
-        seq_len=args.seq_len
+        seq_len=args.seq_len,
+        mask_rank=args.cheb_mask_rank,
     )
 
     loss_fn = "MAE"
