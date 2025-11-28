@@ -3,6 +3,7 @@
 *.vscode
 *.log
 .ipynb_*
+.nfs*
 # *.ipynb
 
 output
@@ -16,8 +17,3 @@ core.*
 
 __pycache__/
 *.py[cod]
-utils/mail.py
-
-SAMBA-main
-STG-Mamba-main
-Mamba

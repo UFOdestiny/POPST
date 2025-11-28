@@ -80,7 +80,7 @@ def main():
         device=device,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
-        min_vec=args.min_vec,
+        min_vec=args.min_vec, 
         horizon=args.horizon,
     )
 
