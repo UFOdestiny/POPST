@@ -7,13 +7,14 @@ from mamba_ssm import Mamba
 class MambaEncoderBlock(nn.Module):
     """Mamba encoder block with downsampling"""
 
-    def __init__(self, d_model, downsample_factor=2):
+    def __init__(self, d_model, downsample_factor=2, dropout=0.1):
         super().__init__()
         self.mamba = Mamba(d_model=d_model)
         self.norm = nn.LayerNorm(d_model)
         self.downsample_factor = downsample_factor
         # Downsample in time dimension
         self.downsample = nn.Linear(downsample_factor, 1)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):  # (B, T, D)
         # Mamba processing with residual
@@ -39,7 +40,7 @@ class MambaEncoderBlock(nn.Module):
 class MambaDecoderBlock(nn.Module):
     """Mamba decoder block with upsampling and skip connection"""
 
-    def __init__(self, d_model, upsample_factor=2):
+    def __init__(self, d_model, upsample_factor=2, dropout=0.1):
         super().__init__()
         self.mamba = Mamba(d_model=d_model)
         self.norm = nn.LayerNorm(d_model)
@@ -48,6 +49,7 @@ class MambaDecoderBlock(nn.Module):
         self.upsample = nn.Linear(1, upsample_factor)
         # Fusion layer for skip connection
         self.skip_fusion = nn.Linear(d_model * 2, d_model)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, skip):  # x: (B, T, D), skip: (B, T*2, D)
         B, T, D = x.shape
@@ -82,10 +84,11 @@ class MambaDecoderBlock(nn.Module):
 class MambaBottleneck(nn.Module):
     """Bottleneck Mamba block"""
 
-    def __init__(self, d_model):
+    def __init__(self, d_model, dropout=0.1):
         super().__init__()
         self.mamba = Mamba(d_model=d_model)
         self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         residual = x
@@ -104,7 +107,9 @@ class UNetMamba(BaseModel):
     - Decoder: Multiple Mamba blocks with upsampling and skip connections
     """
 
-    def __init__(self, d_model, num_layers, sample_factor, feature, **args):
+    def __init__(
+        self, d_model, num_layers, sample_factor, feature, dropout=0.1, **args
+    ):
         super(UNetMamba, self).__init__(**args)
         self.d_model = d_model
         self.num_layers = num_layers  # Number of encoder/decoder levels
@@ -116,18 +121,24 @@ class UNetMamba(BaseModel):
         # Encoder blocks (downsampling path)
         self.encoders = nn.ModuleList(
             [
-                MambaEncoderBlock(d_model=self.d_model, downsample_factor=sample_factor)
+                MambaEncoderBlock(
+                    d_model=self.d_model,
+                    downsample_factor=sample_factor,
+                    dropout=dropout,
+                )
                 for _ in range(self.num_layers)
             ]
         )
 
         # Bottleneck
-        self.bottleneck = MambaBottleneck(d_model=self.d_model)
+        self.bottleneck = MambaBottleneck(d_model=self.d_model, dropout=dropout)
 
         # Decoder blocks (upsampling path with skip connections)
         self.decoders = nn.ModuleList(
             [
-                MambaDecoderBlock(d_model=self.d_model, upsample_factor=sample_factor)
+                MambaDecoderBlock(
+                    d_model=self.d_model, upsample_factor=sample_factor, dropout=dropout
+                )
                 for _ in range(self.num_layers)
             ]
         )
