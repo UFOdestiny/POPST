@@ -21,6 +21,7 @@ class MambaEncoderBlock(nn.Module):
         residual = x
         x = self.mamba(x)
         x = self.norm(x + residual)
+        x = self.dropout(x)
 
         B, T, D = x.shape
         # Downsample: group consecutive time steps
@@ -33,7 +34,6 @@ class MambaEncoderBlock(nn.Module):
         x = x.reshape(B, T // self.downsample_factor, self.downsample_factor, D)
         x = x.permute(0, 1, 3, 2)  # (B, T//2, D, 2)
         x = self.downsample(x).squeeze(-1)  # (B, T//2, D)
-
         return x
 
 
@@ -77,7 +77,7 @@ class MambaDecoderBlock(nn.Module):
         residual = x
         x = self.mamba(x)
         x = self.norm(x + residual)
-
+        x = self.dropout(x)
         return x
 
 
@@ -94,6 +94,7 @@ class MambaBottleneck(nn.Module):
         residual = x
         x = self.mamba(x)
         x = self.norm(x + residual)
+        x = self.dropout(x)
         return x
 
 

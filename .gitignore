@@ -3,8 +3,6 @@
 *.vscode
 *.log
 .ipynb_*
-.nfs*
-# *.ipynb
 
 output
 res
