@@ -46,6 +46,8 @@ def get_config():
     args.bs = 8
     
     args.model_name = "STTN"
+    if args.quantile:
+        args.model_name += "_CQR"
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,

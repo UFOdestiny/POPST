@@ -43,6 +43,8 @@ def get_config():
 
     args = parser.parse_args()
     args.model_name = "TrustEnergy"
+    if args.quantile:
+        args.model_name += "_CQR"
     args.dataset="NYISO_HDM"
     args.hour_day_month=True
 

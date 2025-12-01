@@ -33,6 +33,8 @@ def get_config():
     args = parser.parse_args()
 
     args.model_name = "HL"
+    if args.quantile:
+        args.model_name += "_CQR"
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,

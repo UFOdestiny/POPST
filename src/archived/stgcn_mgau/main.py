@@ -44,7 +44,8 @@ def get_config():
     parser.add_argument('--min_vec', type=float, default=1e-6)
     args = parser.parse_args()
     args.model_name = "STGCN_MGau"
-
+    if args.quantile:
+        args.model_name += "_CQR"
     # args.mode = "all"  # use the model
     # args.model_path = "/home/dy23a.fsu/neu24/result/STGCN_MGau/Chicago/final_model_2024-11-30 01-50-12.pt"
     

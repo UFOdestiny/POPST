@@ -42,7 +42,8 @@ def get_config():
     parser.add_argument("--min_vec", type=float, default=1e-6)
     args = parser.parse_args()
     args.model_name = "UQGNN"
-
+    if args.quantile:
+        args.model_name += "_CQR"
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,

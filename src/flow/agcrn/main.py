@@ -33,6 +33,8 @@ def get_config():
     parser.add_argument("--clip_grad_value", type=float, default=0)
     args = parser.parse_args()
     args.model_name = "AGCRN"
+    if args.quantile:
+        args.model_name += "_CQR"
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,
@@ -90,7 +92,6 @@ def main():
         seed=args.seed,
         alpha=args.quantile_alpha,
         metric_list=["MAE", "MAPE", "RMSE"],
-
         args=args,
     )
 

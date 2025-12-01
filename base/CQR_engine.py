@@ -11,8 +11,6 @@ from base.metrics import Metrics
 
 
 class QuantileOutputLayer(nn.Module):
-    """Projects deterministic predictions to ordered quantile estimates per feature."""
-
     def __init__(self, feature_dim: int, hidden_dim: Optional[int] = None):
         super().__init__()
         self.feature_dim = feature_dim

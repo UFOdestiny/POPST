@@ -43,6 +43,8 @@ def get_config():
 
     args = parser.parse_args()
     args.model_name = "STLLM" # LLaMA
+    if args.quantile:
+        args.model_name += "_CQR"
     args.bs = 16
 
     log_dir = get_log_path(args)

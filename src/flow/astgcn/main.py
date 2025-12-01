@@ -41,7 +41,8 @@ def get_config():
     parser.add_argument("--clip_grad_value", type=float, default=5)
     args = parser.parse_args()
     args.model_name = "ASTGCN"
-
+    if args.quantile:
+        args.model_name += "_CQR"
     log_dir = get_log_path(args)
     logger = get_logger(
         log_dir,
