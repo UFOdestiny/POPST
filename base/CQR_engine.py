@@ -75,6 +75,13 @@ class CQR_Engine(BaseEngine):
         mask_value = self._mask_value.to(self._device)
 
         for X, label in self._dataloader["train_loader"].get_iterator():
+            if self._iter_cnt == 0:
+                self._logger.info(
+                    f"Mask Value: {mask_value}\n\n"
+                    + "=" * 25
+                    + "   Training   "
+                    + "=" * 25
+                )
             self._optimizer.zero_grad()
             X, label = self._prepare_batch([X, label])
 

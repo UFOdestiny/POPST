@@ -66,10 +66,7 @@ class BaseEngine:
         )
 
         self._logger.info(
-            f"Model Save Path: {os.path.join(self._save_path, self._time_model)}\n\n"
-            + "=" * 25
-            + "   Training   "
-            + "=" * 25
+            f"Model Save Path: {os.path.join(self._save_path, self._time_model)}"
         )
 
         # quantile
@@ -152,15 +149,18 @@ class BaseEngine:
         mask_value = self._mask_value.to(self._device)
 
         for X, label in self._dataloader["train_loader"].get_iterator():
+            if self._iter_cnt == 0:
+                self._logger.info(
+                    f"Mask Value: {mask_value}\n\n"
+                    + "=" * 25
+                    + "   Training   "
+                    + "=" * 25
+                )
             self._optimizer.zero_grad()
 
             # X (b, t, n, f), label (b, t, n, 1)
             X, label = self._prepare_batch([X, label])
             pred = self._predict(X, label=label, iter=self._iter_cnt)
-
-            if self._iter_cnt == 0:
-                self._logger.info("=" * 50)
-                self._logger.info(f"Mask value: {mask_value}")
 
             scale = None
             if isinstance(pred, tuple):

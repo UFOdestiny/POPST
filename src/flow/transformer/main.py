@@ -28,7 +28,7 @@ def get_config():
     parser = get_public_config()
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--n_heads", type=int, default=4)
-    parser.add_argument("--d_model", type=int, default=8)
+    parser.add_argument("--d_model", type=int, default=64)
     parser.add_argument("--dropout", type=float, default=0.1)
 
     parser.add_argument("--step_size", type=int, default=200)
@@ -38,6 +38,7 @@ def get_config():
     args = parser.parse_args()
 
     args.model_name = "Transformer"
+    args.bs=16
     if args.quantile:
         args.model_name += "_CQR"
     log_dir = get_log_path(args)
