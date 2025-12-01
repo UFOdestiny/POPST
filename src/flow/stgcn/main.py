@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 torch.set_num_threads(8)
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from stgcn_model import STGCN
 from base.engine import BaseEngine
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
@@ -74,7 +74,7 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
 
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = STGCN(
         node_num=node_num,
@@ -90,7 +90,8 @@ def main():
         seq_len=args.seq_len,
     )
 
-    loss_fn = "MAE"
+    loss_fn = "Quantile" if args.quantile else "MAE"
+    metric_list = None if args.quantile else ["MAE", "MAPE", "RMSE"]
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lrate, weight_decay=args.wdecay
     )
@@ -116,7 +117,7 @@ def main():
         seed=args.seed,
         normalize=args.normalize,
         alpha=args.quantile_alpha,
-        metric_list=["MAE", "MAPE", "RMSE"],
+        metric_list=metric_list,
 
         args=args,
     )

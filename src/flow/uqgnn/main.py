@@ -5,7 +5,7 @@ import numpy as np
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 import torch
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from uqgnn_model import UQGNN
 
 torch.set_num_threads(3)
@@ -65,7 +65,7 @@ def main():
     # gso = torch.tensor(gso).to(device)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = UQGNN(
         A=gso,

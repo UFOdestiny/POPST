@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 
 import torch
 
@@ -61,7 +61,7 @@ def main():
     adj_mx = load_adj_from_numpy(adj_path)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
     model = HMDLF(
         node_num=node_num,
         input_dim=args.input_dim,

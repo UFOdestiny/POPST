@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from var_engine import VAR_Engine
 import torch
 
@@ -55,7 +55,7 @@ def main():
     data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset_plain(data_path, args, logger)
-    args, engine_template = check_quantile(args, VAR_Engine, Quantile_Engine)
+    args, engine_template = check_quantile(args, VAR_Engine, CQR_Engine)
 
     model = VAR(
         k=6,

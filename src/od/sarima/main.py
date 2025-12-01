@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from sarima_engine import SARIMA_Engine
 import torch
 
@@ -56,7 +56,7 @@ def main():
     data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset_plain(data_path, args, logger)
-    args, engine_template = check_quantile(args, SARIMA_Engine, Quantile_Engine)
+    args, engine_template = check_quantile(args, SARIMA_Engine, CQR_Engine)
 
     model = SARIMA_(
         order=(6, 0, 0),

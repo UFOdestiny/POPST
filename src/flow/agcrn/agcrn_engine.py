@@ -1,6 +1,6 @@
 import torch
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 
 
 class AGCRN_Engine(BaseEngine):
@@ -12,7 +12,7 @@ class AGCRN_Engine(BaseEngine):
             else:
                 torch.nn.init.uniform_(p)
 
-class AGCRN_Engine_Quantile(Quantile_Engine):
+class AGCRN_Engine_Quantile(CQR_Engine):
     def __init__(self, **args):
         super(AGCRN_Engine_Quantile, self).__init__(**args)
         for p in self.model.parameters():

@@ -3,7 +3,7 @@ import numpy as np
 
 import sys
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 
 import torch
 
@@ -65,7 +65,7 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
 
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = STGODE(
         node_num=node_num,

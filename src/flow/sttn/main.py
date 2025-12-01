@@ -5,7 +5,7 @@ import sys
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
 import torch
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 
 torch.set_num_threads(8)
 
@@ -64,7 +64,7 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
 
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = STTN(
         node_num=node_num,

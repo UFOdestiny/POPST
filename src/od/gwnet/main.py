@@ -7,7 +7,7 @@ sys.path.append("/home/dy23a.fsu/st/")
 
 import torch
 torch.set_num_threads(8)
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from gwnet_model import GWNET_OD
 # from .gwnet import GWNET
 from base.engine import BaseEngine
@@ -63,7 +63,7 @@ def main():
     
     dataloader, scaler = load_dataset(data_path, args, logger)
 
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
     if args.quantile:
         args.output_dim=1
 

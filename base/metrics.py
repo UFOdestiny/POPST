@@ -22,6 +22,7 @@ class Metrics:
             "KL": masked_kl,
             "MGAU": mnormal_loss,
             "Quantile": masked_quantile,
+            "IS": masked_IS,
         }
         self.horizon = horizon
 
@@ -46,7 +47,7 @@ class Metrics:
         self._basic_metrics = {"MAE", "MSE", "MAPE", "RMSE", "KL", "CRPS"}
         self._scale_metrics = {"MGAU"}
         self._interval_metrics = {"MPIW"}
-        self._interval_with_target = {"WINK", "COV"}
+        self._interval_with_target = {"WINK", "COV", "IS"}
         self._quantile_metric = {"Quantile"}
 
         self.N = len(self.metric_lst)  # loss function
@@ -275,6 +276,27 @@ def masked_coverage(lower, upper, labels, alpha=None):
     in_the_range = torch.sum((labels >= lower) & (labels <= upper))
     coverage = in_the_range / labels.numel() * 100
     return coverage
+
+
+def masked_IS(lower, upper, labels, alpha=0.1):
+    """
+    Compute Interval Score (Gneiting & Raftery) for a batch of predictions.
+    Handles non-contiguous tensors.
+    """
+    lower = lower.reshape(-1)
+    upper = upper.reshape(-1)
+    labels = labels.reshape(-1)
+
+    width = upper - lower
+
+    below = (labels < lower).float()
+    above = (labels > upper).float()
+    penalty_below = (lower - labels) * below
+    penalty_above = (labels - upper) * above
+
+    interval_score = width + (2.0 / alpha) * penalty_below + (2.0 / alpha) * penalty_above
+    return interval_score.mean()
+
 
 
 def masked_nonconf(lower, upper, labels):
@@ -546,20 +568,44 @@ def masked_quantile(
     q_middle=0.5,
     lam=1.0,
 ):
+    def _reduce_mean(loss_tensor, mask_tensor=None, valid_count=None):
+        if mask_tensor is None:
+            return loss_tensor.mean()
 
-    def quantile_loss_(pred, target, quantile):
-        error = target - pred
-        return torch.max((quantile - 1) * error, quantile * error).mean()
+        if valid_count is None:
+            valid_count = mask_tensor.sum()
 
-    def monotonicity_loss(y_lower, y_middle, y_upper, margin=0.0):
-        loss = F.relu(y_lower - y_middle + margin) + F.relu(y_middle - y_upper + margin)
-        return loss.mean()
+        if valid_count.item() == 0:
+            return loss_tensor.new_tensor(0.0)
 
-    loss_lower = quantile_loss_(y_lower, y_true, q_lower)
-    loss_middle = quantile_loss_(y_middle, y_true, q_middle)
-    loss_upper = quantile_loss_(y_upper, y_true, q_upper)
-    loss_monotonic = monotonicity_loss(y_lower, y_middle, y_upper)
-    return loss_lower + loss_middle + loss_upper + lam * loss_monotonic
+        broadcast_mask = mask_tensor
+        while broadcast_mask.dim() < loss_tensor.dim():
+            broadcast_mask = broadcast_mask.unsqueeze(0)
+
+        loss_tensor = loss_tensor * broadcast_mask
+        return loss_tensor.sum() / valid_count
+
+    quantiles = y_true.new_tensor([q_lower, q_middle, q_upper]).view(
+        -1, *[1] * y_true.ndim
+    )
+    preds = torch.stack([y_lower, y_middle, y_upper], dim=0)
+    errors = y_true.unsqueeze(0) - preds
+    pinball = torch.maximum((quantiles - 1) * errors, quantiles * errors)
+
+    mask = get_mask(
+        y_true,
+        torch.tensor(float("nan"), device=y_true.device, dtype=y_true.dtype),
+    )
+    valid = mask.sum()
+    if valid.item() == 0:
+        return y_true.new_tensor(0.0)
+
+    quantile_loss = _reduce_mean(pinball, mask, valid) * pinball.shape[0]
+
+    monotonic_penalty = F.relu(y_lower - y_middle) + F.relu(y_middle - y_upper)
+    monotonic_loss = _reduce_mean(monotonic_penalty, mask, valid)
+
+    return quantile_loss + lam * monotonic_loss
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import torch
 torch.set_num_threads(8)
 
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from d2stgnn_model import D2STGNN
 from d2stgnn_engine import D2STGNN_Engine
 from utils.args import check_quantile, get_public_config, get_log_path, print_args
@@ -72,7 +72,7 @@ def main():
     cl_step = args.cl_epoch * dataloader["train_loader"].num_batch
     warm_step = args.warm_epoch * dataloader["train_loader"].num_batch
 
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = D2STGNN(
         node_num=node_num,
@@ -91,7 +91,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones=[1, 38, 46, 54, 62, 70, 80], gamma=0.5
     )
-    # args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    # args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
     engine = engine_template(
         device=device,
         model=model,

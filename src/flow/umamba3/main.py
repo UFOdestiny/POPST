@@ -4,7 +4,7 @@ import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 
 import torch
 
@@ -61,7 +61,7 @@ def main():
     gso = torch.tensor(gso).to(device)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
     model = UNetMamba(
         node_num=node_num,
         input_dim=args.seq_len,

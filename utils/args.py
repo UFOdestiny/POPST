@@ -81,10 +81,11 @@ def print_args(logger, args):
 
 def check_quantile(args, normal_model, quantile_model):
     if args.quantile:
-        assert args.horizon == 1
-        assert args.output_dim == 1
-        args.horizon = 3
-        args.output_dim = 3
+        if getattr(quantile_model, "__name__", "") != "CQR_Engine":
+            assert args.horizon == 1
+            assert args.output_dim == 1
+            args.horizon = 3
+            args.output_dim = 3
         return args, quantile_model
     return args, normal_model
 

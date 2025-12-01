@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from base.metrics import (
     masked_mape,
     masked_rmse,
@@ -112,7 +112,7 @@ class DCRNN_Engine(BaseEngine):
             if export:
                 self.save_result(preds, labels)
 
-class DCRNN_Engine_Quantile(Quantile_Engine):
+class DCRNN_Engine_Quantile(CQR_Engine):
     def __init__(self, **args):
         super(DCRNN_Engine_Quantile, self).__init__(**args)
 

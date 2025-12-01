@@ -1,11 +1,11 @@
 import torch
 import numpy as np
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from base.metrics import masked_mape, masked_rmse, masked_mae, masked_crps, masked_mpiw_ens, masked_kl
 
 
-class TrustE_Engine(Quantile_Engine):
+class TrustE_Engine(CQR_Engine):
     def __init__(self, **args):
         super(TrustE_Engine, self).__init__(**args)
 

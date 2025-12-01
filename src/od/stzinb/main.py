@@ -16,7 +16,7 @@ from utils.args import get_public_config, get_log_path, print_args, check_quanti
 from utils.dataloader import load_adj_from_numpy, load_dataset, get_dataset_info
 from utils.log import get_logger
 from utils.graph_algo import normalize_adj_mx
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -66,7 +66,7 @@ def main():
     gso = normalize_adj_mx(adj_mx, "uqgnn")[0]
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = STZINB(
         A=gso,

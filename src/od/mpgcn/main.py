@@ -5,7 +5,7 @@ sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 sys.path.append("/home/dy23a.fsu/st/")
 
 from mpgcn_engine import MPGCN_Engine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 import torch
 import numpy as np
 
@@ -74,7 +74,7 @@ def main():
 
     dataloader, scaler = load_dataset_MPGCN(data_path, args, logger)
 
-    args, engine_template = check_quantile(args, MPGCN_Engine, Quantile_Engine)
+    args, engine_template = check_quantile(args, MPGCN_Engine, CQR_Engine)
 
     model = MPGCN(
         M=2,  # 2 branches: one for adj; the other for dynamic O/G cosine correlation graph

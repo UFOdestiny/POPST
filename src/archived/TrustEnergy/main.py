@@ -13,7 +13,7 @@ from utils.args import get_public_config, get_log_path, print_args, check_quanti
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from utils.log import get_logger
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from trustenergy_model import TrustE
 from trustenergy_engine import TrustE_Engine_Quantile
 

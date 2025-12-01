@@ -10,7 +10,7 @@ import torch
 
 torch.set_num_threads(8)
 
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from stgcn_model import STGCN_OD
 from base.engine import BaseEngine
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
@@ -83,7 +83,7 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
 
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = STGCN_OD(
         node_num=node_num,

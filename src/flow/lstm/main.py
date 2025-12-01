@@ -3,7 +3,7 @@ import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 import torch
 import numpy as np
 
@@ -57,7 +57,7 @@ def main():
     data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = LSTM(
         node_num=node_num,

@@ -3,7 +3,7 @@ from base.engine import BaseEngine
 import numpy as np
 import torch
 
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 from base.metrics import compute_all_metrics, masked_mae, masked_kl, masked_crps, masked_mpiw_ens, masked_mpiw
 from base.metrics import masked_mape
 from base.metrics import masked_rmse
@@ -168,7 +168,7 @@ class PGNN_Engine(BaseEngine):
 
 
 
-class PGNN_Engine_Quantile(Quantile_Engine):
+class PGNN_Engine_Quantile(CQR_Engine):
     def __init__(self, **args):
         super(PGNN_Engine_Quantile, self).__init__(**args)
         self.normalize = args["normalize"]

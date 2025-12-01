@@ -4,7 +4,7 @@ import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 from base.engine import BaseEngine
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 
 import torch
 
@@ -56,7 +56,7 @@ def main():
     data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
     model = myMamba2(
         node_num=node_num,
         input_dim=args.seq_len,

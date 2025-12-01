@@ -5,7 +5,7 @@ import sys
 sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 sys.path.append("/home/dy23a.fsu/st/")
 
-from base.quantile_engine import Quantile_Engine
+from base.CQR_engine import CQR_Engine
 import torch
 import numpy as np
 
@@ -66,7 +66,7 @@ def main():
     gso = normalize_adj_mx(adj_mx, "uqgnn")[0]
 
     dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, Quantile_Engine)
+    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
 
     model = MYOD(
         A=gso,
