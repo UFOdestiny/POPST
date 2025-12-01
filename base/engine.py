@@ -57,16 +57,19 @@ class BaseEngine:
         if metric_list is None:
             metric_list = ["MAE", "MAPE", "RMSE", "KL", "CRPS"]
         self.metric = Metrics(self._loss_fn, metric_list, self.model.horizon)
-        
-        self._logger.info("Loss Function: {}".format(self._loss_fn))
-        self._logger.info("Parameters: {}".format(self.model.param_num()))
+
+        self._logger.info(f"{'Loss Function':20s}: {self._loss_fn}")
+        self._logger.info(f"{'Parameters':20s}: {self.model.param_num()}")
 
         self._time_model = "{}_{}.pt".format(
             self.args.model_name, time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
         )
 
         self._logger.info(
-            f"Model Save Path: {os.path.join(self._save_path, self._time_model)}"
+            f"Model Save Path: {os.path.join(self._save_path, self._time_model)}\n\n"
+            + "=" * 25
+            + "   Training   "
+            + "=" * 25
         )
 
         # quantile
@@ -81,7 +84,7 @@ class BaseEngine:
         y = Y[..., 0].unsqueeze(-1)
         return data, hdm, y
 
-    def _predict(self, x, *args):
+    def _predict(self, x, label, iter, *args):
         return self.model(x)
 
     def _to_device(self, tensors):
@@ -153,7 +156,7 @@ class BaseEngine:
 
             # X (b, t, n, f), label (b, t, n, 1)
             X, label = self._prepare_batch([X, label])
-            pred = self._predict(X)
+            pred = self._predict(X, label=label, iter=self._iter_cnt)
 
             if self._iter_cnt == 0:
                 self._logger.info("=" * 50)
@@ -255,7 +258,7 @@ class BaseEngine:
         with torch.no_grad():
             for X, label in self._dataloader[mode + "_loader"].get_iterator():
                 X, label = self._prepare_batch([X, label])
-                pred = self._predict(X)
+                pred = self._predict(X, label=label, iter=self._iter_cnt)
                 scale = None
                 if isinstance(pred, tuple):
                     pred, scale = pred
@@ -299,6 +302,8 @@ class BaseEngine:
                 )
 
             if not train_test:
+                with self._logger.no_time():
+                    self._logger.info("\n" + "=" * 25 + "     Test     " + "=" * 25)
                 for msg in self.metric.get_test_msg():
                     self._logger.info(msg)
 

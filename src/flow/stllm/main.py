@@ -83,8 +83,8 @@ def main():
     # 打印模型参数量
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Total parameters: {total_params:,}")
-    logger.info(f"Trainable parameters: {trainable_params:,}")
+    # logger.info(f"Total parameters: {total_params:,}")
+    # logger.info(f"Trainable parameters: {trainable_params:,}")
 
     loss_fn = "MAE"
     optimizer = torch.optim.AdamW(

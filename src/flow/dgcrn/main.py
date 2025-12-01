@@ -10,8 +10,8 @@ import torch
 torch.set_num_threads(8)
 
 from dgcrn_model import DGCRN
-from dgcrn_engine import DGCRN_Engine
-from utils.args import get_public_config, get_log_path, print_args
+from dgcrn_engine import DGCRN_Engine, DGCRN_Engine_Quantile
+from utils.args import check_quantile, get_public_config, get_log_path, print_args
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from utils.graph_algo import normalize_adj_mx
 from base.metrics import masked_mae
@@ -70,6 +70,7 @@ def main():
     supports = [torch.tensor(i).to(device) for i in adj_mx]
 
     dataloader, scaler = load_dataset(data_path, args, logger)
+    args, engine_template = check_quantile(args, DGCRN_Engine, DGCRN_Engine_Quantile)
 
     model = DGCRN(
         node_num=node_num,
@@ -97,7 +98,7 @@ def main():
     )
     scheduler = None
 
-    engine = DGCRN_Engine(
+    engine = engine_template(
         device=device,
         model=model,
         dataloader=dataloader,
@@ -113,10 +114,7 @@ def main():
         log_dir=log_dir,
         logger=logger,
         seed=args.seed,
-        step_size=args.step_size,
-        horizon=args.horizon,
         metric_list=["MAE", "MAPE", "RMSE"],
-
         args=args,
     )
 

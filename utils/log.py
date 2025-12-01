@@ -3,6 +3,7 @@ import os
 import sys
 import time
 from logging.handlers import RotatingFileHandler
+from contextlib import contextmanager
 
 # 日志格式常量
 LOG_FORMAT = "%(asctime)s - %(message)s"
@@ -63,7 +64,22 @@ def get_logger(log_dir: str, name: str, log_filename: str = None, level: int = L
     # 添加处理器到记录器
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+
+    @contextmanager
+    def no_time():
+        old_formatters = [h.formatter for h in logger.handlers]
+        for h in logger.handlers:
+            h.setFormatter(logging.Formatter("%(message)s"))
+        try:
+            yield
+        finally:
+            for h, f in zip(logger.handlers, old_formatters):
+                h.setFormatter(f)
     
+    logger.no_time = no_time
+
+    with logger.no_time():
+        logger.info( "=" * 25 + "   Settings   " + "=" * 25 )
     # 记录日志文件路径
     logger.info(f"Log File Path: {log_path}")
     

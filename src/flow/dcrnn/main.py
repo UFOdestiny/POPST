@@ -63,10 +63,6 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, DCRNN_Engine, DCRNN_Engine_Quantile)
-    if args.quantile:
-        args.output_dim=3
-        args.horizon=1
-        # args.input_dim=1
 
     model = DCRNN(
         node_num=node_num,

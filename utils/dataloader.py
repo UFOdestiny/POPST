@@ -64,8 +64,7 @@ class DataLoader(object):
 
         self.current_ind = 0
         loader_name = name or "loader"
-        logger.info(f"{loader_name} num: {self.idx.shape[0]}, Batch num: {self.num_batch}")
-
+        logger.info(f"{loader_name:5s} num: {self.idx.shape[0]},\tBatch num: {self.num_batch}")        
         self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
         self.y_offsets = np.arange(1, (horizon + 1), 1)
         self.seq_len = seq_len
@@ -104,7 +103,7 @@ class DataLoader(object):
 def load_dataset_plain(data_path, args, logger, drop=False):
     data_dir = _load_data_dir(data_path, args.years)
     ptr = np.load(data_dir / "his.npz")
-    logger.info(f"Data shape: {ptr['data'].shape}")
+    logger.info(f"{'Data shape':20s}: {ptr['data'].shape}")
     X = ptr["data"]
     xy = []
     for cat in ["train", "val", "test"]:
@@ -116,7 +115,7 @@ def load_dataset_plain(data_path, args, logger, drop=False):
 def load_dataset(data_path, args, logger, drop=False):
     data_dir = _load_data_dir(data_path, args.years)
     ptr = np.load(data_dir / "his.npz")
-    logger.info(f"Data shape: {ptr['data'].shape}")
+    logger.info(f"{'Data shape':20s}: {ptr['data'].shape}")
 
     X = ptr["data"]
 
@@ -158,8 +157,7 @@ class DataLoader_MPGCN(object):
         self.num_batch = _compute_num_batches(self.size, self.bs, droplast)
         self.current_ind = 0
         loader_name = name or "loader"
-        logger.info(f"{loader_name} num: {self.idx.shape[0]}, Batch num: {self.num_batch}")
-
+        logger.info(f"{loader_name:5s} num: {self.idx.shape[0]:5d},\tBatch num: {self.num_batch:5d}")
         self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
         self.y_offsets = np.arange(1, (horizon + 1), 1)
         self.seq_len = seq_len

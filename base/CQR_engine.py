@@ -57,7 +57,7 @@ class CQR_Engine(BaseEngine):
         )
 
     def _forward_quantiles(self, X, label):
-        pred = self._predict(X)
+        pred = self._predict(X, label=label, iter=self._iter_cnt)
         scale = None
         if isinstance(pred, tuple):
             pred, scale = pred
@@ -150,6 +150,8 @@ class CQR_Engine(BaseEngine):
             _compute("test")
 
             if not train_test:
+                with self._logger.no_time():
+                    self._logger.info("\n" + "=" * 25 + "     Test     " + "=" * 25)
                 for msg in self.metric.get_test_msg():
                     self._logger.info(msg)
 

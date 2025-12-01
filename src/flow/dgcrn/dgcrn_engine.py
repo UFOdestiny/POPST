@@ -1,116 +1,19 @@
-import torch
-import numpy as np
 from base.engine import BaseEngine
-from base.metrics import masked_mape, masked_rmse
+from base.CQR_engine import CQR_Engine
 
 
 class DGCRN_Engine(BaseEngine):
-    def __init__(self, step_size, horizon, **args):
+    def __init__(self, **args):
         super(DGCRN_Engine, self).__init__(**args)
-        self._step_size = step_size
-        self._horizon = horizon
-        self._task_level = 0
+    
+    def _predict(self, x, label, iter, *args):
+        return self.model(x, label, iter, self.model.horizon)
+    
 
-    def train_batch(self):
-        self.model.train()
-        self._dataloader["train_loader"].shuffle()
-        for X, label in self._dataloader["train_loader"].get_iterator():
-            
-            self._optimizer.zero_grad()
-            if self._iter_cnt % self._step_size == 0 and self._task_level < self._horizon :
-                self._task_level += 1
-            # X (b, t, n, f), label (b, t, n, 1)
-            X, label = self._to_device(self._to_tensor([X, label]))
-            pred = self.model(X, label, self._iter_cnt, self._horizon)
-
-            # handle the precision issue when performing inverse transform to label
-            mask_value = torch.tensor(torch.nan)
-
-            if self._iter_cnt == 0:
-                self._logger.info(f"check mask value {mask_value}")
-
-            scale = None
-            if type(pred) == tuple:
-                pred, scale = pred  # mean scale
-
-            if self._normalize:
-                pred, label = self._inverse_transform([pred, label])
-
-            res = self.metric.compute_one_batch(
-                pred, label, mask_value, "train", scale=scale
-            )
-            res.backward()
-
-            if self._clip_grad_value != 0:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self._clip_grad_value
-                )
-            self._optimizer.step()
-
-            self._iter_cnt += 1
-
-
-    def evaluate(self, mode, model_path=None, export=None, train_test=False):
-        if mode == "test" and train_test == False:
-            if model_path:
-                self.load_exact_model(model_path)
-            else:
-                self.load_model(self._save_path)
-
-        self.model.eval()
-
-        preds = []
-        labels = []
-        scales = []
-
-        with torch.no_grad():
-            for X, label in self._dataloader[mode + "_loader"].get_iterator():
-                # X (b, t, n, f), label (b, t, n, 1)
-                X, label = self._to_device(self._to_tensor([X, label]))
-                pred = self.model(X, label, self._iter_cnt, self._horizon)
-                scale = None
-                if type(pred) == tuple:
-                    pred, scale = pred  # mean scale
-
-                if self._normalize:
-                    pred, label = self._inverse_transform([pred, label])
-
-                preds.append(pred.squeeze(-1).cpu())
-                labels.append(label.squeeze(-1).cpu())
-                if scale is not None:
-                    scales.append(scale.squeeze(-1).cpu())
-        if scales:
-            scales = torch.cat(scales, dim=0)
-
-        preds = torch.cat(preds, dim=0)
-        labels = torch.cat(labels, dim=0)
-
-        # handle the precision issue when performing inverse transform to label
-        mask_value = torch.tensor(torch.nan)
-
-
-        if mode == "val":
-            self.metric.compute_one_batch(pred, label, mask_value, "valid", scale=scale)
-        
-        elif mode == "test" or mode == "export":
-            for i in range(self.model.horizon):
-                s = scales[:, i, :].unsqueeze(1) if len(scales) > 0 else None
-                self.metric.compute_one_batch(
-                    preds[:, i, :].unsqueeze(1),
-                    labels[:, i, :].unsqueeze(1),
-                    mask_value,
-                    "test",
-                    scale=s,
-                )
-
-            if not train_test:
-                for i in self.metric.get_test_msg():
-                    self._logger.info(i)
-
-            if export:
-                self.save_result(preds, labels)
-
-                # # metrics
-                # metrics = np.vstack(self.metric.export())
-                # np.save(f"{self._save_path}/metrics.npy", metrics)
-                # self._logger.info(f'metrics results shape: {metrics.shape} {self.metric.metric_lst})')
+class DGCRN_Engine_Quantile(CQR_Engine):
+    def __init__(self, **args):
+        super(DGCRN_Engine_Quantile, self).__init__(**args)
+    
+    def _predict(self, x, label, iter, *args):
+        return self.model(x, label, iter, self.model.horizon)
+    

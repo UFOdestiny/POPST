@@ -72,8 +72,6 @@ def main():
     dataloader, scaler = load_dataset(data_path, args, logger)
 
     args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
-    if args.quantile:
-        args.output_dim = 1
 
     model = GWNET(
         node_num=node_num,
