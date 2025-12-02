@@ -35,7 +35,7 @@ def get_time(log_path):
     with open(log_path) as f:
         t1 = None
         for line in f:
-            if " - Data shape:" in line:
+            if " - Log File Path:" in line:
                 t1 = line[:19]
             elif " - Average:" in line and t1:
                 return seconds_between(t1, line[:19])
@@ -121,7 +121,8 @@ if __name__ == "__main__":
         "Mamba",
         "UMamba",
     ]
-    metrics = ["MAE", "MAPE", "RMSE"]
+    names = [i + "_CQR" for i in names]
+    metrics = ["MAE", "MAPE", "RMSE", "MPIW","IS","COV"]
     datasets = ["panhandle"]
     path = "/home/dy23a.fsu/st/result"
 

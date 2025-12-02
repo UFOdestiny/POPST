@@ -294,9 +294,10 @@ def masked_IS(lower, upper, labels, alpha=0.1):
     penalty_below = (lower - labels) * below
     penalty_above = (labels - upper) * above
 
-    interval_score = width + (2.0 / alpha) * penalty_below + (2.0 / alpha) * penalty_above
+    interval_score = (
+        width + (2.0 / alpha) * penalty_below + (2.0 / alpha) * penalty_above
+    )
     return interval_score.mean()
-
 
 
 def masked_nonconf(lower, upper, labels):
@@ -568,30 +569,6 @@ def masked_quantile(
     q_middle=0.5,
     lam=1.0,
 ):
-    def _reduce_mean(loss_tensor, mask_tensor=None, valid_count=None):
-        if mask_tensor is None:
-            return loss_tensor.mean()
-
-        if valid_count is None:
-            valid_count = mask_tensor.sum()
-
-        if valid_count.item() == 0:
-            return loss_tensor.new_tensor(0.0)
-
-        broadcast_mask = mask_tensor
-        while broadcast_mask.dim() < loss_tensor.dim():
-            broadcast_mask = broadcast_mask.unsqueeze(0)
-
-        loss_tensor = loss_tensor * broadcast_mask
-        return loss_tensor.sum() / valid_count
-
-    quantiles = y_true.new_tensor([q_lower, q_middle, q_upper]).view(
-        -1, *[1] * y_true.ndim
-    )
-    preds = torch.stack([y_lower, y_middle, y_upper], dim=0)
-    errors = y_true.unsqueeze(0) - preds
-    pinball = torch.maximum((quantiles - 1) * errors, quantiles * errors)
-
     mask = get_mask(
         y_true,
         torch.tensor(float("nan"), device=y_true.device, dtype=y_true.dtype),
@@ -600,10 +577,20 @@ def masked_quantile(
     if valid.item() == 0:
         return y_true.new_tensor(0.0)
 
-    quantile_loss = _reduce_mean(pinball, mask, valid) * pinball.shape[0]
+    quantiles = y_true.new_tensor([q_lower, q_middle, q_upper]).view(
+        -1, *[1] * y_true.ndim
+    )
+    preds = torch.stack([y_lower, y_middle, y_upper], dim=0)
+    errors = y_true.unsqueeze(0) - preds
+
+    positive = errors >= 0
+    pinball = torch.where(positive, quantiles * errors, (quantiles - 1) * errors)
+    pinball = pinball * mask.unsqueeze(0)
+    quantile_loss = pinball.sum() / valid * pinball.shape[0]
 
     monotonic_penalty = F.relu(y_lower - y_middle) + F.relu(y_middle - y_upper)
-    monotonic_loss = _reduce_mean(monotonic_penalty, mask, valid)
+    monotonic_penalty = monotonic_penalty * mask
+    monotonic_loss = monotonic_penalty.sum() / valid
 
     return quantile_loss + lam * monotonic_loss
 
