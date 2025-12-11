@@ -60,7 +60,7 @@ def get_parameter(log_path):
     """获取模型参数量"""
     with open(log_path) as f:
         for line in f:
-            if "Parameters:" in line:
+            if "Parameters" in line:
                 return line.split()[-1]
     return 0
 

@@ -10,7 +10,7 @@ import torch
 
 torch.set_num_threads(8)
 
-from src.flow.umamba4.mamba_model import UNetMamba
+from src.flow.mamba3.mamba_model import UNetMamba
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
 from utils.log import get_logger
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
@@ -29,7 +29,7 @@ def get_config():
     parser = get_public_config()
     parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--graph_embed_dim", type=int, default=16)
+    parser.add_argument("--graph_embed_dim", type=int, default=64)
     parser.add_argument("--dropout", type=float, default=0.1)
 
     parser.add_argument("--step_size", type=int, default=200)
@@ -38,7 +38,7 @@ def get_config():
     parser.add_argument("--wdecay", type=float, default=5e-4)
     args = parser.parse_args()
 
-    args.model_name = "UMamba4"
+    args.model_name = "Mamba3"
     if args.quantile:
         args.model_name += "_CQR"
     log_dir = get_log_path(args)
@@ -76,7 +76,7 @@ def main():
         feature=args.feature,
         adj=gso,
         graph_embed_dim=args.graph_embed_dim,
-        dropout=args.dropout,        
+        dropout=args.dropout,
     )
 
     loss_fn = "MAE"

@@ -10,7 +10,7 @@ import torch
 
 torch.set_num_threads(8)
 
-from src.flow.umamba3.mamba_model import UNetMamba
+from src.flow.mamba7.mamba_model import UNetMamba
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
 from utils.log import get_logger
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
@@ -37,7 +37,7 @@ def get_config():
     parser.add_argument("--wdecay", type=float, default=5e-4)
     args = parser.parse_args()
 
-    args.model_name = "UMamba3"
+    args.model_name = "Mamba7"
     if args.quantile:
         args.model_name += "_CQR"
     log_dir = get_log_path(args)

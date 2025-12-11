@@ -310,7 +310,7 @@ class STLLM(BaseModel):
         num_experts=4,
         top_k=2,
         window_size=4,
-        dropout=0.1,
+        dropout=0.3,
         **args
     ):
         super(STLLM, self).__init__(**args)
