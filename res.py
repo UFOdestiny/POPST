@@ -8,10 +8,40 @@ import numpy as np
 from datetime import datetime
 
 
-def get_log(folder_path):
-    """获取文件夹中最新的日志文件"""
+def get_log(folder_path, select_metric=None):
+    """获取文件夹中的日志文件
+
+    Args:
+        folder_path: 日志文件夹路径
+        select_metric: 如果指定，则返回该指标数值最低的日志文件；否则返回最新的日志文件
+    """
     log_files = glob.glob(os.path.join(folder_path, "*.log"))
-    return max(log_files, key=os.path.getmtime) if log_files else None
+    if not log_files:
+        return None
+
+    if select_metric is None:
+        return max(log_files, key=os.path.getmtime)
+
+    # 根据指定 metric 选择最优的 log
+    best_log = None
+    best_value = float("inf")
+
+    for log_file in log_files:
+        res = read_log(log_file)
+        if res is None:
+            continue
+        # 解析指标
+        m = dict(re.findall(r"(\w+): ([\-\d\.]+)", res))
+        if select_metric in m:
+            try:
+                value = float(m[select_metric])
+                if value < best_value:
+                    best_value = value
+                    best_log = log_file
+            except ValueError:
+                continue
+
+    return best_log if best_log else max(log_files, key=os.path.getmtime)
 
 
 def read_log(log_path):
@@ -66,12 +96,20 @@ def get_parameter(log_path):
     return 0
 
 
-def collect_results(names, datasets, metrics, path):
-    """收集所有模型在所有数据集上的结果"""
+def collect_results(names, datasets, metrics, path, select_metric=None):
+    """收集所有模型在所有数据集上的结果
+
+    Args:
+        names: 模型名称列表
+        datasets: 数据集列表
+        metrics: 要收集的指标列表
+        path: 结果路径
+        select_metric: 如果指定，则选择该指标数值最低的日志文件
+    """
     rows = []
     for name in names:
         for dataset in datasets:
-            log = get_log(f"{path}/{name}/{dataset}")
+            log = get_log(f"{path}/{name}/{dataset}", select_metric)
             if not log:
                 continue
             res = read_log(log)
@@ -88,9 +126,18 @@ def collect_results(names, datasets, metrics, path):
     return rows
 
 
-def print_df(names, datasets, metrics, path):
+def print_df(names, datasets, metrics, path, select_metric=None):
+    """打印结果 DataFrame
+
+    Args:
+        names: 模型名称列表
+        datasets: 数据集列表
+        metrics: 要收集的指标列表
+        path: 结果路径
+        select_metric: 如果指定，则选择该指标数值最低的日志文件
+    """
     cat_type = CategoricalDtype(categories=names, ordered=True)
-    rows = collect_results(names, datasets, metrics, path)
+    rows = collect_results(names, datasets, metrics, path, select_metric)
     df = pd.DataFrame(rows)
     df["Model"] = df["Model"].astype(cat_type)
     df_sorted = df.sort_values(by=["Dataset", "Model"])
@@ -126,31 +173,33 @@ if __name__ == "__main__":
         "Mamba5",
     ]
 
-
     names = [i + "_CQR" for i in names]
 
     metrics = ["MAE", "RMSE", "MPIW", "IS", "COV"]
-    
-    datasets = ["safegraph_fl"]
-    path = "/home/dy23a.fsu/st/result/fl"
-    print_df(names, datasets, metrics, path)
-    path = "/home/dy23a.fsu/st/result/mfl"
-    print_df(names, datasets, metrics, path)
+
+    # 指定选择最优 log 的指标（选择该指标数值最低的 log），设为 None 则使用最新的 log
+    select_metric = "MAE"  # 可选: "MAE", "RMSE", "MPIW", "IS", "COV" 等
+
+    # datasets = ["safegraph_fl"]
+    # path = "/home/dy23a.fsu/st/result/fl"
+    # print_df(names, datasets, metrics, path, select_metric)
+    # path = "/home/dy23a.fsu/st/result/mfl"
+    # print_df(names, datasets, metrics, path, select_metric)
 
     datasets = ["safegraph_ny"]
     path = "/home/dy23a.fsu/st/result/ny"
-    print_df(names, datasets, metrics, path)
+    print_df(names, datasets, metrics, path, select_metric)
     path = "/home/dy23a.fsu/st/result/mny"
-    print_df(names, datasets, metrics, path)
+    print_df(names, datasets, metrics, path, select_metric)
 
-    datasets = ["safegraph_ca"]
-    path = "/home/dy23a.fsu/st/result/ca"
-    print_df(names, datasets, metrics, path)
-    path = "/home/dy23a.fsu/st/result/mca"
-    print_df(names, datasets, metrics, path)
+    # datasets = ["safegraph_ca"]
+    # path = "/home/dy23a.fsu/st/result/ca"
+    # print_df(names, datasets, metrics, path, select_metric)
+    # path = "/home/dy23a.fsu/st/result/mca"
+    # print_df(names, datasets, metrics, path, select_metric)
 
-    datasets = ["safegraph_tx"]
-    path = "/home/dy23a.fsu/st/result/tx"
-    print_df(names, datasets, metrics, path)
-    path = "/home/dy23a.fsu/st/result/mtx"
-    print_df(names, datasets, metrics, path)    
+    # datasets = ["safegraph_tx"]
+    # path = "/home/dy23a.fsu/st/result/tx"
+    # print_df(names, datasets, metrics, path, select_metric)
+    # path = "/home/dy23a.fsu/st/result/mtx"
+    # print_df(names, datasets, metrics, path, select_metric)
