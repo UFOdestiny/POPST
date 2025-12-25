@@ -1,3 +1,4 @@
+#!/blue/gtyson.fsu/dy23a.fsu/conda/envs/st/bin/python3
 import os
 import glob
 import re
@@ -119,11 +120,37 @@ if __name__ == "__main__":
         "STLLM2",
         # Target
         "Mamba",
-        "UMamba",
+        "Mamba2",
+        "Mamba3",
+        "Mamba4",
+        "Mamba5",
     ]
-    names = [i + "_CQR" for i in names]
-    metrics = ["MAE", "MAPE", "RMSE", "MPIW","IS","COV"]
-    datasets = ["panhandle"]
-    path = "/home/dy23a.fsu/st/result"
 
+
+    names = [i + "_CQR" for i in names]
+
+    metrics = ["MAE", "RMSE", "MPIW", "IS", "COV"]
+    
+    datasets = ["safegraph_fl"]
+    path = "/home/dy23a.fsu/st/result/fl"
     print_df(names, datasets, metrics, path)
+    path = "/home/dy23a.fsu/st/result/mfl"
+    print_df(names, datasets, metrics, path)
+
+    datasets = ["safegraph_ny"]
+    path = "/home/dy23a.fsu/st/result/ny"
+    print_df(names, datasets, metrics, path)
+    path = "/home/dy23a.fsu/st/result/mny"
+    print_df(names, datasets, metrics, path)
+
+    datasets = ["safegraph_ca"]
+    path = "/home/dy23a.fsu/st/result/ca"
+    print_df(names, datasets, metrics, path)
+    path = "/home/dy23a.fsu/st/result/mca"
+    print_df(names, datasets, metrics, path)
+
+    datasets = ["safegraph_tx"]
+    path = "/home/dy23a.fsu/st/result/tx"
+    print_df(names, datasets, metrics, path)
+    path = "/home/dy23a.fsu/st/result/mtx"
+    print_df(names, datasets, metrics, path)    

@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from shapely import wkb
 
+
 # source: https://github.com/liyaguang/DCRNN/blob/master/scripts/gen_adj_mx.py
 def get_adjacency_matrix(distance_df, sensor_ids, normalized_k=0.1):
     """
@@ -38,6 +39,14 @@ def get_adjacency_matrix(distance_df, sensor_ids, normalized_k=0.1):
     return adj_mx
 
 
+def read_map(dataset, year):
+    df = gpd.read_file(
+        f"/home/dy23a.fsu/jupyuter/safegraph/file/tl_{year}_us_county.zip"
+    )
+    state_code = {"fl": "12", "tx": "48", "ny": "36", "ca": "06"}
+    return df[df["STATEFP"] == state_code[dataset]].sort_values(by="GEOID").reset_index(drop=True)
+
+
 if __name__ == "__main__":
     # json_path = "D:/FSU OneDrive/OneDrive - Florida State University/datasets/nyc/NYC Taxi Zones.geojson"
     # save_path = "./nyc/adj.npy"
@@ -59,6 +68,7 @@ if __name__ == "__main__":
     # print(f"The shape of Adjacency Matrix: {adj_mx.shape}")
     # np.save(save_path, adj_mx)
 
+    """
     json_path = "/home/dy23a.fsu/jupyuter/safegraph/file/map_fl_2018.parquet"
     save_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/panhandle/adj.npy"
     gdf =pd.read_parquet(json_path)
@@ -76,6 +86,7 @@ if __name__ == "__main__":
     adj_mx = get_adjacency_matrix(distance_df=distance, sensor_ids=ph_area)
     print(f"The shape of Adjacency Matrix: {adj_mx.shape}")
     np.save(save_path, adj_mx)
+    """
 
     # json_path = "D:/OneDrive - Florida State University/datasets/nyc/taxi/NYC Taxi Zones.geojson"
     # save_path = "//data/manhattan/adj.npy"
@@ -95,3 +106,18 @@ if __name__ == "__main__":
     # adj_mx = get_adjacency_matrix(distance_df=distance, sensor_ids=sensor_ids_)
     # print(f"The shape of Adjacency Matrix: {adj_mx.shape}")
     # np.save(save_path, adj_mx)
+
+    for db in ["fl","ny","ca","tx",]:
+        gdf=read_map(db,2018)
+        save_path = f"/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph_{db}/adj.npy"
+        gdf = gdf.set_geometry("geometry").sort_values(by="GEOID")
+        ctr = gdf.centroid.reset_index(drop=True)
+        N = len(ctr)
+        ph_area = list(range(N))
+        distance = []
+        for i in ph_area:
+            for j in ph_area:
+                distance.append([i, j, ctr[i].distance(ctr[j])])
+        adj_mx = get_adjacency_matrix(distance_df=distance, sensor_ids=ph_area)
+        print(db, f"The shape of Adjacency Matrix: {adj_mx.shape}")
+        np.save(save_path, adj_mx)

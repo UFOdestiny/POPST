@@ -281,6 +281,12 @@ def get_dataset_info(dataset):
             9,
         ],
         "panhandle": [base_dir + "panhandle", base_dir + "panhandle/adj.npy", 924],
+
+        "safegraph_fl": [base_dir + "safegraph_fl", base_dir + "safegraph_fl/adj.npy", 67],
+        "safegraph_ca": [base_dir + "safegraph_ca", base_dir + "safegraph_ca/adj.npy", 58],
+        "safegraph_tx": [base_dir + "safegraph_tx", base_dir + "safegraph_tx/adj.npy", 254],
+        "safegraph_ny": [base_dir + "safegraph_ny", base_dir + "safegraph_ny/adj.npy", 62],
+
         # OD Prediction: N*N -> N*N
         "sz_taxi_od": [base_dir + "sz_taxi_od", base_dir + "shenzhen/adj.npy", 491],
         "sz_bike_od": [base_dir + "sz_bike_od", base_dir + "shenzhen/adj.npy", 491],
