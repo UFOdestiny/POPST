@@ -10,7 +10,7 @@ import torch
 
 torch.set_num_threads(8)
 
-from flow.mamba6.mamba_model import UNetMamba
+from src.flow.mamba6.mamba_model import UNetMamba
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
 from utils.dataloader import load_dataset, get_dataset_info
 from utils.log import get_logger

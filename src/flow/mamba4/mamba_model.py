@@ -1,3 +1,19 @@
+"""
+Mamba4: Decoupled Spatial-Temporal Mamba (解耦时空Mamba)
+
+核心设计思想：
+- 完全解耦时间和空间维度的建模
+- 时间维度用纯Mamba (已证明效果好)
+- 空间维度用轻量级图网络 (作为可选增强)
+- 双流架构：时间流为主，空间流为辅
+
+创新点：
+1. Dual-Stream Design: 时间和空间完全分离建模
+2. Graph Message Passing: 使用简单的消息传递而非复杂图卷积
+3. Stream Fusion Gate: 可学习的双流融合门控
+4. Spatial Mamba: 在空间维度也使用Mamba，统一架构
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,60 +21,210 @@ from base.model import BaseModel
 from mamba_ssm import Mamba
 
 
-class AdaptiveGraphLearner(nn.Module):
-    """Lightweight adaptive graph learning module."""
+class GraphMessagePassing(nn.Module):
+    """
+    轻量级图消息传递：简单的一跳聚合
+    不使用复杂的GCN，而是直接根据邻接矩阵聚合邻居信息
+    """
 
-    def __init__(self, node_num, embed_dim=16, base_adj=None, dropout=0.1):
+    def __init__(self, d_model, node_num, dropout=0.1, base_adj=None):
         super().__init__()
+        self.d_model = d_model
         self.node_num = node_num
-        self.node_vec1 = nn.Parameter(torch.randn(node_num, embed_dim))
-        self.node_vec2 = nn.Parameter(torch.randn(node_num, embed_dim))
+
+        # 消息变换
+        self.msg_proj = nn.Linear(d_model, d_model)
+        # 聚合后的变换
+        self.update_proj = nn.Linear(d_model * 2, d_model)
+
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+        # 邻接矩阵
         if base_adj is not None:
-            self.register_buffer("base_adj", base_adj.clone().detach().float())
+            # 行归一化
+            adj = base_adj.clone().detach().float()
+            adj = adj + torch.eye(node_num, device=adj.device, dtype=adj.dtype)
+            deg = adj.sum(dim=-1, keepdim=True).clamp(min=1e-6)
+            adj = adj / deg
+            self.register_buffer("adj", adj)
         else:
-            self.base_adj = None
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+            # 均匀邻接
+            adj = torch.ones(node_num, node_num) / node_num
+            self.register_buffer("adj", adj)
 
-    def forward(self):
-        adaptive_adj = torch.matmul(self.node_vec1, self.node_vec2.transpose(0, 1))
-        adaptive_adj = F.relu(adaptive_adj)
-        adaptive_adj = F.softmax(adaptive_adj, dim=-1)
-        if self.base_adj is not None:
-            adj = adaptive_adj + self.base_adj
-        else:
-            adj = adaptive_adj
-        adj = adj + torch.eye(self.node_num, device=adj.device, dtype=adj.dtype)
-        deg = adj.sum(dim=-1, keepdim=True)
-        res = adj / (deg + 1e-6)
-        res = self.dropout(res)
-        return res
+    def forward(self, x):
+        """
+        Args:
+            x: (B, T, N, D)
+        Returns:
+            out: (B, T, N, D)
+        """
+        B, T, N, D = x.shape
+
+        # 消息计算
+        msg = self.msg_proj(x)  # (B, T, N, D)
+
+        # 消息聚合 (简单的矩阵乘法)
+        msg_flat = msg.reshape(B * T, N, D)  # (B*T, N, D)
+        agg = torch.matmul(self.adj, msg_flat)  # (B*T, N, D)
+        agg = agg.reshape(B, T, N, D)
+
+        # 更新
+        out = torch.cat([x, agg], dim=-1)  # (B, T, N, 2D)
+        out = self.update_proj(out)  # (B, T, N, D)
+        out = self.dropout(out)
+
+        return self.norm(out + x)
 
 
-class SimpleMambaBlock(nn.Module):
-    """Residual Mamba block without explicit scale changes."""
+class TemporalMambaBlock(nn.Module):
+    """
+    时序Mamba块：在时间维度建模
+    """
 
     def __init__(self, d_model, dropout=0.1):
         super().__init__()
         self.mamba = Mamba(d_model=d_model)
         self.norm = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        residual = x
-        x = self.mamba(x)
-        x = self.norm(x + residual)
-        return self.dropout(x)
+        """
+        Args:
+            x: (B, T, N, D)
+        """
+        B, T, N, D = x.shape
+
+        # 转换为 (B*N, T, D) 在时间维度做Mamba
+        x_flat = x.permute(0, 2, 1, 3).reshape(B * N, T, D)
+        residual = x_flat
+
+        x_flat = self.norm(x_flat)
+        x_flat = self.mamba(x_flat)
+        x_flat = self.dropout(x_flat)
+        x_flat = x_flat + residual
+
+        return x_flat.reshape(B, N, T, D).permute(0, 2, 1, 3)
 
 
-class UNetMamba(BaseModel):
+class SpatialMambaBlock(nn.Module):
     """
-    UNet-style Mamba architecture for spatio-temporal prediction.
+    空间Mamba块：在空间（节点）维度建模
+    将节点序列视为一个序列，用Mamba捕获节点间依赖
+    """
 
-    Architecture:
-    - Encoder: Multiple Mamba blocks with downsampling
-    - Bottleneck: Mamba block at lowest resolution
-    - Decoder: Multiple Mamba blocks with upsampling and skip connections
-    - Adaptive graph learner before sequence modeling
+    def __init__(self, d_model, dropout=0.1):
+        super().__init__()
+        self.mamba = Mamba(d_model=d_model)
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        """
+        Args:
+            x: (B, T, N, D)
+        """
+        B, T, N, D = x.shape
+
+        # 转换为 (B*T, N, D) 在节点维度做Mamba
+        x_flat = x.reshape(B * T, N, D)
+        residual = x_flat
+
+        x_flat = self.norm(x_flat)
+        x_flat = self.mamba(x_flat)
+        x_flat = self.dropout(x_flat)
+        x_flat = x_flat + residual
+
+        return x_flat.reshape(B, T, N, D)
+
+
+class DualStreamFusion(nn.Module):
+    """
+    双流融合门控：融合时间流和空间流的输出
+    可以学习到一方权重为0，相当于关闭一个流
+    """
+
+    def __init__(self, d_model, init_spatial_gate=-1.0):
+        super().__init__()
+        # 融合门控
+        self.gate_proj = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, 2),  # 两个权重
+        )
+        # 初始化偏向时间流
+        nn.init.constant_(self.gate_proj[-1].bias, torch.tensor([1.0, init_spatial_gate]))
+
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, x_temporal, x_spatial):
+        """
+        Args:
+            x_temporal: (B, T, N, D) 时间流输出
+            x_spatial: (B, T, N, D) 空间流输出
+        Returns:
+            fused: (B, T, N, D)
+        """
+        # 计算融合权重
+        combined = torch.cat([x_temporal, x_spatial], dim=-1)  # (B, T, N, 2D)
+        gates = F.softmax(self.gate_proj(combined), dim=-1)  # (B, T, N, 2)
+
+        # 加权融合
+        fused = gates[..., 0:1] * x_temporal + gates[..., 1:2] * x_spatial
+
+        return self.norm(fused)
+
+
+class DecoupledSTBlock(nn.Module):
+    """
+    解耦时空块：
+    1. 时间流：用Mamba建模时序依赖
+    2. 空间流：用图消息传递 + 空间Mamba
+    3. 融合：双流门控融合
+    """
+
+    def __init__(self, d_model, node_num, dropout=0.1, base_adj=None, use_spatial_mamba=True):
+        super().__init__()
+        self.use_spatial_mamba = use_spatial_mamba
+
+        # 时间流
+        self.temporal_mamba = TemporalMambaBlock(d_model, dropout)
+
+        # 空间流
+        self.graph_mp = GraphMessagePassing(d_model, node_num, dropout, base_adj)
+        if use_spatial_mamba:
+            self.spatial_mamba = SpatialMambaBlock(d_model, dropout)
+
+        # 融合
+        self.fusion = DualStreamFusion(d_model, init_spatial_gate=-1.0)
+
+    def forward(self, x):
+        """
+        Args:
+            x: (B, T, N, D)
+        """
+        # 时间流
+        x_temporal = self.temporal_mamba(x)
+
+        # 空间流
+        x_spatial = self.graph_mp(x)
+        if self.use_spatial_mamba:
+            x_spatial = self.spatial_mamba(x_spatial)
+
+        # 融合
+        return self.fusion(x_temporal, x_spatial)
+
+
+class DecoupledSTMamba(BaseModel):
+    """
+    Mamba4: 解耦时空Mamba
+
+    架构设计原则：
+    1. 双流设计：时间和空间完全分离
+    2. 时间流为主：时间Mamba是核心
+    3. 空间流可选：通过门控可以关闭空间流
+    4. 统一架构：时间和空间都使用Mamba
     """
 
     def __init__(
@@ -66,84 +232,64 @@ class UNetMamba(BaseModel):
         d_model,
         num_layers,
         feature,
-        adj=None,
-        graph_embed_dim=16,
         dropout=0.1,
+        adj=None,
+        use_spatial_mamba=True,
         **args
     ):
-        super(UNetMamba, self).__init__(**args)
+        super(DecoupledSTMamba, self).__init__(**args)
         self.d_model = d_model
-        self.num_layers = num_layers  # Number of encoder/decoder levels
+        self.num_layers = num_layers
         self.feature = feature
+        self.dropout = dropout
 
-        # Input projection: F → d_model
-        self.input_proj = nn.Linear(self.feature, self.d_model)
-
-        # Adaptive graph learner (simple structure-aware mixing)
-        self.adaptive_graph = AdaptiveGraphLearner(
-            node_num=self.node_num,
-            embed_dim=graph_embed_dim,
-            base_adj=adj,
-            dropout=dropout,
+        # Input projection
+        self.input_proj = nn.Sequential(
+            nn.Linear(self.feature, self.d_model),
+            nn.LayerNorm(self.d_model),
+            nn.Dropout(dropout),
         )
 
-        self.feature_dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        # 解耦时空块
+        self.blocks = nn.ModuleList([
+            DecoupledSTBlock(
+                d_model=self.d_model,
+                node_num=self.node_num,
+                dropout=dropout,
+                base_adj=adj,
+                use_spatial_mamba=use_spatial_mamba,
+            )
+            for _ in range(self.num_layers)
+        ])
 
-        # Lightweight stack of residual Mamba blocks
-        self.blocks = nn.ModuleList(
-            [
-                SimpleMambaBlock(d_model=self.d_model, dropout=dropout)
-                for _ in range(self.num_layers)
-            ]
-        )
-
-        # Output projection layers
+        # Output projection
         self.time_proj = nn.Linear(self.seq_len, self.horizon)
+        self.output_norm = nn.LayerNorm(self.d_model)
         self.output_proj = nn.Linear(self.d_model, self.feature)
-
-    def apply_graph_structure(self, x):
-        """Simple adaptive graph propagation with residual mixing."""
-        adj = self.adaptive_graph()
-        graph_x = torch.einsum("ij,btjd->btid", adj, x)
-        return 0.5 * (x + graph_x)
 
     def forward(self, x):  # (B, T, N, F)
         B, T, N, F = x.shape
 
-        # Input projection (per node/time) and graph-aware mixing
-        x = self.input_proj(x)
-        x = self.apply_graph_structure(x)
-        x = self.feature_dropout(x)
+        # Input projection
+        x = self.input_proj(x)  # (B, T, N, D)
 
-        # Merge batch and nodes → treat each node independently post graph mixing
-        x = x.permute(0, 2, 1, 3).reshape(B * N, T, self.d_model)
+        # Skip connection from input
+        x_skip = x
 
-        # Store original for global skip
-        x_input = x
-
-        # Lightweight residual Mamba stack
+        # Decoupled ST blocks
         for block in self.blocks:
             x = block(x)
 
-        # Match original sequence length if needed
-        if x.shape[1] != T:
-            x = x.permute(0, 2, 1)  # (B*N, d_model, T')
-            x = nn.functional.interpolate(x, size=T, mode="linear", align_corners=False)
-            x = x.permute(0, 2, 1)  # (B*N, T, d_model)
-
         # Global skip connection
-        x = x + x_input
+        x = x + x_skip
 
-        # Project T → H
-        x = x.permute(0, 2, 1)  # (B*N, d_model, T)
-        x = self.time_proj(x)  # (B*N, d_model, H)
-        x = x.permute(0, 2, 1)  # (B*N, H, d_model)
+        # Time projection: (B, T, N, D) -> (B, H, N, D)
+        x = x.permute(0, 2, 3, 1)  # (B, N, D, T)
+        x = self.time_proj(x)      # (B, N, D, H)
+        x = x.permute(0, 3, 1, 2)  # (B, H, N, D)
 
-        # Project feature back
-        x = self.output_proj(x)  # (B*N, H, F)
-
-        # Reshape back to (B, H, N, F)
-        x = x.reshape(B, N, self.horizon, F)
-        x = x.permute(0, 2, 1, 3)
+        # Output
+        x = self.output_norm(x)
+        x = self.output_proj(x)  # (B, H, N, F)
 
         return x

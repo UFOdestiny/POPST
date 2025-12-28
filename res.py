@@ -171,6 +171,8 @@ if __name__ == "__main__":
         "Mamba3",
         "Mamba4",
         "Mamba5",
+        "Mamba6",
+        "Mamba7",
     ]
 
     names = [i + "_CQR" for i in names]
@@ -180,11 +182,11 @@ if __name__ == "__main__":
     # 指定选择最优 log 的指标（选择该指标数值最低的 log），设为 None 则使用最新的 log
     select_metric = "MAE"  # 可选: "MAE", "RMSE", "MPIW", "IS", "COV" 等
 
-    # datasets = ["safegraph_fl"]
-    # path = "/home/dy23a.fsu/st/result/fl"
-    # print_df(names, datasets, metrics, path, select_metric)
-    # path = "/home/dy23a.fsu/st/result/mfl"
-    # print_df(names, datasets, metrics, path, select_metric)
+    datasets = ["safegraph_fl"]
+    path = "/home/dy23a.fsu/st/result/fl"
+    print_df(names, datasets, metrics, path, select_metric)
+    path = "/home/dy23a.fsu/st/result/mfl"
+    print_df(names, datasets, metrics, path, select_metric)
 
     datasets = ["safegraph_ny"]
     path = "/home/dy23a.fsu/st/result/ny"
@@ -192,14 +194,14 @@ if __name__ == "__main__":
     path = "/home/dy23a.fsu/st/result/mny"
     print_df(names, datasets, metrics, path, select_metric)
 
-    # datasets = ["safegraph_ca"]
-    # path = "/home/dy23a.fsu/st/result/ca"
-    # print_df(names, datasets, metrics, path, select_metric)
-    # path = "/home/dy23a.fsu/st/result/mca"
-    # print_df(names, datasets, metrics, path, select_metric)
+    datasets = ["safegraph_ca"]
+    path = "/home/dy23a.fsu/st/result/ca"
+    print_df(names, datasets, metrics, path, select_metric)
+    path = "/home/dy23a.fsu/st/result/mca"
+    print_df(names, datasets, metrics, path, select_metric)
 
-    # datasets = ["safegraph_tx"]
-    # path = "/home/dy23a.fsu/st/result/tx"
-    # print_df(names, datasets, metrics, path, select_metric)
-    # path = "/home/dy23a.fsu/st/result/mtx"
-    # print_df(names, datasets, metrics, path, select_metric)
+    datasets = ["safegraph_tx"]
+    path = "/home/dy23a.fsu/st/result/tx"
+    print_df(names, datasets, metrics, path, select_metric)
+    path = "/home/dy23a.fsu/st/result/mtx"
+    print_df(names, datasets, metrics, path, select_metric)
