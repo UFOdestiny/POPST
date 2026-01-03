@@ -10,11 +10,10 @@ import torch
 
 torch.set_num_threads(8)
 
-from src.flow.mamba3.mamba_model import GraphGuidedMamba
+from src.flow.mamba3.mamba_model import MambaGraph
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
 from utils.log import get_logger
-from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
-from utils.graph_algo import normalize_adj_mx
+from utils.dataloader import load_dataset, get_dataset_info
 
 
 def set_seed(seed):
@@ -29,9 +28,8 @@ def get_config():
     parser = get_public_config()
     parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--num_heads", type=int, default=4, help="Number of attention heads for sparse graph attention")
+    parser.add_argument("--embed_dim", type=int, default=16, help="Dimension of node embeddings for adaptive graph")
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--top_k", type=int, default=5, help="Top-k neighbors for sparse graph attention")
 
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -57,16 +55,12 @@ def main():
     set_seed(args.seed)
     device = torch.device(args.device)
 
-    data_path, adj_path, node_num = get_dataset_info(args.dataset)
-    adj_mx = load_adj_from_numpy(adj_path)
-    adj_mx = adj_mx - np.eye(node_num)
-
-    gso = normalize_adj_mx(adj_mx, "scalap")[0]
-    gso = torch.tensor(gso).to(device)
+    data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
-    model = GraphGuidedMamba(
+    
+    model = MambaGraph(
         node_num=node_num,
         input_dim=args.seq_len,
         output_dim=args.output_dim,
@@ -75,9 +69,7 @@ def main():
         num_layers=args.num_layers,
         d_model=args.d_model,
         feature=args.feature,
-        adj=gso,
-        top_k=args.top_k,
-        num_heads=args.num_heads,
+        embed_dim=args.embed_dim,
         dropout=args.dropout,
     )
 

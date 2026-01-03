@@ -28,8 +28,11 @@ def get_config():
     parser = get_public_config()
     parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--sample_factor", type=int, default=2)
+    parser.add_argument("--sample_factor", type=int, default=2)  # 控制多尺度数量
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--ffn_expand", type=int, default=2)
+    parser.add_argument("--use_multiscale", type=bool, default=True)
+    parser.add_argument("--use_temporal_conv", type=bool, default=True)
 
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -70,6 +73,9 @@ def main():
         feature=args.feature,
         sample_factor=args.sample_factor,
         dropout=args.dropout,
+        ffn_expand=args.ffn_expand,
+        use_multiscale=args.use_multiscale,
+        use_temporal_conv=args.use_temporal_conv,
     )
 
     loss_fn = "MAE"

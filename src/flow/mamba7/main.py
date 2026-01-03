@@ -30,6 +30,9 @@ def get_config():
     parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--graph_embed_dim", type=int, default=16)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--num_graph_layers", type=int, default=1)
+    parser.add_argument("--gate_init", type=float, default=-2.0)
 
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -75,6 +78,9 @@ def main():
         feature=args.feature,
         adj=gso,
         graph_embed_dim=args.graph_embed_dim,
+        dropout=args.dropout,
+        num_graph_layers=args.num_graph_layers,
+        gate_init=args.gate_init,
     )
 
     loss_fn = "MAE"

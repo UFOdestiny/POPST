@@ -1,17 +1,11 @@
 """
-Mamba4: Decoupled Spatial-Temporal Mamba (解耦时空Mamba)
+Mamba4: Mamba + Chebyshev Graph Convolution
 
 核心设计思想：
-- 完全解耦时间和空间维度的建模
-- 时间维度用纯Mamba (已证明效果好)
-- 空间维度用轻量级图网络 (作为可选增强)
-- 双流架构：时间流为主，空间流为辅
-
-创新点：
-1. Dual-Stream Design: 时间和空间完全分离建模
-2. Graph Message Passing: 使用简单的消息传递而非复杂图卷积
-3. Stream Fusion Gate: 可学习的双流融合门控
-4. Spatial Mamba: 在空间维度也使用Mamba，统一架构
+- 纯Mamba效果好，所以Mamba为主干网络
+- 使用Chebyshev多项式图卷积捕获多阶邻居信息
+- 使用零初始化门控(Zero-Init Gate)保证初始时等价于纯Mamba
+- 可选择使用预定义邻接矩阵或自适应学习
 """
 
 import torch
@@ -21,210 +15,125 @@ from base.model import BaseModel
 from mamba_ssm import Mamba
 
 
-class GraphMessagePassing(nn.Module):
+class ChebGraphConv(nn.Module):
     """
-    轻量级图消息传递：简单的一跳聚合
-    不使用复杂的GCN，而是直接根据邻接矩阵聚合邻居信息
+    Chebyshev多项式图卷积
+    捕获K阶邻居信息
     """
-
-    def __init__(self, d_model, node_num, dropout=0.1, base_adj=None):
+    def __init__(self, d_model, node_num, K=2, adj=None):
         super().__init__()
         self.d_model = d_model
         self.node_num = node_num
-
-        # 消息变换
-        self.msg_proj = nn.Linear(d_model, d_model)
-        # 聚合后的变换
-        self.update_proj = nn.Linear(d_model * 2, d_model)
-
-        self.norm = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-
-        # 邻接矩阵
-        if base_adj is not None:
-            # 行归一化
-            adj = base_adj.clone().detach().float()
-            adj = adj + torch.eye(node_num, device=adj.device, dtype=adj.dtype)
-            deg = adj.sum(dim=-1, keepdim=True).clamp(min=1e-6)
-            adj = adj / deg
-            self.register_buffer("adj", adj)
+        self.K = K
+        
+        # 处理邻接矩阵
+        if adj is not None:
+            # 计算归一化拉普拉斯矩阵
+            adj = adj.clone().detach().float()
+            adj = adj + torch.eye(node_num, device=adj.device)
+            deg = adj.sum(dim=1)
+            deg_inv_sqrt = torch.pow(deg.clamp(min=1e-6), -0.5)
+            deg_inv_sqrt = torch.diag(deg_inv_sqrt)
+            lap = torch.eye(node_num, device=adj.device) - deg_inv_sqrt @ adj @ deg_inv_sqrt
+            # 缩放到 [-1, 1]
+            lambda_max = 2.0
+            lap_scaled = (2.0 / lambda_max) * lap - torch.eye(node_num, device=adj.device)
+            self.register_buffer('lap', lap_scaled)
         else:
-            # 均匀邻接
-            adj = torch.ones(node_num, node_num) / node_num
-            self.register_buffer("adj", adj)
+            self.register_buffer('lap', torch.zeros(node_num, node_num))
+        
+        # 每个阶的权重
+        self.weights = nn.ParameterList([
+            nn.Parameter(torch.empty(d_model, d_model))
+            for _ in range(K)
+        ])
+        self.bias = nn.Parameter(torch.zeros(d_model))
+        
+        # 初始化权重
+        for w in self.weights:
+            nn.init.xavier_uniform_(w)
 
     def forward(self, x):
-        """
-        Args:
-            x: (B, T, N, D)
-        Returns:
-            out: (B, T, N, D)
-        """
+        # x: (B, T, N, D)
         B, T, N, D = x.shape
-
-        # 消息计算
-        msg = self.msg_proj(x)  # (B, T, N, D)
-
-        # 消息聚合 (简单的矩阵乘法)
-        msg_flat = msg.reshape(B * T, N, D)  # (B*T, N, D)
-        agg = torch.matmul(self.adj, msg_flat)  # (B*T, N, D)
-        agg = agg.reshape(B, T, N, D)
-
-        # 更新
-        out = torch.cat([x, agg], dim=-1)  # (B, T, N, 2D)
-        out = self.update_proj(out)  # (B, T, N, D)
-        out = self.dropout(out)
-
-        return self.norm(out + x)
-
-
-class TemporalMambaBlock(nn.Module):
-    """
-    时序Mamba块：在时间维度建模
-    """
-
-    def __init__(self, d_model, dropout=0.1):
-        super().__init__()
-        self.mamba = Mamba(d_model=d_model)
-        self.norm = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        """
-        Args:
-            x: (B, T, N, D)
-        """
-        B, T, N, D = x.shape
-
-        # 转换为 (B*N, T, D) 在时间维度做Mamba
-        x_flat = x.permute(0, 2, 1, 3).reshape(B * N, T, D)
-        residual = x_flat
-
-        x_flat = self.norm(x_flat)
-        x_flat = self.mamba(x_flat)
-        x_flat = self.dropout(x_flat)
-        x_flat = x_flat + residual
-
-        return x_flat.reshape(B, N, T, D).permute(0, 2, 1, 3)
-
-
-class SpatialMambaBlock(nn.Module):
-    """
-    空间Mamba块：在空间（节点）维度建模
-    将节点序列视为一个序列，用Mamba捕获节点间依赖
-    """
-
-    def __init__(self, d_model, dropout=0.1):
-        super().__init__()
-        self.mamba = Mamba(d_model=d_model)
-        self.norm = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        """
-        Args:
-            x: (B, T, N, D)
-        """
-        B, T, N, D = x.shape
-
-        # 转换为 (B*T, N, D) 在节点维度做Mamba
         x_flat = x.reshape(B * T, N, D)
-        residual = x_flat
+        
+        # Chebyshev递推
+        L = self.lap
+        Tx_0 = x_flat
+        out = torch.matmul(Tx_0, self.weights[0])
+        
+        if self.K > 1:
+            Tx_1 = torch.matmul(L, Tx_0)
+            out = out + torch.matmul(Tx_1, self.weights[1])
+            
+            for k in range(2, self.K):
+                Tx_2 = 2 * torch.matmul(L, Tx_1) - Tx_0
+                out = out + torch.matmul(Tx_2, self.weights[k])
+                Tx_0, Tx_1 = Tx_1, Tx_2
+        
+        out = out + self.bias
+        return out.reshape(B, T, N, D)
 
-        x_flat = self.norm(x_flat)
-        x_flat = self.mamba(x_flat)
-        x_flat = self.dropout(x_flat)
-        x_flat = x_flat + residual
 
-        return x_flat.reshape(B, T, N, D)
-
-
-class DualStreamFusion(nn.Module):
+class MambaChebBlock(nn.Module):
     """
-    双流融合门控：融合时间流和空间流的输出
-    可以学习到一方权重为0，相当于关闭一个流
+    Mamba + Chebyshev GCN 的基础块
     """
-
-    def __init__(self, d_model, init_spatial_gate=-1.0):
+    def __init__(self, d_model, node_num, dropout=0.1, K=2, adj=None):
         super().__init__()
-        # 融合门控
-        self.gate_proj = nn.Sequential(
-            nn.Linear(d_model * 2, d_model),
+        
+        # 1. Temporal Mamba (主力)
+        self.mamba = Mamba(d_model=d_model)
+        self.norm1 = nn.LayerNorm(d_model)
+        
+        # 2. Spatial ChebGCN (辅助)
+        self.gcn = ChebGraphConv(d_model, node_num, K=K, adj=adj)
+        self.norm2 = nn.LayerNorm(d_model)
+        # 零初始化门控
+        self.gcn_gate = nn.Parameter(torch.tensor(0.0))
+        
+        # 3. FFN
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4),
             nn.GELU(),
-            nn.Linear(d_model, 2),  # 两个权重
+            nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model)
         )
-        # 初始化偏向时间流
-        nn.init.constant_(self.gate_proj[-1].bias, torch.tensor([1.0, init_spatial_gate]))
-
-        self.norm = nn.LayerNorm(d_model)
-
-    def forward(self, x_temporal, x_spatial):
-        """
-        Args:
-            x_temporal: (B, T, N, D) 时间流输出
-            x_spatial: (B, T, N, D) 空间流输出
-        Returns:
-            fused: (B, T, N, D)
-        """
-        # 计算融合权重
-        combined = torch.cat([x_temporal, x_spatial], dim=-1)  # (B, T, N, 2D)
-        gates = F.softmax(self.gate_proj(combined), dim=-1)  # (B, T, N, 2)
-
-        # 加权融合
-        fused = gates[..., 0:1] * x_temporal + gates[..., 1:2] * x_spatial
-
-        return self.norm(fused)
-
-
-class DecoupledSTBlock(nn.Module):
-    """
-    解耦时空块：
-    1. 时间流：用Mamba建模时序依赖
-    2. 空间流：用图消息传递 + 空间Mamba
-    3. 融合：双流门控融合
-    """
-
-    def __init__(self, d_model, node_num, dropout=0.1, base_adj=None, use_spatial_mamba=True):
-        super().__init__()
-        self.use_spatial_mamba = use_spatial_mamba
-
-        # 时间流
-        self.temporal_mamba = TemporalMambaBlock(d_model, dropout)
-
-        # 空间流
-        self.graph_mp = GraphMessagePassing(d_model, node_num, dropout, base_adj)
-        if use_spatial_mamba:
-            self.spatial_mamba = SpatialMambaBlock(d_model, dropout)
-
-        # 融合
-        self.fusion = DualStreamFusion(d_model, init_spatial_gate=-1.0)
+        self.norm3 = nn.LayerNorm(d_model)
+        
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        """
-        Args:
-            x: (B, T, N, D)
-        """
-        # 时间流
-        x_temporal = self.temporal_mamba(x)
+        # x: (B, T, N, D)
+        B, T, N, D = x.shape
 
-        # 空间流
-        x_spatial = self.graph_mp(x)
-        if self.use_spatial_mamba:
-            x_spatial = self.spatial_mamba(x_spatial)
+        # 1. 时序Mamba
+        residual = x
+        x_norm = self.norm1(x)
+        x_flat = x_norm.permute(0, 2, 1, 3).reshape(B * N, T, D)
+        x_mamba = self.mamba(x_flat)
+        x_mamba = x_mamba.reshape(B, N, T, D).permute(0, 2, 1, 3)
+        x = residual + self.dropout(x_mamba)
 
-        # 融合
-        return self.fusion(x_temporal, x_spatial)
+        # 2. 空间ChebGCN (带门控)
+        residual = x
+        x_norm = self.norm2(x)
+        x_gcn = self.gcn(x_norm)
+        x = residual + self.gcn_gate * self.dropout(x_gcn)
+        
+        # 3. FFN
+        residual = x
+        x_norm = self.norm3(x)
+        x_ffn = self.ffn(x_norm)
+        x = residual + self.dropout(x_ffn)
+
+        return x
 
 
-class DecoupledSTMamba(BaseModel):
+class MambaCheb(BaseModel):
     """
-    Mamba4: 解耦时空Mamba
-
-    架构设计原则：
-    1. 双流设计：时间和空间完全分离
-    2. 时间流为主：时间Mamba是核心
-    3. 空间流可选：通过门控可以关闭空间流
-    4. 统一架构：时间和空间都使用Mamba
+    Mamba4: Mamba + Chebyshev Graph Convolution
     """
 
     def __init__(
@@ -233,11 +142,11 @@ class DecoupledSTMamba(BaseModel):
         num_layers,
         feature,
         dropout=0.1,
+        K=2,
         adj=None,
-        use_spatial_mamba=True,
         **args
     ):
-        super(DecoupledSTMamba, self).__init__(**args)
+        super(MambaCheb, self).__init__(**args)
         self.d_model = d_model
         self.num_layers = num_layers
         self.feature = feature
@@ -250,14 +159,14 @@ class DecoupledSTMamba(BaseModel):
             nn.Dropout(dropout),
         )
 
-        # 解耦时空块
+        # Mamba + ChebGCN Blocks
         self.blocks = nn.ModuleList([
-            DecoupledSTBlock(
+            MambaChebBlock(
                 d_model=self.d_model,
                 node_num=self.node_num,
                 dropout=dropout,
-                base_adj=adj,
-                use_spatial_mamba=use_spatial_mamba,
+                K=K,
+                adj=adj,
             )
             for _ in range(self.num_layers)
         ])
@@ -276,7 +185,7 @@ class DecoupledSTMamba(BaseModel):
         # Skip connection from input
         x_skip = x
 
-        # Decoupled ST blocks
+        # Mamba + ChebGCN blocks
         for block in self.blocks:
             x = block(x)
 

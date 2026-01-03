@@ -1,206 +1,256 @@
+"""
+Mamba6: Hierarchical Pure Mamba with Multi-Scale Temporal Modeling
+优化版本: 移除复杂的UNet上下采样，采用多尺度纯Mamba架构
+
+设计要点:
+1. 多尺度时间建模: 不同层关注不同时间尺度
+2. 深层纯Mamba: 更深的Mamba堆叠，强调时序建模
+3. 层级残差: 每一层都有残差连接到输入
+4. 无图结构: 完全依赖Mamba的时序建模能力
+5. 可选的时间卷积: 用于捕获局部时间模式
+"""
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from base.model import BaseModel
 from mamba_ssm import Mamba
 
 
-class MambaEncoderBlock(nn.Module):
-    """Mamba encoder block with downsampling"""
+class TemporalConvBlock(nn.Module):
+    """局部时间卷积: 捕获短期时间模式"""
 
-    def __init__(self, d_model, downsample_factor=2, dropout=0.1):
+    def __init__(self, d_model, kernel_size=3, dropout=0.1):
         super().__init__()
-        self.mamba = Mamba(d_model=d_model)
-        self.norm = nn.LayerNorm(d_model)
-        self.downsample_factor = downsample_factor
-        # Downsample in time dimension
-        self.downsample = nn.Linear(downsample_factor, 1)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):  # (B, T, D)
-        # Mamba processing with residual
-        residual = x
-        x = self.mamba(x)
-        x = self.norm(x + residual)
-        x = self.dropout(x)
-
-        B, T, D = x.shape
-        # Downsample: group consecutive time steps
-        if T % self.downsample_factor != 0:
-            # Pad if necessary
-            pad_len = self.downsample_factor - (T % self.downsample_factor)
-            x = nn.functional.pad(x, (0, 0, 0, pad_len))
-            T = T + pad_len
-
-        x = x.reshape(B, T // self.downsample_factor, self.downsample_factor, D)
-        x = x.permute(0, 1, 3, 2)  # (B, T//2, D, 2)
-        x = self.downsample(x).squeeze(-1)  # (B, T//2, D)
-        return x
-
-
-class MambaDecoderBlock(nn.Module):
-    """Mamba decoder block with upsampling and skip connection"""
-
-    def __init__(self, d_model, upsample_factor=2, dropout=0.1):
-        super().__init__()
-        self.mamba = Mamba(d_model=d_model)
-        self.norm = nn.LayerNorm(d_model)
-        self.upsample_factor = upsample_factor
-        # Upsample in time dimension
-        self.upsample = nn.Linear(1, upsample_factor)
-        # Fusion layer for skip connection
-        self.skip_fusion = nn.Linear(d_model * 2, d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x, skip):  # x: (B, T, D), skip: (B, T*2, D)
-        B, T, D = x.shape
-
-        # Upsample
-        x = x.unsqueeze(-1)  # (B, T, D, 1)
-        x = self.upsample(x)  # (B, T, D, 2)
-        x = x.permute(0, 1, 3, 2)  # (B, T, 2, D)
-        x = x.reshape(B, T * self.upsample_factor, D)  # (B, T*2, D)
-
-        # Match skip connection size if needed
-        if x.shape[1] != skip.shape[1]:
-            # Interpolate to match
-            x = x.permute(0, 2, 1)  # (B, D, T*2)
-            x = nn.functional.interpolate(
-                x, size=skip.shape[1], mode="linear", align_corners=False
-            )
-            x = x.permute(0, 2, 1)  # (B, T_skip, D)
-
-        # Skip connection fusion
-        x = torch.cat([x, skip], dim=-1)  # (B, T, D*2)
-        x = self.skip_fusion(x)  # (B, T, D)
-
-        # Mamba processing with residual
-        residual = x
-        x = self.mamba(x)
-        x = self.norm(x + residual)
-        x = self.dropout(x)
-        return x
-
-
-class MambaBottleneck(nn.Module):
-    """Bottleneck Mamba block"""
-
-    def __init__(self, d_model, dropout=0.1):
-        super().__init__()
-        self.mamba = Mamba(d_model=d_model)
+        self.conv = nn.Conv1d(
+            d_model, d_model,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=1
+        )
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
+        """x: (B, T, D)"""
         residual = x
-        x = self.mamba(x)
-        x = self.norm(x + residual)
+        x = x.permute(0, 2, 1)  # (B, D, T)
+        x = self.conv(x)
+        x = x.permute(0, 2, 1)  # (B, T, D)
         x = self.dropout(x)
+        return self.norm(x + residual)
+
+
+class MambaWithFFN(nn.Module):
+    """Mamba + FFN块: Pre-norm设计，增强表达能力"""
+
+    def __init__(self, d_model, dropout=0.1, ffn_expand=2):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model)
+        self.mamba = Mamba(d_model=d_model)
+
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * ffn_expand),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model * ffn_expand, d_model),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        """x: (B, T, D)"""
+        # Mamba
+        x = x + self.mamba(self.norm1(x))
+        # FFN
+        x = x + self.ffn(self.norm2(x))
+        return x
+
+
+class MultiScaleMambaBlock(nn.Module):
+    """多尺度Mamba块: 捕获不同时间尺度的依赖"""
+
+    def __init__(self, d_model, num_scales=3, dropout=0.1):
+        super().__init__()
+        self.num_scales = num_scales
+
+        # 每个尺度一个Mamba
+        self.scale_mambas = nn.ModuleList([
+            Mamba(d_model=d_model) for _ in range(num_scales)
+        ])
+
+        # 尺度融合
+        self.fusion = nn.Linear(d_model * num_scales, d_model)
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        """x: (B, T, D)"""
+        B, T, D = x.shape
+        residual = x
+
+        scale_outputs = []
+        for i, mamba in enumerate(self.scale_mambas):
+            scale = 2 ** i  # 1, 2, 4...
+
+            if scale == 1:
+                # 原始尺度
+                out = mamba(x)
+            else:
+                # 下采样 -> Mamba -> 上采样
+                if T >= scale:
+                    # 简单的stride采样
+                    x_down = x[:, ::scale, :]  # (B, T//scale, D)
+                    out_down = mamba(x_down)
+                    # 上采样回原始长度
+                    out = F.interpolate(
+                        out_down.permute(0, 2, 1),
+                        size=T,
+                        mode='linear',
+                        align_corners=False
+                    ).permute(0, 2, 1)
+                else:
+                    out = mamba(x)
+
+            scale_outputs.append(out)
+
+        # 融合多尺度输出
+        x = torch.cat(scale_outputs, dim=-1)  # (B, T, D*num_scales)
+        x = self.fusion(x)  # (B, T, D)
+        x = self.dropout(x)
+
+        return self.norm(x + residual)
+
+
+class HierarchicalMambaStage(nn.Module):
+    """层级Mamba阶段: 多个Mamba块 + 残差连接"""
+
+    def __init__(self, d_model, num_blocks, dropout=0.1, ffn_expand=2, use_temporal_conv=True):
+        super().__init__()
+        self.use_temporal_conv = use_temporal_conv
+
+        if use_temporal_conv:
+            self.temporal_conv = TemporalConvBlock(d_model, kernel_size=3, dropout=dropout)
+
+        self.blocks = nn.ModuleList([
+            MambaWithFFN(d_model, dropout, ffn_expand)
+            for _ in range(num_blocks)
+        ])
+
+    def forward(self, x):
+        """x: (B, T, D)"""
+        if self.use_temporal_conv:
+            x = self.temporal_conv(x)
+
+        for block in self.blocks:
+            x = block(x)
+
         return x
 
 
 class UNetMamba(BaseModel):
     """
-    UNet-style Mamba architecture for spatio-temporal prediction.
+    Mamba6 优化版: 层级多尺度纯Mamba架构
 
-    Architecture:
-    - Encoder: Multiple Mamba blocks with downsampling
-    - Bottleneck: Mamba block at lowest resolution
-    - Decoder: Multiple Mamba blocks with upsampling and skip connections
+    架构:
+    - 输入投影 + LayerNorm
+    - 多个层级Mamba阶段 (每个阶段多个Mamba块)
+    - 多尺度Mamba融合 (可选)
+    - 层级残差连接
+    - 输出投影
     """
 
     def __init__(
-        self, d_model, num_layers, sample_factor, feature, dropout=0.1, **args
+        self,
+        d_model,
+        num_layers,
+        sample_factor,  # 改为控制多尺度数量
+        feature,
+        dropout=0.1,
+        ffn_expand=2,
+        use_multiscale=True,
+        use_temporal_conv=True,
+        **args
     ):
         super(UNetMamba, self).__init__(**args)
         self.d_model = d_model
-        self.num_layers = num_layers  # Number of encoder/decoder levels
+        self.num_layers = num_layers
         self.feature = feature
+        self.use_multiscale = use_multiscale
 
-        # Input projection: F → d_model
+        # Input projection
         self.input_proj = nn.Linear(self.feature, self.d_model)
+        self.input_norm = nn.LayerNorm(self.d_model)
+        self.input_dropout = nn.Dropout(dropout)
 
-        # Encoder blocks (downsampling path)
-        self.encoders = nn.ModuleList(
-            [
-                MambaEncoderBlock(
-                    d_model=self.d_model,
-                    downsample_factor=sample_factor,
-                    dropout=dropout,
-                )
-                for _ in range(self.num_layers)
-            ]
-        )
+        # 层级Mamba阶段
+        blocks_per_stage = max(1, num_layers // 2)  # 每个阶段的块数
+        num_stages = max(1, (num_layers + blocks_per_stage - 1) // blocks_per_stage)
 
-        # Bottleneck
-        self.bottleneck = MambaBottleneck(d_model=self.d_model, dropout=dropout)
+        self.stages = nn.ModuleList([
+            HierarchicalMambaStage(
+                d_model=d_model,
+                num_blocks=blocks_per_stage,
+                dropout=dropout,
+                ffn_expand=ffn_expand,
+                use_temporal_conv=use_temporal_conv and (i == 0)  # 只在第一阶段用时间卷积
+            )
+            for i in range(num_stages)
+        ])
 
-        # Decoder blocks (upsampling path with skip connections)
-        self.decoders = nn.ModuleList(
-            [
-                MambaDecoderBlock(
-                    d_model=self.d_model, upsample_factor=sample_factor, dropout=dropout
-                )
-                for _ in range(self.num_layers)
-            ]
-        )
+        # 多尺度Mamba (可选)
+        if use_multiscale:
+            self.multiscale_block = MultiScaleMambaBlock(
+                d_model=d_model,
+                num_scales=min(sample_factor, 3),  # 最多3个尺度
+                dropout=dropout
+            )
 
-        # Output projection layers
+        # 最终Mamba层
+        self.final_mamba = Mamba(d_model=d_model)
+        self.final_norm = nn.LayerNorm(d_model)
+
+        # Output projection
+        self.output_norm = nn.LayerNorm(d_model)
         self.time_proj = nn.Linear(self.seq_len, self.horizon)
         self.output_proj = nn.Linear(self.d_model, self.feature)
-
-        # Final refinement Mamba layer
-        self.final_mamba = Mamba(d_model=self.d_model)
-        self.final_norm = nn.LayerNorm(self.d_model)
 
     def forward(self, x):  # (B, T, N, F)
         B, T, N, F = x.shape
 
-        # Merge batch and nodes → treat each node independently
-        x = x.permute(0, 2, 1, 3).reshape(B * N, T, F)  # (B*N, T, F)
+        # Reshape: (B*N, T, F)
+        x = x.permute(0, 2, 1, 3).reshape(B * N, T, F)
 
         # Input projection
-        x = self.input_proj(x)  # (B*N, T, d_model)
+        x = self.input_proj(x)
+        x = self.input_norm(x)
+        x = self.input_dropout(x)
 
-        # Store original for global skip
+        # 保存输入用于层级残差
         x_input = x
 
-        # ========== Encoder Path ==========
-        skip_connections = []
-        for encoder in self.encoders:
-            skip_connections.append(x)  # Store before downsampling
-            x = encoder(x)
+        # 层级Mamba阶段
+        for stage in self.stages:
+            x = stage(x)
 
-        # ========== Bottleneck ==========
-        x = self.bottleneck(x)
+        # 多尺度融合 (如果启用)
+        if self.use_multiscale:
+            x = self.multiscale_block(x)
 
-        # ========== Decoder Path ==========
-        for i, decoder in enumerate(self.decoders):
-            # Get corresponding skip connection (reverse order)
-            skip = skip_connections[-(i + 1)]
-            x = decoder(x, skip)
-
-        # Match original sequence length if needed
-        if x.shape[1] != T:
-            x = x.permute(0, 2, 1)  # (B*N, d_model, T')
-            x = nn.functional.interpolate(x, size=T, mode="linear", align_corners=False)
-            x = x.permute(0, 2, 1)  # (B*N, T, d_model)
-
-        # Global skip connection
+        # 层级残差
         x = x + x_input
 
-        # Final refinement
-        x = self.final_mamba(x)
-        x = self.final_norm(x)
+        # 最终Mamba精修
+        x = self.final_mamba(self.final_norm(x)) + x
 
-        # Project T → H
-        x = x.permute(0, 2, 1)  # (B*N, d_model, T)
-        x = self.time_proj(x)  # (B*N, d_model, H)
-        x = x.permute(0, 2, 1)  # (B*N, H, d_model)
-
-        # Project feature back
+        # Output projection
+        x = self.output_norm(x)
+        x = x.permute(0, 2, 1)  # (B*N, D, T)
+        x = self.time_proj(x)  # (B*N, D, H)
+        x = x.permute(0, 2, 1)  # (B*N, H, D)
         x = self.output_proj(x)  # (B*N, H, F)
 
-        # Reshape back to (B, H, N, F)
+        # Reshape back: (B, H, N, F)
         x = x.reshape(B, N, self.horizon, F)
         x = x.permute(0, 2, 1, 3)
 

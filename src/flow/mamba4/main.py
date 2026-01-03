@@ -10,7 +10,7 @@ import torch
 
 torch.set_num_threads(8)
 
-from src.flow.mamba4.mamba_model import DecoupledSTMamba
+from src.flow.mamba4.mamba_model import MambaCheb
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
 from utils.log import get_logger
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
@@ -29,7 +29,7 @@ def get_config():
     parser = get_public_config()
     parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--use_spatial_mamba", type=int, default=1, help="Whether to use spatial Mamba (1=True, 0=False)")
+    parser.add_argument("--K", type=int, default=2, help="Order of Chebyshev polynomial")
     parser.add_argument("--dropout", type=float, default=0.1)
 
     parser.add_argument("--step_size", type=int, default=200)
@@ -65,7 +65,8 @@ def main():
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
-    model = DecoupledSTMamba(
+    
+    model = MambaCheb(
         node_num=node_num,
         input_dim=args.seq_len,
         output_dim=args.output_dim,
@@ -74,8 +75,8 @@ def main():
         num_layers=args.num_layers,
         d_model=args.d_model,
         feature=args.feature,
+        K=args.K,
         adj=gso,
-        use_spatial_mamba=bool(args.use_spatial_mamba),
         dropout=args.dropout,
     )
 
