@@ -167,8 +167,17 @@ class CQR_Engine(BaseEngine):
 
     def save_result(self, mids, lowers, uppers, labels):
         result = torch.stack([lowers, mids, uppers, labels], dim=0)
-        save_name = f"{self.args.model_name}-{self.args.dataset}-res.npy"
+        base_name = f"{self.args.model_name}-{self.args.dataset}-res"
+        save_name = f"{base_name}.npy"
         path = os.path.join(self._save_path, save_name)
+        
+        # 如果文件已存在，添加后缀 _1, _2, _3 ...
+        suffix = 1
+        while os.path.exists(path):
+            save_name = f"{base_name}_{suffix}.npy"
+            path = os.path.join(self._save_path, save_name)
+            suffix += 1
+        
         np.save(path, result.numpy())
         self._logger.info(
             f"Results Save Path: {path} | Shape: {result.shape} (component, batch, horizon, node, feature)"

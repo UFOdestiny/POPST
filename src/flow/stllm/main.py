@@ -28,7 +28,7 @@ def get_config():
     parser = get_public_config()
 
     # ST-LLM 模型特定参数
-    parser.add_argument("--d_model", type=int, default=128, help="模型维度")
+    parser.add_argument("--d_model", type=int, default=64, help="模型维度")
     parser.add_argument("--num_heads", type=int, default=8, help="注意力头数")
     parser.add_argument("--d_ff", type=int, default=384, help="前馈网络维度")
     parser.add_argument("--num_layers", type=int, default=4, help="ST-LLM层数")

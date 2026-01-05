@@ -29,8 +29,8 @@ def get_config():
     
     # GluonTS 模型特定参数
     parser.add_argument("--init_dim", type=int, default=32, help="初始投影维度")
-    parser.add_argument("--hid_dim", type=int, default=64, help="隐藏层维度")
-    parser.add_argument("--end_dim", type=int, default=128, help="输出层维度")
+    parser.add_argument("--hid_dim", type=int, default=32, help="隐藏层维度")
+    parser.add_argument("--end_dim", type=int, default=64, help="输出层维度")
     parser.add_argument("--num_layers", type=int, default=3, help="TCN层数")
     parser.add_argument("--kernel_size", type=int, default=3, help="卷积核大小")
     parser.add_argument("--num_heads", type=int, default=4, help="注意力头数")

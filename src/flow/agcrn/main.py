@@ -29,8 +29,8 @@ def get_config():
     parser.add_argument("--cheb_k", type=int, default=2)
 
     parser.add_argument("--lrate", type=float, default=1e-3)
-    parser.add_argument("--wdecay", type=float, default=0)
-    parser.add_argument("--clip_grad_value", type=float, default=0)
+    parser.add_argument("--wdecay", type=float, default=1e-4)
+    parser.add_argument("--clip_grad_value", type=float, default=5)
     args = parser.parse_args()
     args.model_name = "AGCRN"
     if args.quantile:

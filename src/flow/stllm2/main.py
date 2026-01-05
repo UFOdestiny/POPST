@@ -31,10 +31,10 @@ def get_config():
     parser.add_argument("--d_model", type=int, default=96, help="模型维度")
     parser.add_argument("--num_heads", type=int, default=8, help="注意力头数")
     parser.add_argument("--num_kv_heads", type=int, default=2, help="KV注意力头数(GQA)")
-    parser.add_argument("--d_ff", type=int, default=256, help="前馈网络维度")
+    parser.add_argument("--d_ff", type=int, default=64, help="前馈网络维度")
     parser.add_argument("--num_layers", type=int, default=3, help="ST-LLM2层数")
-    parser.add_argument("--num_experts", type=int, default=4, help="MoE专家数量")
-    parser.add_argument("--top_k", type=int, default=2, help="MoE激活的专家数")
+    parser.add_argument("--num_experts", type=int, default=2, help="MoE专家数量")
+    parser.add_argument("--top_k", type=int, default=1, help="MoE激活的专家数")
     parser.add_argument("--window_size", type=int, default=4, help="滑动窗口大小")
 
     # 训练参数

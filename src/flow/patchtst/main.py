@@ -30,10 +30,10 @@ def get_config():
     # PatchTST 模型特定参数
     parser.add_argument("--patch_len", type=int, default=2, help="Patch长度")
     parser.add_argument("--stride", type=int, default=1, help="Patch滑动步长")
-    parser.add_argument("--d_model", type=int, default=128, help="模型维度")
+    parser.add_argument("--d_model", type=int, default=64, help="模型维度")
     parser.add_argument("--num_heads", type=int, default=8, help="注意力头数")
-    parser.add_argument("--d_ff", type=int, default=256, help="前馈网络维度")
-    parser.add_argument("--num_layers", type=int, default=3, help="Transformer层数")
+    parser.add_argument("--d_ff", type=int, default=64, help="前馈网络维度")
+    parser.add_argument("--num_layers", type=int, default=2, help="Transformer层数")
     
     # 训练参数
     parser.add_argument("--step_size", type=int, default=200)
