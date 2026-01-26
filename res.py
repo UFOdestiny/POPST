@@ -92,8 +92,26 @@ def get_parameter(log_path):
     with open(log_path) as f:
         for line in f:
             if "Parameters" in line:
-                return line.split()[-1]
+                return str(int(line.split()[-1]) / 1000)
     return 0
+
+
+def get_memory_stats(log_path):
+    """获取Max Peak GPU Memory和Max Peak CPU Memory"""
+    gpu_mem, cpu_mem = 0.0, 0.0
+    with open(log_path) as f:
+        for line in f:
+            if "Max Peak GPU Memory:" in line:
+                try:
+                    gpu_mem = float(line.split(":")[-1].replace("MB", "").strip())
+                except ValueError:
+                    pass
+            elif "Max Peak CPU Memory:" in line:
+                try:
+                    cpu_mem = float(line.split(":")[-1].replace("MB", "").strip())
+                except ValueError:
+                    pass
+    return int(gpu_mem), int(cpu_mem)
 
 
 def collect_results(names, datasets, metrics, path, select_metric=None):
@@ -121,7 +139,16 @@ def collect_results(names, datasets, metrics, path, select_metric=None):
                 k: v for k, v in re.findall(r"(\w+): ([\-\d\.]+)", res) if k in metrics
             }
             row.update(m)
-            row.update({"time": get_time(log), "param": get_parameter(log)})
+
+            gpu_mem, cpu_mem = get_memory_stats(log)
+            row.update(
+                {
+                    "time": get_time(log),
+                    "param": get_parameter(log),
+                    "GPU_MB": gpu_mem,
+                    "CPU_MB": cpu_mem,
+                }
+            )
             rows.append(row)
     return rows
 
@@ -175,6 +202,7 @@ if __name__ == "__main__":
         "Mamba7",
     ]
 
+    names_nocqr = [i for i in names]
     names = [i + "_CQR" for i in names]
 
     metrics = ["MAE", "RMSE", "MPIW", "IS", "COV"]
@@ -182,6 +210,14 @@ if __name__ == "__main__":
     # 指定选择最优 log 的指标（选择该指标数值最低的 log），设为 None 则使用最新的 log
     select_metric = "MAE"  # 可选: "MAE", "RMSE", "MPIW", "IS", "COV" 等
 
+    datasets = ["Tallahassee"]
+    path = "/home/dy23a.fsu/st/result/mam"
+    print_df(names, datasets, metrics, path, select_metric)
+
+    # path = "/home/dy23a.fsu/st/result/tally_nocqr"
+    # print_df(names_nocqr, datasets, metrics, path, select_metric)
+
+    """
     datasets = ["safegraph_fl"]
     path = "/home/dy23a.fsu/st/result/fl"
     print_df(names, datasets, metrics, path, select_metric)
@@ -205,3 +241,4 @@ if __name__ == "__main__":
     print_df(names, datasets, metrics, path, select_metric)
     path = "/home/dy23a.fsu/st/result/mtx"
     print_df(names, datasets, metrics, path, select_metric)
+    """

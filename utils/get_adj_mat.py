@@ -107,17 +107,33 @@ if __name__ == "__main__":
     # print(f"The shape of Adjacency Matrix: {adj_mx.shape}")
     # np.save(save_path, adj_mx)
 
-    for db in ["fl","ny","ca","tx",]:
-        gdf=read_map(db,2018)
-        save_path = f"/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph_{db}/adj.npy"
-        gdf = gdf.set_geometry("geometry").sort_values(by="GEOID")
-        ctr = gdf.centroid.reset_index(drop=True)
-        N = len(ctr)
-        ph_area = list(range(N))
-        distance = []
-        for i in ph_area:
-            for j in ph_area:
-                distance.append([i, j, ctr[i].distance(ctr[j])])
-        adj_mx = get_adjacency_matrix(distance_df=distance, sensor_ids=ph_area)
-        print(db, f"The shape of Adjacency Matrix: {adj_mx.shape}")
-        np.save(save_path, adj_mx)
+    # for db in ["fl","ny","ca","tx",]:
+    #     gdf=read_map(db,2018)
+    #     save_path = f"/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph_{db}/adj.npy"
+    #     gdf = gdf.set_geometry("geometry").sort_values(by="GEOID")
+    #     ctr = gdf.centroid.reset_index(drop=True)
+    #     N = len(ctr)
+    #     ph_area = list(range(N))
+    #     distance = []
+    #     for i in ph_area:
+    #         for j in ph_area:
+    #             distance.append([i, j, ctr[i].distance(ctr[j])])
+    #     adj_mx = get_adjacency_matrix(distance_df=distance, sensor_ids=ph_area)
+    #     print(db, f"The shape of Adjacency Matrix: {adj_mx.shape}")
+    #     np.save(save_path, adj_mx)
+
+
+
+    gdf=gpd.GeoDataFrame.from_file("/blue/gtyson.fsu/dy23a.fsu/datasets/tally/tally.geojson")
+    save_path = f"/home/dy23a.fsu/st/datasets/tallahassee/adj.npy"
+    gdf = gdf.set_geometry("geometry")#.sort_values(by="GEOID")
+    ctr = gdf.centroid.reset_index(drop=True)
+    N = len(ctr)
+    ph_area = list(range(N))
+    distance = []
+    for i in ph_area:
+        for j in ph_area:
+            distance.append([i, j, ctr[i].distance(ctr[j])])
+    adj_mx = get_adjacency_matrix(distance_df=distance, sensor_ids=ph_area)
+    print(f"The shape of Adjacency Matrix: {adj_mx.shape}")
+    np.save(save_path, adj_mx)

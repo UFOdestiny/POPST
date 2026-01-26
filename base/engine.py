@@ -1,5 +1,6 @@
 import os
 import time
+import resource
 
 import numpy as np
 import torch
@@ -187,10 +188,40 @@ class BaseEngine:
         wait = 0
         min_loss_val = np.inf
         min_loss_test = np.inf
+        max_mem_usage = 0
+        max_cpu_mem_usage = 0
         for epoch in range(self._max_epochs):
+            if self._device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats(self._device)
+
             t1 = time.time()
             self.train_batch()
             t2 = time.time()
+
+            cpu_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+            max_cpu_mem_usage = max(max_cpu_mem_usage, cpu_mem)
+
+            if self._device.type == "cuda":
+                max_mem = torch.cuda.max_memory_allocated(self._device) / 1024**2
+                max_mem_usage = max(max_mem_usage, max_mem)
+                if epoch < 5:
+                    self._logger.info(
+                        "Epoch: {}, Peak GPU Memory: {:.2f} MB".format(
+                            epoch + 1, max_mem
+                        )
+                    )
+                    self._logger.info(
+                        "Epoch: {}, Peak CPU Memory: {:.2f} MB".format(
+                            epoch + 1, cpu_mem
+                        )
+                    )
+            else:
+                if epoch < 5:
+                    self._logger.info(
+                        "Epoch: {}, Peak CPU Memory: {:.2f} MB".format(
+                            epoch + 1, cpu_mem
+                        )
+                    )
 
             v1 = time.time()
             self.evaluate("val")
@@ -241,6 +272,16 @@ class BaseEngine:
                         )
                     )
                     break
+
+        with self._logger.no_time():
+            self._logger.info("\n" + "=" * 25 + "    Memory    " + "=" * 25)
+
+        if self._device.type == "cuda":
+            final_gpu = torch.cuda.max_memory_allocated(self._device) / 1024**2
+            self._logger.info("Max Peak GPU Memory: {:.2f} MB".format(final_gpu))
+
+        final_cpu = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+        self._logger.info("Max Peak CPU Memory: {:.2f} MB".format(final_cpu))
 
         self.evaluate("test", export=self.args.export)
 
@@ -314,11 +355,6 @@ class BaseEngine:
         # preds: (B, T, N, F)
         # labels: (B, T, N, F)
 
-        if preds.ndim != 4 or labels.ndim != 4:
-            raise ValueError(
-                f"Input must be 4D. Got preds {preds.shape}, labels {labels.shape}"
-            )
-
         # 5D: (1, B, T, N, F)
         preds = preds.unsqueeze(0)
         labels = labels.unsqueeze(0)
@@ -331,14 +367,14 @@ class BaseEngine:
         base_name = f"{self.args.model_name}-{self.args.dataset}-res"
         save_name = f"{base_name}.npy"
         path = os.path.join(self._save_path, save_name)
-        
+
         # 如果文件已存在，添加后缀 _1, _2, _3 ...
         suffix = 1
         while os.path.exists(path):
             save_name = f"{base_name}_{suffix}.npy"
             path = os.path.join(self._save_path, save_name)
             suffix += 1
-        
+
         np.save(path, result_np)
 
         self._logger.info(f"Results Save Path: {path}")

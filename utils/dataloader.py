@@ -272,7 +272,8 @@ def get_dataset_info(dataset):
         "Chicago": [base_dir + "chicago", base_dir + "chicago/adj.npy", 77],
         "NYISO": [base_dir + "nyiso", base_dir + "nyiso/adj.npy", 11],
         "CAISO": [base_dir + "caiso", base_dir + "caiso/adj.npy", 9],
-        "Tallahassee": [base_dir + "tallahassee", base_dir + "tallahassee/adj.npy", 9],
+        "Tallahassee": [base_dir + "Tallahassee", base_dir + "Tallahassee/adj.npy", 201],
+        "Tally_User": [base_dir + "Tally_User", base_dir + "Tally_User/adj.npy", 40000],
         "NYISO_HDM": [base_dir + "nyiso_hdm", base_dir + "nyiso/adj.npy", 11],
         "CAISO_HDM": [base_dir + "caiso_hdm", base_dir + "caiso/adj.npy", 9],
         "Tallahassee_HDM": [
