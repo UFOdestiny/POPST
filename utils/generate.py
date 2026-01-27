@@ -262,14 +262,15 @@ def generate_data_and_idx(df, x_offsets, y_offsets, add_time_of_day, add_day_of_
 
 def generate_flow(args):
     # data_path = "D:/OneDrive - Florida State University/datasets/shenzhen/shenzhen_1h/values_in.npy"
-    # data_path = "D:/OneDrive - Florida State University/datasets/nyc/flow.npy"
+    data_path = "/home/dy23a.fsu/st/datasets/nyiso/nyiso2024.npy"
     # data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph/pattern/panhandle.npy"
-    data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/tally/e2018_half.npy"
+    # data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/tally/e2018_half.npy"
 
     # data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/safegraph/tx/flow_tx.npy"
 
     # N * D * T
     data = np.load(data_path)
+    data[data < 0] = 0
     print(f"data shape: {data.shape}")
     print(f"Original max: {data.max()}, min: {data.min()}, mean: {data.mean()}")
 
@@ -453,10 +454,10 @@ def _save_indices(base_dir: Path, idx_train, idx_val, idx_test, idx_all):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--dataset", type=str, default="Tally_User", help="dataset name")
-    parser.add_argument("--years", type=str, default="2019")
-    parser.add_argument("--seq_length_x", type=int, default=12, help="sequence Length")
-    parser.add_argument("--seq_length_y", type=int, default=1, help="sequence Length")
+    parser.add_argument("--dataset", type=str, default="NYISO", help="dataset name")
+    parser.add_argument("--years", type=str, default="2018")
+    parser.add_argument("--seq_length_x", type=int, default=24, help="sequence Length")
+    parser.add_argument("--seq_length_y", type=int, default=6, help="sequence Length")
     parser.add_argument("--tod", type=int, default=1, help="time of day")
     parser.add_argument("--dow", type=int, default=1, help="day of week")
 

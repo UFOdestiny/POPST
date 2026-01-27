@@ -205,17 +205,27 @@ if __name__ == "__main__":
     names_nocqr = [i for i in names]
     names = [i + "_CQR" for i in names]
 
-    metrics = ["MAE", "RMSE", "MPIW", "IS", "COV"]
+    metrics = ["MAE", "RMSE", "MAPE", "MPIW", "IS", "COV"]
 
     # 指定选择最优 log 的指标（选择该指标数值最低的 log），设为 None 则使用最新的 log
     select_metric = "MAE"  # 可选: "MAE", "RMSE", "MPIW", "IS", "COV" 等
 
     datasets = ["Tallahassee"]
-    path = "/home/dy23a.fsu/st/result/mam"
+    path = "/home/dy23a.fsu/st/result/FL1"
     print_df(names, datasets, metrics, path, select_metric)
 
-    # path = "/home/dy23a.fsu/st/result/tally_nocqr"
-    # print_df(names_nocqr, datasets, metrics, path, select_metric)
+    datasets = ["Tallahassee"]
+    path = "/home/dy23a.fsu/st/result/FL2"
+    print_df(names, datasets, metrics, path, select_metric)
+
+    datasets = ["CAISO"]
+    path = "/home/dy23a.fsu/st/result/CA"
+    print_df(names, datasets, metrics, path, select_metric)
+
+    datasets = ["NYISO"]
+    path = "/home/dy23a.fsu/st/result/NY"
+    print_df(names, datasets, metrics, path, select_metric)
+
 
     """
     datasets = ["safegraph_fl"]
