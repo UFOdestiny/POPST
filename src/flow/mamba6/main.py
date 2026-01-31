@@ -12,7 +12,7 @@ torch.set_num_threads(8)
 
 from src.flow.mamba6.mamba_model import UNetMamba
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
-from utils.dataloader import load_dataset, get_dataset_info
+from utils.dataloader import load_dataset, get_dataset_info, load_adj_from_numpy
 from utils.log import get_logger
 
 
@@ -58,8 +58,9 @@ def main():
     set_seed(args.seed)
     device = torch.device(args.device)
 
-    data_path, _, node_num = get_dataset_info(args.dataset)
-
+    data_path, adj_path, node_num = get_dataset_info(args.dataset)
+    adj_mx = load_adj_from_numpy(adj_path)
+    
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
     model = UNetMamba(
@@ -76,6 +77,7 @@ def main():
         ffn_expand=args.ffn_expand,
         use_multiscale=args.use_multiscale,
         use_temporal_conv=args.use_temporal_conv,
+        adj_mx=adj_mx,
     )
 
     loss_fn = "MAE"

@@ -90,7 +90,10 @@ class DGCRN(BaseModel):
         self, input, Hidden_State, Cell_State, predefined_adj, type="encoder", i=None
     ):
         x = input
-        x = x.transpose(1, 2).contiguous()
+        # 确保 x 是 3D 张量 (batch, features, nodes)
+        if x.dim() == 2:
+            x = x.unsqueeze(1)  # (batch, nodes) -> (batch, 1, nodes)
+        x = x.transpose(1, 2).contiguous()  # (batch, nodes, features)
 
         nodevec1 = self.emb1(self.idx)
         nodevec2 = self.emb2(self.idx)
@@ -154,7 +157,13 @@ class DGCRN(BaseModel):
         )
 
     def compute_future_info(self, his):
-        b, _, n, _ = his.shape
+        b, f, n, t = his.shape
+        
+        # 如果特征数小于2，返回零张量作为时间信息
+        if f < 2:
+            out = torch.zeros((b, 2, n, self.seq_len), device=his.device)
+            return out
+        
         tod, dow = his[:, 0, 0, :], his[:, 1, 0, :]
         time_unit = 1 / self.tpd * self.seq_len  # seq_len horizon
         day_unit = 1 / 7
@@ -197,7 +206,7 @@ class DGCRN(BaseModel):
         for i in range(self.seq_len):
             # print(i,x.shape)
             Hidden_State, Cell_State = self.step(
-                torch.squeeze(x[..., i]),
+                x[..., i],
                 Hidden_State,
                 Cell_State,
                 self.predefined_adj,

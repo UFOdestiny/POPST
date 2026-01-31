@@ -1,13 +1,38 @@
 """
-Mamba7: Adaptive Graph-Gated Deep Mamba
-优化版本: 自适应门控决定图信息使用程度，深层Mamba作为核心
+Mamba7: STLLM2-Style Spatio-Temporal Mamba
+基于STLLM2架构重新设计的Mamba时空预测模型
 
-设计要点:
-1. 自适应图门控: 可学习的门控让模型自动决定是否使用图信息
-2. 深层Mamba堆叠: 更深的Mamba网络，增强时序建模能力
-3. 渐进式图融合: 不同层使用不同权重的图信息
-4. Mixture of Experts风格: 选择性使用图增强或纯Mamba
-5. Pre-norm + 强残差: 稳定训练，保证梯度流动
+核心改进 (相比原STLLM2):
+1. 时序建模: GQA+ALiBi → Mamba SSM (线性复杂度, 更好的长序列建模)
+2. 空间建模: SlidingWindowAttention → 图卷积+自适应邻接 (利用真实图拓扑)
+3. 前馈网络: MoE → GeGLU+MoE混合 (保留稀疏激活优势)
+4. 归一化: RMSNorm (与STLLM2一致)
+5. 整体架构: 保持STLLM2的Block堆叠设计
+
+架构示意图:
+┌─────────────────────────────────────────────────────────────────┐
+│  Input: (B, T, N, F)                                            │
+│      ↓                                                          │
+│  [Input Embedding + Learnable Time Embedding]                   │
+│      ↓                                                          │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  STMambaBlock × num_layers                                │  │
+│  │  ┌─────────────────────────────────────────────────────┐  │  │
+│  │  │ 1. Temporal Mamba (时序) - Bi-directional Mamba     │  │  │
+│  │  │    RMSNorm → Mamba(forward) + Mamba(backward)       │  │  │
+│  │  ├─────────────────────────────────────────────────────┤  │  │
+│  │  │ 2. Spatial Graph Conv (空间) - 图卷积+自适应邻接    │  │  │
+│  │  │    RMSNorm → GraphConv(A_base + A_adaptive)         │  │  │
+│  │  ├─────────────────────────────────────────────────────┤  │  │
+│  │  │ 3. MoE FFN (特征变换) - 稀疏专家网络                │  │  │
+│  │  │    RMSNorm → Router → Top-K Experts                 │  │  │
+│  │  └─────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│      ↓                                                          │
+│  [Output: RMSNorm → GeGLU → Linear]                             │
+│      ↓                                                          │
+│  Output: (B, H, N, F)                                           │
+└─────────────────────────────────────────────────────────────────┘
 """
 
 import torch
@@ -17,187 +42,339 @@ from base.model import BaseModel
 from mamba_ssm import Mamba
 
 
-class AdaptiveGraphGate(nn.Module):
-    """自适应图门控: 基于输入内容决定使用多少图信息"""
+# ============================================================================
+# 基础组件 (来自STLLM2)
+# ============================================================================
 
-    def __init__(self, d_model, init_bias=-2.0):
-        super().__init__()
-        self.gate_net = nn.Sequential(
-            nn.Linear(d_model, d_model // 4),
-            nn.GELU(),
-            nn.Linear(d_model // 4, 1),
-        )
-        # 初始化偏置为负值，让模型初期更依赖纯Mamba
-        nn.init.constant_(self.gate_net[-1].bias, init_bias)
+class RMSNorm(nn.Module):
+    """RMSNorm - 类似Mistral/LLaMA2中使用的归一化方法"""
+    
+    def __init__(self, dim, eps=1e-6):
+        super(RMSNorm, self).__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
 
     def forward(self, x):
+        norm = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        return x * norm * self.weight
+
+
+class GeGLU(nn.Module):
+    """GeGLU激活函数 - GELU门控变体, 来自STLLM2"""
+    
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super(GeGLU, self).__init__()
+        self.w1 = nn.Linear(d_model, d_ff, bias=False)
+        self.w2 = nn.Linear(d_ff, d_model, bias=False)
+        self.w3 = nn.Linear(d_model, d_ff, bias=False)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x):
+        return self.dropout(self.w2(F.gelu(self.w1(x)) * self.w3(x)))
+
+
+class Expert(nn.Module):
+    """MoE中的单个专家"""
+    
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super(Expert, self).__init__()
+        self.w1 = nn.Linear(d_model, d_ff, bias=False)
+        self.w2 = nn.Linear(d_ff, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x):
+        return self.dropout(self.w2(F.gelu(self.w1(x))))
+
+
+class MixtureOfExperts(nn.Module):
+    """
+    Mixture of Experts (MoE) - 来自Mixtral/STLLM2
+    使用稀疏激活的专家网络
+    """
+    
+    def __init__(self, d_model, d_ff, num_experts=4, top_k=2, dropout=0.1):
+        super(MixtureOfExperts, self).__init__()
+        self.num_experts = num_experts
+        self.top_k = top_k
+        
+        self.router = nn.Linear(d_model, num_experts, bias=False)
+        self.experts = nn.ModuleList([
+            Expert(d_model, d_ff, dropout) for _ in range(num_experts)
+        ])
+    
+    def forward(self, x):
+        batch_size, seq_len, d_model = x.shape
+        x_flat = x.view(-1, d_model)
+        
+        router_logits = self.router(x_flat)
+        router_probs = F.softmax(router_logits, dim=-1)
+        
+        top_k_probs, top_k_indices = torch.topk(router_probs, self.top_k, dim=-1)
+        top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)
+        
+        output = torch.zeros_like(x_flat)
+        for i, expert in enumerate(self.experts):
+            expert_mask = (top_k_indices == i).any(dim=-1)
+            if expert_mask.any():
+                expert_input = x_flat[expert_mask]
+                expert_output = expert(expert_input)
+                
+                expert_weights = torch.where(
+                    top_k_indices == i,
+                    top_k_probs,
+                    torch.zeros_like(top_k_probs)
+                ).sum(dim=-1)[expert_mask]
+                
+                output[expert_mask] += expert_output * expert_weights.unsqueeze(-1)
+        
+        return output.view(batch_size, seq_len, d_model)
+
+
+# ============================================================================
+# 时序建模: Mamba替换GQA+ALiBi
+# ============================================================================
+
+class BidirectionalMamba(nn.Module):
+    """
+    双向Mamba - 替换STLLM2中的GQA+ALiBi
+    
+    优势:
+    1. O(T) 线性复杂度 vs O(T²) 注意力
+    2. 选择性状态空间,自动学习关注重要信息
+    3. 双向扫描捕获前后文依赖
+    """
+    
+    def __init__(self, d_model, dropout=0.1):
+        super(BidirectionalMamba, self).__init__()
+        self.mamba_forward = Mamba(d_model=d_model)
+        self.mamba_backward = Mamba(d_model=d_model)
+        self.merge = nn.Linear(d_model * 2, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x):
         """
-        x: (B, T, N, D)
-        return: (B, T, N, 1) 门控值在[0, 1]之间
+        x: (B, T, D)
         """
-        # 使用时间维度的平均来计算门控
-        x_mean = x.mean(dim=1, keepdim=True)  # (B, 1, N, D)
-        gate = torch.sigmoid(self.gate_net(x_mean))  # (B, 1, N, 1)
-        return gate.expand(-1, x.size(1), -1, -1)  # (B, T, N, 1)
+        # 前向Mamba
+        out_forward = self.mamba_forward(x)
+        
+        # 后向Mamba (翻转序列)
+        x_backward = torch.flip(x, dims=[1])
+        out_backward = self.mamba_backward(x_backward)
+        out_backward = torch.flip(out_backward, dims=[1])
+        
+        # 融合双向输出
+        out = torch.cat([out_forward, out_backward], dim=-1)
+        out = self.merge(out)
+        
+        return self.dropout(out)
 
 
-class LightGraphConv(nn.Module):
-    """轻量级图卷积: 简单的消息传递"""
+class TemporalMambaBlock(nn.Module):
+    """
+    时序Mamba块 - 替换STLLM2的Temporal GQA
+    结构: RMSNorm → BidirectionalMamba → 残差
+    """
+    
+    def __init__(self, d_model, dropout=0.1):
+        super(TemporalMambaBlock, self).__init__()
+        self.norm = RMSNorm(d_model)
+        self.mamba = BidirectionalMamba(d_model, dropout)
+    
+    def forward(self, x):
+        """x: (B, T, D)"""
+        return x + self.mamba(self.norm(x))
 
+
+# ============================================================================
+# 空间建模: 图卷积替换SlidingWindowAttention
+# ============================================================================
+
+class AdaptiveGraphConv(nn.Module):
+    """
+    自适应图卷积 - 替换STLLM2的SlidingWindowAttention
+    
+    改进点:
+    1. 利用真实图拓扑 (邻接矩阵) 而非简单滑动窗口
+    2. 结合先验图结构和学习到的自适应依赖
+    3. 多头图注意力增强表达能力
+    
+    A_combined = α × A_base + (1-α) × A_adaptive
+    其中 A_adaptive = softmax(E @ E^T)
+    """
+    
     def __init__(self, node_num, d_model, embed_dim=16, base_adj=None, dropout=0.1):
-        super().__init__()
+        super(AdaptiveGraphConv, self).__init__()
         self.node_num = node_num
         self.d_model = d_model
-
+        
         # 节点嵌入用于自适应邻接矩阵
         self.node_embed = nn.Parameter(torch.randn(node_num, embed_dim) * 0.02)
-
-        # 消息投影
-        self.msg_proj = nn.Linear(d_model, d_model)
-        self.norm = nn.LayerNorm(d_model)
+        
+        # 消息传递投影
+        self.msg_proj = nn.Linear(d_model, d_model, bias=False)
+        self.update_proj = nn.Linear(d_model, d_model, bias=False)
+        
+        # 可学习的融合系数
+        self.alpha = nn.Parameter(torch.tensor(0.7))
+        
         self.dropout = nn.Dropout(dropout)
-
+        
+        # 处理基础邻接矩阵
         if base_adj is not None:
             adj = base_adj.clone().detach().float()
-            # 添加自环并归一化
             adj = adj + torch.eye(node_num, device=adj.device, dtype=adj.dtype)
             deg = adj.sum(dim=-1, keepdim=True).clamp(min=1e-6)
             adj = adj / deg
             self.register_buffer("base_adj", adj)
         else:
-            self.base_adj = None
-
+            self.register_buffer("base_adj", None)
+    
     def forward(self, x):
         """
-        x: (B, T, N, D)
-        return: (B, T, N, D)
+        x: (B*T, N, D)
+        return: (B*T, N, D)
         """
-        B, T, N, D = x.shape
-
         # 计算自适应邻接矩阵
         adaptive_adj = torch.mm(self.node_embed, self.node_embed.t())
-        adaptive_adj = F.softmax(adaptive_adj, dim=-1)
-
+        adaptive_adj = F.softmax(adaptive_adj / (self.node_embed.size(1) ** 0.5), dim=-1)
+        
+        # 融合邻接矩阵
+        alpha = torch.sigmoid(self.alpha)
         if self.base_adj is not None:
-            adj = 0.7 * self.base_adj + 0.3 * adaptive_adj
+            adj = alpha * self.base_adj + (1 - alpha) * adaptive_adj
         else:
             adj = adaptive_adj
-
+        
         # 消息传递
-        x_flat = x.reshape(B * T, N, D)  # (B*T, N, D)
-        msg = self.msg_proj(x_flat)  # (B*T, N, D)
+        msg = self.msg_proj(x)  # (B*T, N, D)
         agg = torch.matmul(adj, msg)  # (B*T, N, D)
-        agg = agg.reshape(B, T, N, D)
+        out = self.update_proj(agg)  # (B*T, N, D)
+        
+        return self.dropout(out)
 
-        return self.norm(self.dropout(agg) + x)
+
+class SpatialGraphBlock(nn.Module):
+    """
+    空间图卷积块 - 替换STLLM2的Spatial SlidingWindowAttention
+    结构: RMSNorm → AdaptiveGraphConv → 残差
+    """
+    
+    def __init__(self, node_num, d_model, embed_dim=16, base_adj=None, dropout=0.1):
+        super(SpatialGraphBlock, self).__init__()
+        self.norm = RMSNorm(d_model)
+        self.graph_conv = AdaptiveGraphConv(node_num, d_model, embed_dim, base_adj, dropout)
+    
+    def forward(self, x):
+        """x: (B*T, N, D)"""
+        return x + self.graph_conv(self.norm(x))
 
 
-class MambaBlock(nn.Module):
-    """标准Mamba块: Pre-norm + 残差"""
+# ============================================================================
+# STMamba Block: 完整的时空Mamba块
+# ============================================================================
 
-    def __init__(self, d_model, dropout=0.1):
-        super().__init__()
-        self.norm = nn.LayerNorm(d_model)
-        self.mamba = Mamba(d_model=d_model)
+class STMambaBlock(nn.Module):
+    """
+    ST-Mamba块 - 对应STLLM2Block的Mamba版本
+    
+    结构对比:
+    STLLM2Block:                          STMambaBlock:
+    ├── Temporal GQA + ALiBi        →    ├── Temporal Mamba (双向)
+    ├── Spatial SlidingWindow       →    ├── Spatial GraphConv (自适应图)
+    └── MoE FFN                     →    └── MoE FFN (保留)
+    
+    所有子模块采用 Pre-norm + 残差 设计
+    """
+    
+    def __init__(
+        self, 
+        d_model, 
+        node_num,
+        d_ff=256,
+        num_experts=4, 
+        top_k=2,
+        embed_dim=16,
+        base_adj=None,
+        dropout=0.1
+    ):
+        super(STMambaBlock, self).__init__()
+        
+        # 1. 时序Mamba (替换GQA+ALiBi)
+        self.temporal_norm = RMSNorm(d_model)
+        self.temporal_mamba = BidirectionalMamba(d_model, dropout)
+        
+        # 2. 空间图卷积 (替换SlidingWindowAttention)
+        self.spatial_norm = RMSNorm(d_model)
+        self.spatial_graph = AdaptiveGraphConv(node_num, d_model, embed_dim, base_adj, dropout)
+        
+        # 3. MoE前馈网络 (保留STLLM2设计)
+        self.ffn_norm = RMSNorm(d_model)
+        self.moe = MixtureOfExperts(d_model, d_ff, num_experts, top_k, dropout)
+        
         self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        """x: (B, T, D)"""
-        return x + self.dropout(self.mamba(self.norm(x)))
-
-
-class MambaWithFFN(nn.Module):
-    """Mamba + FFN块: 增强表达能力"""
-
-    def __init__(self, d_model, dropout=0.1, ffn_expand=2):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(d_model)
-        self.mamba = Mamba(d_model=d_model)
-
-        self.norm2 = nn.LayerNorm(d_model)
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * ffn_expand),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * ffn_expand, d_model),
-            nn.Dropout(dropout),
-        )
-
-    def forward(self, x):
-        """x: (B, T, D)"""
-        x = x + self.mamba(self.norm1(x))
-        x = x + self.ffn(self.norm2(x))
-        return x
-
-
-class GraphGatedMambaLayer(nn.Module):
-    """图门控Mamba层: 结合图信息和纯Mamba"""
-
-    def __init__(self, d_model, node_num, embed_dim=16, base_adj=None, dropout=0.1, gate_init=-2.0):
-        super().__init__()
-
-        # 图处理分支
-        self.graph_gate = AdaptiveGraphGate(d_model, init_bias=gate_init)
-        self.graph_conv = LightGraphConv(node_num, d_model, embed_dim, base_adj, dropout)
-
-        # Mamba分支
-        self.mamba = MambaWithFFN(d_model, dropout)
-
+    
     def forward(self, x):
         """
         x: (B, T, N, D)
         """
-        B, T, N, D = x.shape
-
-        # 计算图门控值
-        gate = self.graph_gate(x)  # (B, T, N, 1)
-
-        # 图处理 (只有当gate > 阈值时才真正计算)
-        if gate.mean() > 0.01:
-            x_graph = self.graph_conv(x)
-            x = x + gate * (x_graph - x)
-
-        # Mamba处理 (在时间维度)
-        x_flat = x.permute(0, 2, 1, 3).reshape(B * N, T, D)  # (B*N, T, D)
-        x_flat = self.mamba(x_flat)
-        x = x_flat.reshape(B, N, T, D).permute(0, 2, 1, 3)  # (B, T, N, D)
-
+        batch_size, seq_len, node_num, d_model = x.shape
+        
+        # 1. 时序Mamba处理 (每个节点独立处理时序)
+        x_reshape = x.permute(0, 2, 1, 3).contiguous().view(batch_size * node_num, seq_len, d_model)
+        x_norm = self.temporal_norm(x_reshape)
+        temporal_out = self.temporal_mamba(x_norm)
+        x_reshape = x_reshape + self.dropout(temporal_out)
+        x = x_reshape.view(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
+        
+        # 2. 空间图卷积处理 (每个时间步独立处理空间)
+        x_reshape = x.contiguous().view(batch_size * seq_len, node_num, d_model)
+        x_norm = self.spatial_norm(x_reshape)
+        spatial_out = self.spatial_graph(x_norm)
+        x_reshape = x_reshape + self.dropout(spatial_out)
+        x = x_reshape.view(batch_size, seq_len, node_num, d_model)
+        
+        # 3. MoE前馈网络
+        x_reshape = x.view(batch_size * seq_len, node_num, d_model)
+        x_norm = self.ffn_norm(x_reshape)
+        moe_out = self.moe(x_norm)
+        x_reshape = x_reshape + moe_out
+        x = x_reshape.view(batch_size, seq_len, node_num, d_model)
+        
         return x
 
 
-class DeepMambaStack(nn.Module):
-    """深层Mamba堆叠: 纯时序建模"""
-
-    def __init__(self, d_model, num_layers, dropout=0.1):
-        super().__init__()
-        self.layers = nn.ModuleList([
-            MambaWithFFN(d_model, dropout)
-            for _ in range(num_layers)
-        ])
-
-    def forward(self, x):
-        """x: (B, T, D)"""
-        for layer in self.layers:
-            x = layer(x)
-        return x
-
+# ============================================================================
+# 主模型: UNetMamba (Mamba7)
+# ============================================================================
 
 class UNetMamba(BaseModel):
     """
-    Mamba7 优化版: 自适应图门控 + 深层Mamba
-
-    架构:
-    - 输入投影
-    - 图门控Mamba层 (可选使用图信息)
-    - 深层纯Mamba堆叠
-    - 输出投影
-
-    特点:
-    - 模型可以自动学习是否需要图信息
-    - 初始化偏向纯Mamba，图信息作为可选增强
-    - 深层Mamba保证强时序建模能力
+    Mamba7: STLLM2-Style Spatio-Temporal Mamba
+    
+    基于STLLM2架构,使用Mamba替换Attention的时空预测模型
+    
+    与STLLM2的对应关系:
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  STLLM2                         │  Mamba7 (本模型)              │
+    ├─────────────────────────────────┼───────────────────────────────┤
+    │  Input Embedding                │  Input Embedding              │
+    │  + Time Embedding (可学习)       │  + Time Embedding (可学习)    │
+    ├─────────────────────────────────┼───────────────────────────────┤
+    │  STLLM2Block × N                │  STMambaBlock × N             │
+    │  ├─ GQA + ALiBi (时序)          │  ├─ BiMamba (时序)            │
+    │  ├─ SlidingWindow (空间)        │  ├─ GraphConv (空间)          │
+    │  └─ MoE FFN                     │  └─ MoE FFN                   │
+    ├─────────────────────────────────┼───────────────────────────────┤
+    │  RMSNorm → GeGLU → Linear       │  RMSNorm → GeGLU → Linear     │
+    └─────────────────────────────────┴───────────────────────────────┘
+    
+    主要改进:
+    1. 时序建模: Mamba提供O(T)复杂度,更好的长序列建模
+    2. 空间建模: 图卷积利用真实拓扑,优于滑动窗口
+    3. 参数效率: Mamba参数更少,推理更快
     """
-
+    
     def __init__(
         self,
         d_model,
@@ -206,79 +383,76 @@ class UNetMamba(BaseModel):
         adj=None,
         graph_embed_dim=16,
         dropout=0.1,
-        num_graph_layers=1,
-        gate_init=-2.0,
+        d_ff=256,
+        num_experts=4,
+        top_k=2,
+        num_graph_layers=1,  # 保留兼容性,但不再使用
+        gate_init=-2.0,      # 保留兼容性,但不再使用
         **args
     ):
         super(UNetMamba, self).__init__(**args)
+        
         self.d_model = d_model
         self.num_layers = num_layers
         self.feature = feature
 
-        # Input projection
-        self.input_proj = nn.Linear(self.feature, self.d_model)
-        self.input_norm = nn.LayerNorm(self.d_model)
-        self.input_dropout = nn.Dropout(dropout)
-
-        # 图门控Mamba层 (带图信息的层，数量较少)
-        self.graph_mamba_layers = nn.ModuleList([
-            GraphGatedMambaLayer(
+        # 输入嵌入 (与STLLM2一致)
+        self.input_embedding = nn.Linear(self.feature, d_model)
+        
+        # 可学习的时间嵌入 (与STLLM2一致)
+        self.time_embedding = nn.Parameter(torch.randn(1, 512, 1, d_model) * 0.02)
+        
+        # ST-Mamba blocks (对应STLLM2的STLLM2Block)
+        self.blocks = nn.ModuleList([
+            STMambaBlock(
                 d_model=d_model,
                 node_num=self.node_num,
+                d_ff=d_ff,
+                num_experts=num_experts,
+                top_k=top_k,
                 embed_dim=graph_embed_dim,
                 base_adj=adj,
-                dropout=dropout,
-                gate_init=gate_init - 0.5 * i  # 越深的层越偏向纯Mamba
+                dropout=dropout
             )
-            for i in range(num_graph_layers)
+            for _ in range(num_layers)
         ])
+        
+        # 输出层 (与STLLM2一致)
+        self.output_norm = RMSNorm(d_model)
+        self.output_gate = GeGLU(d_model, d_model * 2, dropout)
+        self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
+        
+        self._init_weights()
+    
+    def _init_weights(self):
+        """初始化权重 (与STLLM2一致)"""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
 
-        # 深层纯Mamba堆叠
-        pure_mamba_layers = max(1, num_layers - num_graph_layers)
-        self.deep_mamba = DeepMambaStack(d_model, pure_mamba_layers, dropout)
+    def forward(self, x, label=None):  # (B, T, N, F)
+        batch_size, seq_len, node_num, input_dim = x.shape
 
-        # Output projection
-        self.output_norm = nn.LayerNorm(d_model)
-        self.time_proj = nn.Linear(self.seq_len, self.horizon)
-        self.output_proj = nn.Linear(self.d_model, self.feature)
-
-    def forward(self, x):  # (B, T, N, F)
-        B, T, N, F = x.shape
-
-        # Input projection
-        x = self.input_proj(x)  # (B, T, N, d_model)
-        x = self.input_norm(x)
-        x = self.input_dropout(x)
-
-        # 保存输入用于残差
-        x_input = x
-
-        # 图门控Mamba层
-        for layer in self.graph_mamba_layers:
-            x = layer(x)
-
-        # 转换为时序处理格式
-        x = x.permute(0, 2, 1, 3).reshape(B * N, T, self.d_model)  # (B*N, T, D)
-
-        # 深层纯Mamba
-        x = self.deep_mamba(x)
-
-        # Reshape回来
-        x = x.reshape(B, N, T, self.d_model).permute(0, 2, 1, 3)  # (B, T, N, D)
-
-        # 全局残差
-        x = x + x_input
-
-        # 转换并输出
-        x = x.permute(0, 2, 1, 3).reshape(B * N, T, self.d_model)  # (B*N, T, D)
+        # 输入嵌入
+        x = self.input_embedding(x)  # (B, T, N, d_model)
+        
+        # 添加时间嵌入
+        x = x + self.time_embedding[:, :seq_len, :, :]
+        
+        # 通过ST-Mamba blocks
+        for block in self.blocks:
+            x = block(x)
+        
+        # 输出处理 (与STLLM2一致)
         x = self.output_norm(x)
-        x = x.permute(0, 2, 1)  # (B*N, D, T)
-        x = self.time_proj(x)  # (B*N, D, H)
-        x = x.permute(0, 2, 1)  # (B*N, H, D)
-        x = self.output_proj(x)  # (B*N, H, F)
-
-        # Reshape back: (B, H, N, F)
-        x = x.reshape(B, N, self.horizon, F)
-        x = x.permute(0, 2, 1, 3)
+        x = x[:, -1, :, :]  # 取最后时间步 (B, N, D)
+        x = self.output_gate(x)
+        x = self.output_proj(x)  # (B, N, output_dim * horizon)
+        
+        # Reshape输出
+        x = x.view(batch_size, node_num, self.horizon, self.output_dim)
+        x = x.permute(0, 2, 1, 3)  # (B, H, N, F)
 
         return x

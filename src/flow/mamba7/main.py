@@ -27,17 +27,28 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--num_layers", type=int, default=4)
-    parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--graph_embed_dim", type=int, default=16)
-    parser.add_argument("--dropout", type=float, default=0.1)
+    
+    # 模型结构参数 (对应STLLM2风格)
+    parser.add_argument("--num_layers", type=int, default=3, help="ST-Mamba块数量")
+    parser.add_argument("--d_model", type=int, default=96, help="模型维度")
+    parser.add_argument("--d_ff", type=int, default=256, help="FFN/MoE中间维度")
+    parser.add_argument("--graph_embed_dim", type=int, default=16, help="图嵌入维度")
+    parser.add_argument("--dropout", type=float, default=0.3, help="Dropout率")
+    
+    # MoE参数
+    parser.add_argument("--num_experts", type=int, default=4, help="MoE专家数量")
+    parser.add_argument("--top_k", type=int, default=2, help="MoE激活的专家数")
+    
+    # 兼容性参数 (保留但不再使用)
     parser.add_argument("--num_graph_layers", type=int, default=1)
     parser.add_argument("--gate_init", type=float, default=-2.0)
 
+    # 训练参数
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
-    parser.add_argument("--wdecay", type=float, default=5e-4)
+    parser.add_argument("--wdecay", type=float, default=1e-4)
+    parser.add_argument("--clip_grad_value", type=float, default=5)
     args = parser.parse_args()
 
     args.model_name = "Mamba7"
@@ -79,14 +90,23 @@ def main():
         adj=gso,
         graph_embed_dim=args.graph_embed_dim,
         dropout=args.dropout,
-        num_graph_layers=args.num_graph_layers,
-        gate_init=args.gate_init,
+        d_ff=args.d_ff,
+        num_experts=args.num_experts,
+        top_k=args.top_k,
     )
 
+    # 打印模型参数量
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Total parameters: {total_params:,}")
+    logger.info(f"Trainable parameters: {trainable_params:,}")
+
     loss_fn = "MAE"
-    optimizer = torch.optim.Adam(model.parameters())
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=args.step_size, gamma=args.gamma
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=args.lrate, weight_decay=args.wdecay
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.max_epochs, eta_min=1e-6
     )
 
     engine = engine_template(

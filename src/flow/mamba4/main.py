@@ -10,11 +10,10 @@ import torch
 
 torch.set_num_threads(8)
 
-from src.flow.mamba4.mamba_model import MambaCheb
+from src.flow.mamba4.mamba_model import UNetMamba
 from utils.args import get_public_config, get_log_path, print_args, check_quantile
 from utils.log import get_logger
-from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
-from utils.graph_algo import normalize_adj_mx
+from utils.dataloader import load_dataset, get_dataset_info
 
 
 def set_seed(seed):
@@ -27,15 +26,32 @@ def set_seed(seed):
 
 def get_config():
     parser = get_public_config()
-    parser.add_argument("--num_layers", type=int, default=4)
-    parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--K", type=int, default=2, help="Order of Chebyshev polynomial")
-    parser.add_argument("--dropout", type=float, default=0.1)
+    
+    # 模型结构参数 (与STLLM2对齐)
+    parser.add_argument("--num_layers", type=int, default=3, help="ST-Mamba块数量")
+    parser.add_argument("--d_model", type=int, default=96, help="模型维度")
+    parser.add_argument("--num_heads", type=int, default=8, help="空间注意力头数")
+    parser.add_argument("--d_ff", type=int, default=256, help="FFN/MoE中间维度")
+    parser.add_argument("--dropout", type=float, default=0.3, help="Dropout率")
+    
+    # MoE参数
+    parser.add_argument("--num_experts", type=int, default=4, help="MoE专家数量")
+    parser.add_argument("--top_k", type=int, default=2, help="MoE激活的专家数")
+    
+    # 空间注意力参数 (保留STLLM2设计)
+    parser.add_argument("--window_size", type=int, default=4, help="滑动窗口大小")
+    
+    # Mamba特有参数
+    parser.add_argument("--d_state", type=int, default=16, help="Mamba SSM状态维度")
+    parser.add_argument("--d_conv", type=int, default=4, help="Mamba局部卷积宽度")
+    parser.add_argument("--expand", type=int, default=2, help="Mamba内部扩展因子")
 
+    # 训练参数
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
-    parser.add_argument("--wdecay", type=float, default=5e-4)
+    parser.add_argument("--wdecay", type=float, default=1e-4)
+    parser.add_argument("--clip_grad_value", type=float, default=5)
     args = parser.parse_args()
 
     args.model_name = "Mamba4"
@@ -56,34 +72,43 @@ def main():
     set_seed(args.seed)
     device = torch.device(args.device)
 
-    data_path, adj_path, node_num = get_dataset_info(args.dataset)
-    adj_mx = load_adj_from_numpy(adj_path)
-    adj_mx = adj_mx - np.eye(node_num)
-
-    gso = normalize_adj_mx(adj_mx, "scalap")[0]
-    gso = torch.tensor(gso).to(device)
+    data_path, _, node_num = get_dataset_info(args.dataset)
 
     dataloader, scaler = load_dataset(data_path, args, logger)
     args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
-    
-    model = MambaCheb(
+    model = UNetMamba(
         node_num=node_num,
-        input_dim=args.seq_len,
+        input_dim=args.input_dim,
         output_dim=args.output_dim,
         seq_len=args.seq_len,
         horizon=args.horizon,
+        # 模型结构参数 (与STLLM2对齐)
         num_layers=args.num_layers,
         d_model=args.d_model,
-        feature=args.feature,
-        K=args.K,
-        adj=gso,
+        num_heads=args.num_heads,
+        d_ff=args.d_ff,
+        num_experts=args.num_experts,
+        top_k=args.top_k,
+        window_size=args.window_size,
+        # Mamba特有参数
+        d_state=args.d_state,
+        d_conv=args.d_conv,
+        expand=args.expand,
         dropout=args.dropout,
     )
 
+    # 打印模型参数量
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Total parameters: {total_params:,}")
+    logger.info(f"Trainable parameters: {trainable_params:,}")
+
     loss_fn = "MAE"
-    optimizer = torch.optim.Adam(model.parameters())
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=args.step_size, gamma=args.gamma
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=args.lrate, weight_decay=args.wdecay
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.max_epochs, eta_min=1e-6
     )
 
     engine = engine_template(
@@ -96,7 +121,7 @@ def main():
         lrate=args.lrate,
         optimizer=optimizer,
         scheduler=scheduler,
-        clip_grad_value=0,
+        clip_grad_value=args.clip_grad_value,
         max_epochs=args.max_epochs,
         patience=args.patience,
         log_dir=log_dir,

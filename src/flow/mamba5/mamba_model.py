@@ -1,227 +1,287 @@
-"""
-Mamba5: Bidirectional Mamba with Optional Light Graph Guidance
-优化版本: 核心强调纯Mamba的时序建模，图信息作为可选的轻量级增强
-
-设计要点:
-1. 双向Mamba: 同时捕获前向和后向的时序依赖
-2. 深层残差Mamba堆叠: 更深的网络 + 强残差连接
-3. 可学习图门控: 模型可以自动关闭图信息退化为纯Mamba
-4. Pre-norm设计: 更稳定的训练
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from base.model import BaseModel
 from mamba_ssm import Mamba
 
+class RMSNorm(nn.Module):
+    """RMSNorm - 类似Mistral/LLaMA2中使用的归一化方法"""
+    def __init__(self, dim, eps=1e-6):
+        super(RMSNorm, self).__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
 
-class GraphGate(nn.Module):
-    """可学习图门控：让模型决定使用多少图信息，初始偏向纯Mamba"""
+    def forward(self, x):
+        norm = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        return x * norm * self.weight
 
-    def __init__(self, d_model, init_gate=-3.0):
+class SlidingWindowAttention(nn.Module):
+    """
+    滑动窗口注意力 - 来自Mistral
+    限制注意力范围以提高效率
+    """
+    def __init__(self, d_model, num_heads, window_size=4, dropout=0.1):
+        super(SlidingWindowAttention, self).__init__()
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.window_size = window_size
+        
+        self.q_proj = nn.Linear(d_model, d_model, bias=False)
+        self.k_proj = nn.Linear(d_model, d_model, bias=False)
+        self.v_proj = nn.Linear(d_model, d_model, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+    
+    def _create_sliding_window_mask(self, seq_len, device):
+        """创建滑动窗口掩码"""
+        mask = torch.ones(seq_len, seq_len, device=device) * float('-inf')
+        for i in range(seq_len):
+            start = max(0, i - self.window_size)
+            end = min(seq_len, i + self.window_size + 1)
+            mask[i, start:end] = 0
+        return mask
+    
+    def forward(self, x):
+        batch_size, seq_len, _ = x.shape
+        
+        q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        
+        # 应用滑动窗口掩码
+        window_mask = self._create_sliding_window_mask(seq_len, x.device)
+        attn = attn + window_mask.unsqueeze(0).unsqueeze(0)
+        
+        attn = F.softmax(attn, dim=-1)
+        attn = self.dropout(attn)
+        
+        out = (attn @ v).transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
+        return self.out_proj(out)
+
+class Expert(nn.Module):
+    """MoE中的单个专家"""
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super(Expert, self).__init__()
+        self.w1 = nn.Linear(d_model, d_ff, bias=False)
+        self.w2 = nn.Linear(d_ff, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x):
+        return self.dropout(self.w2(F.gelu(self.w1(x))))
+
+class MixtureOfExperts(nn.Module):
+    """
+    Mixture of Experts (MoE) - 来自Mixtral
+    使用稀疏激活的专家网络
+    """
+    def __init__(self, d_model, d_ff, num_experts=4, top_k=2, dropout=0.1):
+        super(MixtureOfExperts, self).__init__()
+        self.num_experts = num_experts
+        self.top_k = top_k
+        
+        # 路由网络
+        self.router = nn.Linear(d_model, num_experts, bias=False)
+        
+        # 专家网络
+        self.experts = nn.ModuleList([
+            Expert(d_model, d_ff, dropout) for _ in range(num_experts)
+        ])
+    
+    def forward(self, x):
+        batch_size, seq_len, d_model = x.shape
+        x_flat = x.view(-1, d_model)  # (batch * seq, d_model)
+        
+        # 计算路由分数
+        router_logits = self.router(x_flat)  # (batch * seq, num_experts)
+        router_probs = F.softmax(router_logits, dim=-1)
+        
+        # 选择top-k专家
+        top_k_probs, top_k_indices = torch.topk(router_probs, self.top_k, dim=-1)
+        top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)  # 归一化
+        
+        # 计算专家输出
+        output = torch.zeros_like(x_flat)
+        for i, expert in enumerate(self.experts):
+            # 找到选择了这个专家的token
+            expert_mask = (top_k_indices == i).any(dim=-1)
+            if expert_mask.any():
+                expert_input = x_flat[expert_mask]
+                expert_output = expert(expert_input)
+                
+                # 获取这个专家的权重
+                expert_weights = torch.where(
+                    top_k_indices == i,
+                    top_k_probs,
+                    torch.zeros_like(top_k_probs)
+                ).sum(dim=-1)[expert_mask]
+                
+                output[expert_mask] += expert_output * expert_weights.unsqueeze(-1)
+        
+        return output.view(batch_size, seq_len, d_model)
+
+class GeGLU(nn.Module):
+    """GeGLU激活函数 - GELU门控变体"""
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super(GeGLU, self).__init__()
+        self.w1 = nn.Linear(d_model, d_ff, bias=False)
+        self.w2 = nn.Linear(d_ff, d_model, bias=False)
+        self.w3 = nn.Linear(d_model, d_ff, bias=False)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x):
+        return self.dropout(self.w2(F.gelu(self.w1(x)) * self.w3(x)))
+
+class BidirectionalMamba(nn.Module):
+    def __init__(self, d_model, d_state=16, d_conv=4, expand=2, dropout=0.1):
         super().__init__()
-        self.gate = nn.Parameter(torch.tensor(init_gate))
-
-    def forward(self):
-        return torch.sigmoid(self.gate)
-
-
-class LightGraphMixer(nn.Module):
-    """轻量级图混合: 简单的一跳消息传递，可通过门控关闭"""
-
-    def __init__(self, node_num, embed_dim=16, base_adj=None):
-        super().__init__()
-        self.node_num = node_num
-
-        # 可学习节点嵌入（用于自适应邻接矩阵）
-        self.node_embed = nn.Parameter(torch.randn(node_num, embed_dim) * 0.02)
-
-        if base_adj is not None:
-            # 归一化base_adj
-            adj = base_adj.clone().detach().float()
-            adj = adj + torch.eye(node_num, device=adj.device, dtype=adj.dtype)
-            deg = adj.sum(dim=-1, keepdim=True).clamp(min=1e-6)
-            adj = adj / deg
-            self.register_buffer("base_adj", adj)
-        else:
-            self.base_adj = None
-
-    def forward(self):
-        # 自适应邻接矩阵
-        adaptive_adj = torch.mm(self.node_embed, self.node_embed.t())
-        adaptive_adj = F.softmax(adaptive_adj, dim=-1)
-
-        if self.base_adj is not None:
-            # 融合基础图和自适应图
-            adj = 0.5 * self.base_adj + 0.5 * adaptive_adj
-        else:
-            adj = adaptive_adj
-        return adj
-
-
-class BidirectionalMambaBlock(nn.Module):
-    """双向Mamba块: 同时建模前向和后向时序依赖"""
-
-    def __init__(self, d_model, dropout=0.1):
-        super().__init__()
-        self.norm = nn.LayerNorm(d_model)
-        self.mamba_fwd = Mamba(d_model=d_model)
-        self.mamba_bwd = Mamba(d_model=d_model)
-        self.fusion = nn.Linear(d_model * 2, d_model)
+        self.fwd_mamba = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        self.bwd_mamba = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        self.out_proj = nn.Linear(d_model * 2, d_model, bias=False)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        """x: (B, T, D)"""
-        residual = x
-        x = self.norm(x)
+        # x: [B, L, D]
+        fwd = self.fwd_mamba(x)
+        bwd = self.bwd_mamba(x.flip([1])).flip([1])
+        out = torch.cat([fwd, bwd], dim=-1)
+        out = self.out_proj(out)
+        return self.dropout(out)
 
-        # 前向Mamba
-        x_fwd = self.mamba_fwd(x)
-
-        # 后向Mamba (翻转 -> 处理 -> 翻转回来)
-        x_bwd = torch.flip(x, dims=[1])
-        x_bwd = self.mamba_bwd(x_bwd)
-        x_bwd = torch.flip(x_bwd, dims=[1])
-
-        # 融合双向信息
-        x_cat = torch.cat([x_fwd, x_bwd], dim=-1)
-        x = self.fusion(x_cat)
-        x = self.dropout(x)
-
-        return x + residual
-
-
-class DeepMambaBlock(nn.Module):
-    """深层Mamba块: 单向Mamba + 前馈层，Pre-norm设计"""
-
-    def __init__(self, d_model, dropout=0.1, expand=2):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(d_model)
-        self.mamba = Mamba(d_model=d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * expand),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * expand, d_model),
-            nn.Dropout(dropout),
+class Mamba5Block(nn.Module):
+    """
+    Mamba5 Block
+    Temporal: Bidirectional Mamba
+    Spatial: Sliding Window Attention
+    FFN: MoE
+    """
+    def __init__(self, d_model, num_heads, d_ff, 
+                 num_experts=4, top_k=2, window_size=4, dropout=0.1, 
+                 d_state=16, d_conv=4, expand=2):
+        super(Mamba5Block, self).__init__()
+        
+        # 时序混合: Bidirectional Mamba
+        self.temporal_norm = RMSNorm(d_model)
+        self.temporal_mixer = BidirectionalMamba(d_model, d_state, d_conv, expand, dropout)
+        
+        # 空间混合: 滑动窗口注意力 (保留STLLM2的设计)
+        self.spatial_norm = RMSNorm(d_model)
+        self.spatial_attn = SlidingWindowAttention(
+            d_model, num_heads, window_size, dropout
         )
-
+        
+        # MoE前馈网络
+        self.ffn_norm = RMSNorm(d_model)
+        self.moe = MixtureOfExperts(d_model, d_ff, num_experts, top_k, dropout)
+        
+        self.dropout = nn.Dropout(dropout)
+    
     def forward(self, x):
-        """x: (B, T, D)"""
-        # Mamba with pre-norm
-        x = x + self.mamba(self.norm1(x))
-        # FFN with pre-norm
-        x = x + self.ffn(self.norm2(x))
+        batch_size, seq_len, node_num, d_model = x.shape
+        
+        # Temporal Mamba (per node)
+        x_reshape = x.permute(0, 2, 1, 3).contiguous().view(batch_size * node_num, seq_len, d_model)
+        x_norm = self.temporal_norm(x_reshape)
+        temporal_out = self.temporal_mixer(x_norm)
+        x_reshape = x_reshape + temporal_out
+        x = x_reshape.view(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
+        
+        # Spatial Sliding Window Attention (per timestamp)
+        x_reshape = x.contiguous().view(batch_size * seq_len, node_num, d_model)
+        x_norm = self.spatial_norm(x_reshape)
+        spatial_out = self.spatial_attn(x_norm)
+        x_reshape = x_reshape + self.dropout(spatial_out)
+        x = x_reshape.view(batch_size, seq_len, node_num, d_model)
+        
+        # MoE前馈网络
+        x_reshape = x.view(batch_size * seq_len, node_num, d_model)
+        x_norm = self.ffn_norm(x_reshape)
+        moe_out = self.moe(x_norm)
+        x_reshape = x_reshape + moe_out
+        x = x_reshape.view(batch_size, seq_len, node_num, d_model)
+        
         return x
 
-
-class UNetMamba(BaseModel):
+class Mamba5(BaseModel):
     """
-    Mamba5 优化版: 双向深层Mamba + 可选图增强
-
-    架构:
-    - 输入投影 + 可选轻量图混合
-    - 双向Mamba层 (捕获双向时序)
-    - 深层Mamba堆叠 (增强表达能力)
-    - 输出投影
+    Mamba5: 基于STLLM2架构的Mamba改进版
+    特点:
+    1. 使用双向Mamba替代Temporal GQA
+    2. 保留Spatial Sliding Window Attention
+    3. 保留MoE FFN
     """
-
     def __init__(
         self,
-        d_model,
-        num_layers,
-        feature,
-        adj=None,
-        graph_embed_dim=16,
+        d_model=96,
+        num_heads=8,
+        d_ff=256,
+        num_layers=3,
+        num_experts=4,
+        top_k=2,
+        window_size=4,
         dropout=0.1,
-        use_bidirectional=True,
-        ffn_expand=2,
+        d_state=16,
+        d_conv=4,
+        expand=2,
         **args
     ):
-        super(UNetMamba, self).__init__(**args)
+        super(Mamba5, self).__init__(**args)
+        
         self.d_model = d_model
-        self.num_layers = num_layers
-        self.feature = feature
-        self.use_bidirectional = use_bidirectional
-
-        # Input projection
-        self.input_proj = nn.Linear(self.feature, self.d_model)
-        self.input_norm = nn.LayerNorm(self.d_model)
-
-        # 可学习图门控 (初始化为偏向关闭)
-        self.graph_gate = GraphGate(d_model, init_gate=-3.0)
-
-        # 轻量级图混合器
-        self.graph_mixer = LightGraphMixer(
-            node_num=self.node_num,
-            embed_dim=graph_embed_dim,
-            base_adj=adj,
-        )
-
-        # 双向Mamba层 (如果启用)
-        if use_bidirectional:
-            self.bidirectional_block = BidirectionalMambaBlock(d_model, dropout)
-
-        # 深层Mamba堆叠
-        self.mamba_blocks = nn.ModuleList([
-            DeepMambaBlock(d_model, dropout, expand=ffn_expand)
+        
+        # 输入嵌入
+        self.input_embedding = nn.Linear(self.input_dim, d_model)
+        
+        # 可学习的时间嵌入 (保留STLLM2设计)
+        self.time_embedding = nn.Parameter(torch.randn(1, 512, 1, d_model) * 0.02)
+        
+        # Mamba5 Blocks
+        self.blocks = nn.ModuleList([
+            Mamba5Block(
+                d_model, num_heads, d_ff,
+                num_experts, top_k, window_size, dropout,
+                d_state, d_conv, expand
+            )
             for _ in range(num_layers)
         ])
-
+        
         # 输出层
-        self.output_norm = nn.LayerNorm(d_model)
-        self.time_proj = nn.Linear(self.seq_len, self.horizon)
-        self.output_proj = nn.Linear(self.d_model, self.feature)
-
-    def apply_graph_mixing(self, x, gate_value):
-        """应用可门控的图混合"""
-        if gate_value < 0.01:  # 门控值很小时跳过计算
-            return x
-
-        adj = self.graph_mixer()
-        # x: (B, T, N, D)
-        graph_x = torch.einsum("ij,btjd->btid", adj, x)
-        return x + gate_value * (graph_x - x)
-
-    def forward(self, x):  # (B, T, N, F)
-        B, T, N, F = x.shape
-
-        # Input projection
-        x = self.input_proj(x)  # (B, T, N, d_model)
-        x = self.input_norm(x)
-
-        # 可选图混合 (通过门控控制)
-        gate_value = self.graph_gate()
-        x = self.apply_graph_mixing(x, gate_value)
-
-        # Reshape for temporal processing: (B*N, T, D)
-        x = x.permute(0, 2, 1, 3).reshape(B * N, T, self.d_model)
-
-        # 保存用于残差
-        x_input = x
-
-        # 双向Mamba (如果启用)
-        if self.use_bidirectional:
-            x = self.bidirectional_block(x)
-
-        # 深层Mamba堆叠
-        for block in self.mamba_blocks:
+        self.output_norm = RMSNorm(d_model)
+        self.output_gate = GeGLU(d_model, d_model * 2, dropout)
+        self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
+        
+        self._init_weights()
+    
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+    
+    def forward(self, x, label=None):
+        batch_size, seq_len, node_num, input_dim = x.shape
+        
+        # 输入嵌入
+        x = self.input_embedding(x)
+        
+        # 添加时间嵌入
+        x = x + self.time_embedding[:, :seq_len, :, :]
+        
+        # 通过Blocks
+        for block in self.blocks:
             x = block(x)
-
-        # 全局残差连接
-        x = x + x_input
-
-        # Output projection
+        
+        # 输出
         x = self.output_norm(x)
-        x = x.permute(0, 2, 1)  # (B*N, D, T)
-        x = self.time_proj(x)  # (B*N, D, H)
-        x = x.permute(0, 2, 1)  # (B*N, H, D)
-        x = self.output_proj(x)  # (B*N, H, F)
-
-        # Reshape back to (B, H, N, F)
-        x = x.reshape(B, N, self.horizon, F)
+        x = x[:, -1, :, :]  # 取最后时间步
+        x = self.output_gate(x)
+        x = self.output_proj(x)
+        
+        x = x.view(batch_size, node_num, self.horizon, self.output_dim)
         x = x.permute(0, 2, 1, 3)
-
+        
         return x

@@ -11,9 +11,21 @@ from base.metrics import Metrics
 
 
 class QuantileOutputLayer(nn.Module):
-    def __init__(self, feature_dim: int, hidden_dim: Optional[int] = None):
+    def __init__(
+        self,
+        feature_dim: int,
+        hidden_dim: Optional[int] = None,
+        init_width: float = 0.1,
+        min_width: float = 1e-3,
+        learnable_mid: bool = False,
+    ):
         super().__init__()
         self.feature_dim = feature_dim
+        self.min_width = min_width
+        self.learnable_mid = learnable_mid
+
+        # 输出维度：2（lower_delta, upper_delta）或 3（包含 mid_delta）
+        out_channels = 3 if learnable_mid else 2
 
         layers = []
         in_dim = feature_dim
@@ -21,18 +33,42 @@ class QuantileOutputLayer(nn.Module):
             layers.append(nn.Linear(in_dim, hidden_dim))
             layers.append(nn.ReLU(inplace=True))
             in_dim = hidden_dim
-        layers.append(nn.Linear(in_dim, feature_dim * 3))
+        layers.append(nn.Linear(in_dim, feature_dim * out_channels))
         self.net = nn.Sequential(*layers)
 
-    def forward(self, preds: torch.Tensor):
-        # preds: (B, T, N, F)
-        logits = self.net(preds)
-        logits = logits.view(*preds.shape[:-1], self.feature_dim, 3)
+        # 特殊初始化：让初始输出接近 init_width，减少训练初期的波动
+        self._init_weights(init_width)
 
-        base = logits[..., 1]
-        lower = base - F.softplus(logits[..., 0])
-        upper = base + F.softplus(logits[..., 2])
-        mid = base
+    def _init_weights(self, init_width: float):
+        for m in self.net.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.zeros_(m.weight)
+                if m.bias is not None:
+                    # 初始化 bias 使得 softplus 输出约等于 init_width
+                    # softplus(x) ≈ x when x > 0, so we set bias ≈ init_width
+                    nn.init.constant_(m.bias, init_width)
+
+    def forward(self, preds: torch.Tensor):
+        # preds: (B, T, N, F) - 原始模型的预测
+        logits = self.net(preds)
+
+        if self.learnable_mid:
+            logits = logits.view(*preds.shape[:-1], self.feature_dim, 3)
+            lower_delta = F.softplus(logits[..., 0]) + self.min_width
+            mid_delta = torch.tanh(logits[..., 1]) * 0.1  # 限制 mid 的调整幅度
+            upper_delta = F.softplus(logits[..., 2]) + self.min_width
+
+            mid = preds + mid_delta * preds.abs().clamp(min=1.0)  # 相对调整
+            lower = mid - lower_delta
+            upper = mid + upper_delta
+        else:
+            logits = logits.view(*preds.shape[:-1], self.feature_dim, 2)
+            lower_delta = F.softplus(logits[..., 0]) + self.min_width
+            upper_delta = F.softplus(logits[..., 1]) + self.min_width
+
+            mid = preds  # 保持原始预测不变！
+            lower = mid - lower_delta
+            upper = mid + upper_delta
 
         return lower, mid, upper
 
@@ -40,14 +76,32 @@ class QuantileOutputLayer(nn.Module):
 class CQR_Engine(BaseEngine):
     DEFAULT_METRICS = ["Quantile", "MAE", "MAPE", "RMSE", "MPIW", "IS", "COV"]
 
-    def __init__(self, quantile_hidden_dim: Optional[int] = None, **args):
+    def __init__(
+        self,
+        quantile_hidden_dim: Optional[int] = None,
+        quantile_init_width: float = 0.1,
+        quantile_min_width: float = 1e-3,
+        quantile_learnable_mid: bool = False,
+        **args
+    ):
+        """
+        Args:
+            quantile_hidden_dim: 分位数头的隐藏层维度
+            quantile_init_width: 初始区间宽度
+            quantile_min_width: 最小区间宽度
+            quantile_learnable_mid: 是否允许微调中位数（False 保持原始预测）
+        """
         args["loss_fn"] = "Quantile"
         # args["metric_list"] = args.get("metric_list") or self.DEFAULT_METRICS
         args["metric_list"] = self.DEFAULT_METRICS
         super().__init__(**args)
 
         self.quantile_head = QuantileOutputLayer(
-            self.model.output_dim, quantile_hidden_dim
+            self.model.output_dim,
+            hidden_dim=quantile_hidden_dim,
+            init_width=quantile_init_width,
+            min_width=quantile_min_width,
+            learnable_mid=quantile_learnable_mid,
         )
         self.quantile_head.to(self._device)
         self._optimizer.add_param_group({"params": self.quantile_head.parameters()})

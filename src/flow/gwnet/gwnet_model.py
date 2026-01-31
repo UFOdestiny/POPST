@@ -114,11 +114,12 @@ class GWNET(BaseModel):
         x = F.relu(self.end_conv_1(x))
         x = self.end_conv_2(x)
 
-        # Reshape to match N-dimensional output
-        batch_size, _, nodes, time_steps = x.size()
-        x = x.view(batch_size, self.output_dim, nodes, self.horizon)
-
-        x=x.transpose(1,3)
+        # x: (batch, output_dim * horizon, nodes, remaining_time)
+        # Take the last time step
+        x = x[..., -1]  # (batch, output_dim * horizon, nodes)
+        batch_size, _, nodes = x.size()
+        x = x.view(batch_size, self.output_dim, self.horizon, nodes)
+        x = x.permute(0, 2, 3, 1)  # (batch, horizon, nodes, output_dim)
         return x
 
 

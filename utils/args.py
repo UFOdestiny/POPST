@@ -10,11 +10,11 @@ def get_public_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
 
-    parser.add_argument("--dataset", type=str, default="Tallahassee")  # NYC
+    parser.add_argument("--dataset", type=str, default="CAISO")  # NYC
     parser.add_argument("--years", type=str, default="2018")
     parser.add_argument("--model_name", type=str, default="")
 
-    parser.add_argument("--bs", type=int, default=128)
+    parser.add_argument("--bs", type=int, default=64)
     parser.add_argument("--seq_len", type=int, default=24)
     parser.add_argument("--horizon", type=int, default=6)
 
@@ -27,7 +27,7 @@ def get_public_config():
     parser.add_argument("--normalize", action="store_true", default=True)
     parser.add_argument("--no_normalize", action="store_false", dest="normalize")
 
-    parser.add_argument("--quantile", action="store_true", default=False)
+    parser.add_argument("--quantile", action="store_true", default=True)
     parser.add_argument("--quantile_alpha", type=float, default=0.1)
     parser.add_argument("--hour_day_month", action="store_true", default=False)
 
