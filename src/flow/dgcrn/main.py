@@ -7,23 +7,13 @@ sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
 import torch
 
-torch.set_num_threads(8)
-
 from dgcrn_model import DGCRN
 from dgcrn_engine import DGCRN_Engine, DGCRN_Engine_Quantile
-from utils.args import check_quantile, get_public_config, get_log_path, print_args
+from utils.args import check_quantile, get_public_config, get_log_path, print_args, set_seed
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from utils.graph_algo import normalize_adj_mx
 from base.metrics import masked_mae
 from utils.log import get_logger
-
-
-def set_seed(seed):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = False
 
 
 def get_config():

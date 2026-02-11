@@ -11,6 +11,12 @@ from base.metrics import Metrics
 
 
 class QuantileOutputLayer(nn.Module):
+    """Neural network head that produces prediction intervals (lower, mid, upper).
+
+    Wraps a base model's point predictions and learns uncertainty bounds
+    using softplus-activated deltas with configurable minimum width.
+    """
+
     def __init__(
         self,
         feature_dim: int,
@@ -24,7 +30,7 @@ class QuantileOutputLayer(nn.Module):
         self.min_width = min_width
         self.learnable_mid = learnable_mid
 
-        # 输出维度：2（lower_delta, upper_delta）或 3（包含 mid_delta）
+        # Output channels: 2 (lower_delta, upper_delta) or 3 (+ mid_delta)
         out_channels = 3 if learnable_mid else 2
 
         layers = []
@@ -36,29 +42,28 @@ class QuantileOutputLayer(nn.Module):
         layers.append(nn.Linear(in_dim, feature_dim * out_channels))
         self.net = nn.Sequential(*layers)
 
-        # 特殊初始化：让初始输出接近 init_width，减少训练初期的波动
         self._init_weights(init_width)
 
     def _init_weights(self, init_width: float):
+        """Initialize so softplus output starts near init_width."""
         for m in self.net.modules():
             if isinstance(m, nn.Linear):
                 nn.init.zeros_(m.weight)
                 if m.bias is not None:
-                    # 初始化 bias 使得 softplus 输出约等于 init_width
-                    # softplus(x) ≈ x when x > 0, so we set bias ≈ init_width
+                    # softplus(x) ~ x when x > 0, so bias ~ init_width
                     nn.init.constant_(m.bias, init_width)
 
     def forward(self, preds: torch.Tensor):
-        # preds: (B, T, N, F) - 原始模型的预测
+        # preds: (B, T, N, F)
         logits = self.net(preds)
 
         if self.learnable_mid:
             logits = logits.view(*preds.shape[:-1], self.feature_dim, 3)
             lower_delta = F.softplus(logits[..., 0]) + self.min_width
-            mid_delta = torch.tanh(logits[..., 1]) * 0.1  # 限制 mid 的调整幅度
+            mid_delta = torch.tanh(logits[..., 1]) * 0.1
             upper_delta = F.softplus(logits[..., 2]) + self.min_width
 
-            mid = preds + mid_delta * preds.abs().clamp(min=1.0)  # 相对调整
+            mid = preds + mid_delta * preds.abs().clamp(min=1.0)
             lower = mid - lower_delta
             upper = mid + upper_delta
         else:
@@ -66,7 +71,7 @@ class QuantileOutputLayer(nn.Module):
             lower_delta = F.softplus(logits[..., 0]) + self.min_width
             upper_delta = F.softplus(logits[..., 1]) + self.min_width
 
-            mid = preds  # 保持原始预测不变！
+            mid = preds  # Keep original prediction unchanged
             lower = mid - lower_delta
             upper = mid + upper_delta
 
@@ -74,6 +79,12 @@ class QuantileOutputLayer(nn.Module):
 
 
 class CQR_Engine(BaseEngine):
+    """Conformal Quantile Regression engine.
+
+    Extends BaseEngine by adding a learnable quantile output head that wraps
+    the base model's point predictions into prediction intervals.
+    """
+
     DEFAULT_METRICS = ["Quantile", "MAE", "MAPE", "RMSE", "MPIW", "IS", "COV"]
 
     def __init__(
@@ -86,13 +97,12 @@ class CQR_Engine(BaseEngine):
     ):
         """
         Args:
-            quantile_hidden_dim: 分位数头的隐藏层维度
-            quantile_init_width: 初始区间宽度
-            quantile_min_width: 最小区间宽度
-            quantile_learnable_mid: 是否允许微调中位数（False 保持原始预测）
+            quantile_hidden_dim: Hidden dimension of quantile head
+            quantile_init_width: Initial interval width
+            quantile_min_width: Minimum interval width
+            quantile_learnable_mid: Whether to fine-tune median (False keeps original)
         """
         args["loss_fn"] = "Quantile"
-        # args["metric_list"] = args.get("metric_list") or self.DEFAULT_METRICS
         args["metric_list"] = self.DEFAULT_METRICS
         super().__init__(**args)
 
@@ -224,14 +234,14 @@ class CQR_Engine(BaseEngine):
         base_name = f"{self.args.model_name}-{self.args.dataset}-res"
         save_name = f"{base_name}.npy"
         path = os.path.join(self._save_path, save_name)
-        
-        # 如果文件已存在，添加后缀 _1, _2, _3 ...
+
+        # Append numeric suffix if file already exists
         suffix = 1
         while os.path.exists(path):
             save_name = f"{base_name}_{suffix}.npy"
             path = os.path.join(self._save_path, save_name)
             suffix += 1
-        
+
         np.save(path, result.numpy())
         self._logger.info(
             f"Results Save Path: {path} | Shape: {result.shape} (component, batch, horizon, node, feature)"

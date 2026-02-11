@@ -1,21 +1,15 @@
 import os
-import numpy as np
 import sys
+
+import numpy as np
 import torch
+import warnings
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
-sys.path.append("/home/dy23a.fsu/st/")
 
 from base.engine import BaseEngine
-import time
 
-from statsmodels.tsa.arima.model import ARIMA as A
-import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from arima_model import ARIMA_
-
-warnings.filterwarnings("ignore")  # ARIMA 的未来警告略过
+warnings.filterwarnings("ignore")
 
 
 class ARIMA_Engine(BaseEngine):
@@ -25,16 +19,13 @@ class ARIMA_Engine(BaseEngine):
     def train(self, export):
         train, valid, test = self._dataloader
 
-        # train = train[:, :10, :10]
-        # test = test[:, :10, :10]
-
         pred = self.model(train, test.shape[0])
 
         pred = torch.from_numpy(pred)
         test = torch.from_numpy(test)
 
         if self._normalize:
-            pred, test = self._inverse_transform([pred, test],device="cpu")
+            pred, test = self._inverse_transform([pred, test], device="cpu")
 
         self.metric.compute_one_batch(
             pred,

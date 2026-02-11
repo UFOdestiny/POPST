@@ -2,27 +2,16 @@ import os
 import sys
 
 sys.path.append(os.path.abspath(__file__ + '/../../../../'))
-sys.path.append("/home/dy23a.fsu/st/")
 
 from base.CQR_engine import CQR_Engine
 import torch
 import numpy as np
 
-torch.set_num_threads(8)
-
 from lstm_model import LSTM
 from base.engine import BaseEngine
-from utils.args import get_public_config, get_log_path, print_args, check_quantile
+from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
 from utils.dataloader import load_dataset, get_dataset_info
 from utils.log import get_logger
-
-
-def set_seed(seed):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = False
 
 
 def get_config():

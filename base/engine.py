@@ -1,10 +1,22 @@
 import os
+import platform
 import time
-import resource
 
 import numpy as np
 import torch
 from base.metrics import Metrics
+
+
+def _get_cpu_memory_mb():
+    """Get peak CPU memory usage in MB (cross-platform)."""
+    if platform.system() != "Windows":
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    try:
+        import psutil
+        return psutil.Process(os.getpid()).memory_info().peak_wset / 1024**2
+    except ImportError:
+        return 0.0
 
 
 class BaseEngine:
@@ -30,6 +42,7 @@ class BaseEngine:
         normalize=True,
         hour_day_month=False,
         metric_list=None,
+        init_weights=False,
     ):
         super().__init__()
 
@@ -54,7 +67,11 @@ class BaseEngine:
         self.model = model
         self.model.to(self._device)
 
-        # metric
+        # Optional Xavier weight initialization (replaces AGCRN/ASTGCN/DSTAGNN engines)
+        if init_weights:
+            self._init_model_weights()
+
+        # Metrics
         if metric_list is None:
             metric_list = ["MAE", "MAPE", "RMSE", "KL", "CRPS"]
         self.metric = Metrics(self._loss_fn, metric_list, self.model.horizon)
@@ -70,11 +87,19 @@ class BaseEngine:
             f"Model Save Path: {os.path.join(self._save_path, self._time_model)}"
         )
 
-        # quantile
+        # Quantile bounds
         self.alpha = alpha
         self.lower_bound = self.alpha / 2
         self.upper_bound = 1 - self.alpha / 2
         self.hour_day_month = hour_day_month
+
+    def _init_model_weights(self):
+        """Xavier/uniform initialization for model parameters."""
+        for p in self.model.parameters():
+            if p.dim() > 1:
+                torch.nn.init.xavier_uniform_(p)
+            else:
+                torch.nn.init.uniform_(p)
 
     def split_hour_day_month(self, X, Y):
         data = X[..., 0].unsqueeze(-1)
@@ -120,7 +145,6 @@ class BaseEngine:
     def save_model(self, save_path):
         if not os.path.exists(save_path):
             os.makedirs(save_path)
-        # filename = 'final_model_s{}.pt'.format(self._seed)
         filename = self._time_model
         torch.save(self.model.state_dict(), os.path.join(save_path, filename))
 
@@ -198,7 +222,7 @@ class BaseEngine:
             self.train_batch()
             t2 = time.time()
 
-            cpu_mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+            cpu_mem = _get_cpu_memory_mb()
             max_cpu_mem_usage = max(max_cpu_mem_usage, cpu_mem)
 
             if self._device.type == "cuda":
@@ -280,7 +304,7 @@ class BaseEngine:
             final_gpu = torch.cuda.max_memory_allocated(self._device) / 1024**2
             self._logger.info("Max Peak GPU Memory: {:.2f} MB".format(final_gpu))
 
-        final_cpu = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+        final_cpu = _get_cpu_memory_mb()
         self._logger.info("Max Peak CPU Memory: {:.2f} MB".format(final_cpu))
 
         self.evaluate("test", export=self.args.export)
@@ -352,23 +376,19 @@ class BaseEngine:
                 self.save_result(preds, labels)
 
     def save_result(self, preds, labels):
-        # preds: (B, T, N, F)
-        # labels: (B, T, N, F)
-
-        # 5D: (1, B, T, N, F)
+        # preds: (B, T, N) or (B, T, N, F)
+        # labels: (B, T, N) or (B, T, N, F)
         preds = preds.unsqueeze(0)
         labels = labels.unsqueeze(0)
-
-        # → (2, B, T, N, F)
+        # -> (2, B, T, N, ...)
         result = torch.cat([preds, labels], dim=0)
-
         result_np = result.cpu().numpy()
 
         base_name = f"{self.args.model_name}-{self.args.dataset}-res"
         save_name = f"{base_name}.npy"
         path = os.path.join(self._save_path, save_name)
 
-        # 如果文件已存在，添加后缀 _1, _2, _3 ...
+        # Append numeric suffix if file already exists
         suffix = 1
         while os.path.exists(path):
             save_name = f"{base_name}_{suffix}.npy"

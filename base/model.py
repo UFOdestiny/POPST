@@ -21,7 +21,7 @@ class BaseModel(nn.Module):
 
 
 class QuantileRegressor(nn.Module):
-    def __init__(self, base_model, in_channels=1, kernel_size=(3,1), padding=(1,0)):
+    def __init__(self, base_model, in_channels=1, kernel_size=(3, 1), padding=(1, 0)):
         super().__init__()
         self.base_model = base_model
 
@@ -31,8 +31,8 @@ class QuantileRegressor(nn.Module):
 
     def forward(self, x):
         X = self.base_model(x)
-        y_lower = self.conv_lower(X)
-        y_median = self.conv_median(X)
-        y_upper = self.conv_upper(X)
-        res= torch.cat([y_lower, y_median, y_upper], dim=1)  # [B,3,11,1]
+        y_lower = self.conv_l(X)
+        y_median = self.conv_m(X)
+        y_upper = self.conv_u(X)
+        res = torch.cat([y_lower, y_median, y_upper], dim=1)  # [B, 3, N, F]
         return res

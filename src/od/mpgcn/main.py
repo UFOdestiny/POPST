@@ -2,30 +2,19 @@ import os
 import sys
 
 sys.path.append(os.path.abspath(__file__ + '/../../../../'))
-sys.path.append("/home/dy23a.fsu/st/")
 
 from mpgcn_engine import MPGCN_Engine
 from base.CQR_engine import CQR_Engine
 import torch
 import numpy as np
 
-torch.set_num_threads(8)
-
 from mpgcn_model import GCN, MPGCN, Adj_Processor
 from base.engine import BaseEngine
-from utils.args import get_public_config, get_log_path, print_args, check_quantile
+from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
 from utils.dataloader import get_dataset_info, load_dataset, load_dataset_MPGCN
 from utils.log import get_logger
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-
-def set_seed(seed):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = False
-
 
 def get_config():
     parser = get_public_config()

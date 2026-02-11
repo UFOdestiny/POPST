@@ -3,14 +3,18 @@ import os
 import platform
 import re
 
+import numpy as np
+import torch
+
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 def get_public_config():
+    """Create argument parser with common training arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
 
-    parser.add_argument("--dataset", type=str, default="CAISO")  # NYC
+    parser.add_argument("--dataset", type=str, default="CAISO")
     parser.add_argument("--years", type=str, default="2018")
     parser.add_argument("--model_name", type=str, default="")
 
@@ -19,7 +23,7 @@ def get_public_config():
     parser.add_argument("--horizon", type=int, default=6)
 
     parser.add_argument("--feature", type=int, default=1)
-    parser.add_argument("--input_dim", type=int, default=1)  # feature
+    parser.add_argument("--input_dim", type=int, default=1)
     parser.add_argument("--output_dim", type=int, default=1)
 
     parser.add_argument("--max_epochs", type=int, default=2000)
@@ -42,7 +46,7 @@ def get_public_config():
     return parser
 
 
-# 系统路径配置
+# System path configuration
 _SYSTEM_CONFIG = {
     "linux": {
         "log_base": "/home/dy23a.fsu/st/result",
@@ -80,14 +84,23 @@ def print_args(logger, args):
 
 
 def check_quantile(args, normal_model, quantile_model):
+    """Select engine class based on whether quantile mode is enabled."""
     if args.quantile:
         return args, quantile_model
     return args, normal_model
 
 
+def set_seed(seed):
+    """Set random seed for reproducibility across numpy, torch CPU and CUDA."""
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = False
+
+
 def tuple_type(strings):
-    """将字符串转换为整数元组。支持格式: '1,2,3' 或 '(1,2,3)'"""
-    # 移除括号和空格
+    """Convert string to integer tuple. Supports formats: '1,2,3' or '(1,2,3)'."""
     cleaned = re.sub(r"[()\\s]", "", strings)
     try:
         return tuple(map(int, cleaned.split(",")))

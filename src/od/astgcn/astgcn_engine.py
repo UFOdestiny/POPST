@@ -1,22 +1,14 @@
-import torch
 from base.engine import BaseEngine
 from base.CQR_engine import CQR_Engine
 
 
 class ASTGCN_Engine(BaseEngine):
     def __init__(self, **args):
-        super(ASTGCN_Engine, self).__init__(**args)
-        for p in self.model.parameters():
-            if p.dim() > 1:
-                torch.nn.init.xavier_uniform_(p)
-            else:
-                torch.nn.init.uniform_(p)
+        args["init_weights"] = True
+        super().__init__(**args)
+
 
 class ASTGCN_Engine_Quantile(CQR_Engine):
     def __init__(self, **args):
-        super(ASTGCN_Engine_Quantile, self).__init__(**args)
-        for p in self.model.parameters():
-            if p.dim() > 1:
-                torch.nn.init.xavier_uniform_(p)
-            else:
-                torch.nn.init.uniform_(p)
+        args["init_weights"] = True
+        super().__init__(**args)

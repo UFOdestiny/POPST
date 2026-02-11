@@ -3,7 +3,6 @@ import numpy as np
 import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
-sys.path.append("/home/dy23a.fsu/st/")
 
 from base.engine import BaseEngine
 from base.CQR_engine import CQR_Engine
@@ -11,20 +10,10 @@ from src.od.ha.ha_engine import HA_Engine
 from arima_engine import ARIMA_Engine
 import torch
 
-torch.set_num_threads(8)
-
 from arima_model import ARIMA_
-from utils.args import get_public_config, get_log_path, print_args, check_quantile, tuple_type
+from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed, tuple_type
 from utils.dataloader import load_dataset, get_dataset_info, load_dataset_plain
 from utils.log import get_logger
-
-
-def set_seed(seed):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = False
 
 
 def get_config():

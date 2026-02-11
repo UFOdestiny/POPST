@@ -5,63 +5,63 @@ import time
 from logging.handlers import RotatingFileHandler
 from contextlib import contextmanager
 
-# 日志格式常量
+# Log format constants
 LOG_FORMAT = "%(asctime)s - %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOG_LEVEL = logging.INFO
 
 
 def get_logger(log_dir: str, name: str, log_filename: str = None, level: int = LOG_LEVEL) -> logging.Logger:
-    """创建并配置日志记录器
-    
+    """Create and configure a logger.
+
     Args:
-        log_dir: 日志文件保存目录
-        name: 日志记录器名称
-        log_filename: 日志文件名（如果为None，则自动生成）
-        level: 日志级别，默认为INFO
-        
+        log_dir: Directory to save log files
+        name: Logger name
+        log_filename: Log file name (auto-generated if None)
+        level: Log level, defaults to INFO
+
     Returns:
-        配置好的Logger对象
+        Configured Logger object
     """
-    # 创建日志目录
+    # Create log directory
     os.makedirs(log_dir, exist_ok=True)
-    
-    # 如果未指定日志文件名，则使用时间戳自动生成
+
+    # If log filename is not specified, auto-generate using timestamp
     if log_filename is None:
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
         log_filename = f"{timestamp}.log"
     else:
         log_filename = f"{log_filename}.log" if not log_filename.endswith('.log') else log_filename
-    
-    # 获取或创建记录器
+
+    # Get or create logger
     logger = logging.getLogger(name)
-    
-    # 避免重复添加处理器
+
+    # Avoid adding duplicate handlers
     if logger.handlers:
         return logger
-    
+
     logger.setLevel(level)
-    
-    # 创建格式化器
+
+    # Create formatter
     formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
-    
-    # 文件处理器（使用RotatingFileHandler实现日志轮转）
+
+    # File handler (using RotatingFileHandler for log rotation)
     log_path = os.path.join(log_dir, log_filename)
     file_handler = RotatingFileHandler(
         log_path,
         maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=50,  # 保留5个备份
+        backupCount=50,  # Keep 5 backups
         encoding='utf-8'
     )
     file_handler.setFormatter(formatter)
     file_handler.setLevel(level)
-    
-    # 控制台处理器
+
+    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     console_handler.setLevel(level)
-    
-    # 添加处理器到记录器
+
+    # Add handlers to logger
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
@@ -75,12 +75,12 @@ def get_logger(log_dir: str, name: str, log_filename: str = None, level: int = L
         finally:
             for h, f in zip(logger.handlers, old_formatters):
                 h.setFormatter(f)
-    
+
     logger.no_time = no_time
 
     with logger.no_time():
         logger.info( "=" * 25 + "   Settings   " + "=" * 25 )
-    # 记录日志文件路径
+    # Log the log file path
     logger.info(f"Log File Path: {log_path}")
-    
+
     return logger

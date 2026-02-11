@@ -8,20 +8,11 @@ import torch
 from base.CQR_engine import CQR_Engine
 from uqgnn_model import UQGNN
 
-torch.set_num_threads(3)
 from utils.graph_algo import normalize_adj_mx
-from utils.args import get_public_config, get_log_path, print_args, check_quantile
+from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from utils.log import get_logger
 from base.engine import BaseEngine
-
-
-def set_seed(seed):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = False
 
 
 def get_config():

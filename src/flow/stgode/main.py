@@ -6,23 +6,13 @@ sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
 import torch
 
-torch.set_num_threads(8)
-
 from base.CQR_engine import CQR_Engine
 from stgode_model import STGODE
 from base.engine import BaseEngine
-from utils.args import get_public_config, get_log_path, print_args, check_quantile
+from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
 from utils.dataloader import load_dataset, load_adj_from_numpy, get_dataset_info
 from utils.log import get_logger
 from fastdtw import fastdtw
-
-
-def set_seed(seed):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = False
 
 
 def get_config():

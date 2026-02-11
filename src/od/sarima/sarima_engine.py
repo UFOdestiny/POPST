@@ -1,18 +1,15 @@
 import os
-import numpy as np
 import sys
+
+import numpy as np
 import torch
+import warnings
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
-sys.path.append("/home/dy23a.fsu/st/")
 
 from base.engine import BaseEngine
-import time
 
-import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-warnings.filterwarnings("ignore")  # ARIMA 的未来警告略过
+warnings.filterwarnings("ignore")
 
 
 class SARIMA_Engine(BaseEngine):
@@ -21,9 +18,6 @@ class SARIMA_Engine(BaseEngine):
 
     def train(self, export):
         train, valid, test = self._dataloader
-
-        # train = train[:, :10, :10]
-        # test = test[:, :10, :10]
 
         pred = self.model(train, test.shape[0])
 

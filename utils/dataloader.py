@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
-sys.path.append("/home/dy23a.fsu/st/")
 
 from utils.args import get_data_path
 from utils.generate import LogMinMaxScaler, LogScaler
