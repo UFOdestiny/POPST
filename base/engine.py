@@ -323,6 +323,7 @@ class BaseEngine:
         with torch.no_grad():
             for X, label in self._dataloader[mode + "_loader"].get_iterator():
                 X, label = self._prepare_batch([X, label])
+                # print(X.shape, label.shape)
                 pred = self._predict(X, label=label, iter=self._iter_cnt)
                 scale = None
                 if isinstance(pred, tuple):
@@ -374,6 +375,7 @@ class BaseEngine:
 
             if export:
                 self.save_result(preds, labels)
+                self.save_test()
 
     def save_result(self, preds, labels):
         # preds: (B, T, N) or (B, T, N, F)
@@ -384,20 +386,45 @@ class BaseEngine:
         result = torch.cat([preds, labels], dim=0)
         result_np = result.cpu().numpy()
 
-        base_name = f"{self.args.model_name}-{self.args.dataset}-res"
-        save_name = f"{base_name}.npy"
-        path = os.path.join(self._save_path, save_name)
-
-        # Append numeric suffix if file already exists
-        suffix = 1
-        while os.path.exists(path):
-            save_name = f"{base_name}_{suffix}.npy"
-            path = os.path.join(self._save_path, save_name)
-            suffix += 1
+        path = self._get_unique_save_path("res")
 
         np.save(path, result_np)
 
         self._logger.info(f"Results Save Path: {path}")
         self._logger.info(
             f"Results Shape: {result_np.shape} (preds/labels, test size, horizon, region, channels)\n\n"
+        )
+
+    def _get_unique_save_path(self, suffix):
+        base_name = f"{self.args.model_name}-{self.args.dataset}-{suffix}"
+        save_name = f"{base_name}.npy"
+        path = os.path.join(self._save_path, save_name)
+
+        index = 1
+        while os.path.exists(path):
+            save_name = f"{base_name}_{index}.npy"
+            path = os.path.join(self._save_path, save_name)
+            index += 1
+
+        return path
+
+    def save_test(self):
+        test_data = []
+
+        with torch.no_grad():
+            for X, _ in self._dataloader["test_loader"].get_iterator():
+                test_data.append(torch.from_numpy(X).cpu())
+
+        if not test_data:
+            self._logger.info("Test data is empty. Skip saving test inputs.")
+            return
+
+        test_tensor = torch.cat(test_data, dim=0)
+        path = self._get_unique_save_path("test")
+        test_np = test_tensor.numpy()
+        np.save(path, test_np)
+
+        self._logger.info(f"Test Save Path: {path}")
+        self._logger.info(
+            f"Test Shape: {test_np.shape} (total test size, seq_len, region, feature)\n\n"
         )

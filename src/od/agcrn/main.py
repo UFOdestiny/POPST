@@ -55,6 +55,9 @@ def main():
         rnn_unit=args.rnn_unit,
         num_layer=args.num_layer,
         cheb_k=args.cheb_k,
+        seq_len=args.seq_len,
+        horizon=args.horizon
+
     )
 
     loss_fn = "MSE"

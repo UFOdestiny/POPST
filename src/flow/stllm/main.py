@@ -35,7 +35,7 @@ def get_config():
     args.model_name = "STLLM" # LLaMA
     if args.quantile:
         args.model_name += "_CQR"
-    args.bs = 16
+    # args.bs = 16
 
     log_dir = get_log_path(args)
     logger = get_logger(

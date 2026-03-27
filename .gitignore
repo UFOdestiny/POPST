@@ -12,6 +12,6 @@ dataset
 datasets
 bash
 core.*
-
+EnergyAssimilation
 __pycache__/
 *.py[cod]

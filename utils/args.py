@@ -31,12 +31,12 @@ def get_public_config():
     parser.add_argument("--normalize", action="store_true", default=True)
     parser.add_argument("--no_normalize", action="store_false", dest="normalize")
 
-    parser.add_argument("--quantile", action="store_true", default=True)
+    parser.add_argument("--quantile", action="store_true", default=False)
     parser.add_argument("--quantile_alpha", type=float, default=0.1)
     parser.add_argument("--hour_day_month", action="store_true", default=False)
 
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--seed", type=int, default=2025)
     parser.add_argument("--mode", type=str, default="train")
     parser.add_argument("--model_path", type=str, default="")
     parser.add_argument("--export", action="store_true", default=False)

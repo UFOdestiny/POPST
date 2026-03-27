@@ -124,8 +124,8 @@ if __name__ == "__main__":
 
 
 
-    gdf=gpd.GeoDataFrame.from_file("/blue/gtyson.fsu/dy23a.fsu/datasets/tally/tally.geojson")
-    save_path = f"/home/dy23a.fsu/st/datasets/tallahassee/adj.npy"
+    gdf=gpd.GeoDataFrame.from_file("/home/dy23a.fsu/st/utils/NYC Taxi Zones.geojson")
+    save_path = f"/home/dy23a.fsu/st/utils/nyc_adj.npy"
     gdf = gdf.set_geometry("geometry")#.sort_values(by="GEOID")
     ctr = gdf.centroid.reset_index(drop=True)
     N = len(ctr)
