@@ -75,6 +75,18 @@ def get_data_path():
     return _SYSTEM_CONFIG[sys_type]["data_base"] + "/"
 
 
+def _fmt_value(v):
+    """Format a value for display, showing shapes for tensors/arrays."""
+    if isinstance(v, torch.Tensor):
+        return f"Tensor{list(v.shape)}"
+    if isinstance(v, np.ndarray):
+        return f"ndarray{list(v.shape)}"
+    if isinstance(v, (list, tuple)) and v and isinstance(v[0], (torch.Tensor, np.ndarray)):
+        shapes = [f"{type(x).__name__}{list(x.shape)}" for x in v]
+        return f"[{', '.join(shapes)}]"
+    return v
+
+
 def print_args(logger, args):
     if args.not_print_args:
         return
@@ -96,13 +108,13 @@ def print_args(logger, args):
             continue
         logger.info(f"--- {group_name} ---")
         for k, v in present:
-            logger.info(f"  {k:20s}: {v}")
+            logger.info(f"  {k:20s}: {_fmt_value(v)}")
 
     extra = {k: v for k, v in all_vars.items() if k not in known and k != "not_print_args"}
     if extra:
         logger.info("--- Model-specific ---")
         for k, v in extra.items():
-            logger.info(f"  {k:20s}: {v}")
+            logger.info(f"  {k:20s}: {_fmt_value(v)}")
 
 
 def check_quantile(args, normal_model, quantile_model):

@@ -1,0 +1,26 @@
+# Core
+torch==2.8.0
+torchaudio==2.8.0
+torchvision==0.23.0
+numpy==2.0.2
+pandas==2.2.3
+scipy==1.15.1
+
+# Training & evaluation
+scikit-learn==1.6.1
+statsmodels==0.14.4
+properscoring==0.1
+tqdm==4.67.1
+psutil==6.1.1
+pyyaml==6.0.2
+
+# Model-specific
+torchdiffeq==0.2.5       # STGODE (neural ODE solver)
+mamba_ssm==2.2.6.post3   # Mamba models (selective state spaces)
+dgl==2.4.0               # +cu124, D2STGNN/DSTAGNN (deep graph library)
+gluonts==0.16.2          # GluonTS model
+
+# Data processing (optional)
+geopandas==1.0.1         # Adjacency matrix from shapefiles
+shapely==2.1.2           # Geometry operations
+fastdtw==0.2.0           # Dynamic time warping

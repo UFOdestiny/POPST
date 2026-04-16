@@ -73,7 +73,10 @@ Located in `src/od/`:
 
 - Python 3.8+
 - PyTorch >= 1.10
-- NumPy, PyYAML, statsmodels, psutil
+
+```bash
+pip install -r requirements.txt
+```
 
 ### Data Preparation
 
@@ -217,6 +220,22 @@ For OD models that reshape input dimensions, `setup()` can override these values
 - **BaseEngine** handles gradient clipping, LR scheduling, early stopping, checkpointing, and per-horizon test evaluation.
 - **CQR_Engine** extends any engine with conformal calibration for valid coverage prediction intervals.
 - **profile_efficiency** runs after every experiment to report hardware, memory, timing, and FLOPs.
+
+## Result Analysis
+
+```bash
+# Compare all models on a result directory (auto-discovers models/datasets)
+python res.py --path result/Test
+
+# Filter to specific datasets or models
+python res.py --path result/Test --datasets nyc_mobility --models STGCN GWNET
+
+# Detailed summary of a single log file
+python res.py --log result/Test/STGCN/nyc_mobility/2026-04-16_09-08-38.log
+
+# Select best log by RMSE instead of MAE
+python res.py --path result/Test --select RMSE
+```
 
 ## Acknowledgements
 

@@ -150,7 +150,11 @@ def _measure_inference_time(model, dataloader, device, n_warmup=3, n_repeat=10):
     # Warmup
     with torch.no_grad():
         for _ in range(n_warmup):
-            model(sample_X)
+            try:
+                model(sample_X)
+            except (TypeError, AttributeError):
+                # Model has non-standard forward (e.g. DCRNN/DGCRN need extra args)
+                return None, None
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -161,7 +165,10 @@ def _measure_inference_time(model, dataloader, device, n_warmup=3, n_repeat=10):
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             t0 = time.perf_counter()
-            model(sample_X)
+            try:
+                model(sample_X)
+            except (TypeError, AttributeError):
+                return None, None
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             times.append((time.perf_counter() - t0) * 1000)
@@ -190,7 +197,10 @@ def _measure_full_test_time(model, dataloader, device):
             if not isinstance(X, torch.Tensor):
                 X = torch.tensor(X, dtype=torch.float32)
             X = X.to(device)
-            model(X)
+            try:
+                model(X)
+            except (TypeError, AttributeError):
+                return None, None
             n_batches += 1
 
     if torch.cuda.is_available():

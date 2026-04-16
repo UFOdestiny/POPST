@@ -20,17 +20,19 @@ conda activate st
 
 BASE=/home/dy23a.fsu/st
 SRC=$BASE/src/flow
-LOG=$BASE/output
-ARGS="--bs 64 --dataset nyc_mobility --proj Test --years 2024 --max_epochs 2"
+LOG=$BASE/output/Test
+mkdir -p $LOG
+ARGS="--bs 64 --dataset nyc_mobility --proj Test --years 2024 --max_epochs 1"
+# ARGS="--bs 64 --dataset chicago_mobility --proj Test --years 2025 --max_epochs 1"
 
-MODELS=(
-    stgcn
-)
 # MODELS=(
-#     agcrn astgcn d2stgnn dcrnn dgcrn dstagnn gluonts gwnet
-#     hl lstm mamba #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
-#     patchtst stgcn stgode stllm stllm2 sttn transformer uqgnn
+#     stgcn
 # )
+MODELS=(
+    agcrn astgcn d2stgnn dcrnn dgcrn dstagnn gluonts gwnet
+    hl lstm mamba #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
+    patchtst stgcn stgode stllm stllm2 sttn transformer uqgnn
+)
 
 for m in "${MODELS[@]}"; do
     echo "=== Running $m ==="
