@@ -22,7 +22,7 @@ BASE=/home/dy23a.fsu/st
 SRC=$BASE/src/flow
 LOG=$BASE/output/Test
 mkdir -p $LOG
-ARGS="--bs 64 --dataset nyc_mobility --proj Test --years 2024 --max_epochs 1"
+ARGS="--bs 512 --dataset nyc_mobility --proj Test --years 2024 --max_epochs 1"
 # ARGS="--bs 64 --dataset chicago_mobility --proj Test --years 2025 --max_epochs 1"
 
 # MODELS=(

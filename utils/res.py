@@ -5,8 +5,8 @@ Reads log files from result directories, extracts metrics, efficiency data,
 and training statistics, then formats them into comparison tables.
 
 Usage:
-    python res.py                      # Run default comparisons
-    python res.py --path /path/to/result/Test --datasets nyc_mobility
+    python utils/res.py --path result/Test
+    python utils/res.py --log result/Test/STGCN/nyc_mobility/2026-04-16.log
 """
 
 import os
