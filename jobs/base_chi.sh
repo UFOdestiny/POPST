@@ -24,7 +24,7 @@ PORJ=Chi_Mobi_15min
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
 # ARGS="--bs 1024 --dataset nyc_mobility --proj $PORJ --years 2024"
-ARGS="--bs 64 --dataset chicago_mobility --proj $PORJ --years 2025"
+ARGS="--bs 1024 --dataset chicago_mobility --proj $PORJ --years 2025"
 
 # MODELS=(
 #     stgcn

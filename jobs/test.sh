@@ -24,7 +24,7 @@ PORJ=Test
 LOG=$BASE/output/Test
 mkdir -p $LOG
 ARGS="--bs 1024 --dataset nyc_mobility --proj $PORJ --years 2024 --max_epochs 1"
-# ARGS="--bs 64 --dataset chicago_mobility --proj $PORJ --years 2025 --max_epochs 1"
+# ARGS="--bs 1024 --dataset chicago_mobility --proj $PORJ --years 2025 --max_epochs 1"
 
 # MODELS=(
 #     stgcn
