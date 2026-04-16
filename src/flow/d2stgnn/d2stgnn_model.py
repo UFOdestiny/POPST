@@ -50,7 +50,8 @@ class D2STGNN(BaseModel):
             self.dynamic_graph_constructor = DynamicGraphConstructor(**model_args)
 
         self.out_fc_1 = nn.Linear(self._forecast_dim, self._output_hidden)
-        self.out_fc_2 = nn.Linear(self._output_hidden, model_args["gap"])
+        self.out_fc_2 = nn.Linear(self._output_hidden, model_args["gap"] * self.output_dim)
+        self._gap = model_args["gap"]
 
         self.reset_parameter()
 
@@ -80,15 +81,12 @@ class D2STGNN(BaseModel):
         node_emb_u = self.node_emb_u
         node_emb_d = self.node_emb_d
 
-        time_in_day_feat = self.T_i_D_emb[
-            (history_data[:, :, :, num_feat - 1] * self._model_args["tpd"]).type(
-                torch.LongTensor
-            )
-        ]
+        tpd = self._model_args["tpd"]
+        tid_idx = (history_data[:, :, :, num_feat - 1] * tpd).long().clamp(0, tpd - 1)
+        time_in_day_feat = self.T_i_D_emb[tid_idx]
 
-        day_in_week_feat = self.D_i_W_emb[
-            (history_data[:, :, :, num_feat - 2] * 7).type(torch.LongTensor)
-        ]
+        diw_idx = (history_data[:, :, :, num_feat - 2] * 7).long().clamp(0, 6)
+        day_in_week_feat = self.D_i_W_emb[diw_idx]
 
         history_data = history_data[:, :, :, :num_feat]
         return history_data, node_emb_u, node_emb_d, time_in_day_feat, day_in_week_feat
@@ -134,12 +132,13 @@ class D2STGNN(BaseModel):
         forecast_hidden = dif_forecast_hidden + inh_forecast_hidden
 
         forecast = self.out_fc_2(F.relu(self.out_fc_1(F.relu(forecast_hidden))))
-        forecast = (
-            forecast.transpose(1, 2)
-            .contiguous()
-            .view(forecast.shape[0], forecast.shape[2], -1)
-        )
-        return forecast.transpose(1, 2).unsqueeze(-1)
+        # (B, chunks, N, gap * output_dim)
+        B_sz, chunks, N_sz, _ = forecast.shape
+        forecast = forecast.view(B_sz, chunks, N_sz, self._gap, self.output_dim)
+        forecast = forecast.permute(0, 1, 3, 2, 4).contiguous()
+        forecast = forecast.view(B_sz, chunks * self._gap, N_sz, self.output_dim)
+        # D2STGNN generates seq_len timesteps; slice to horizon for consistency
+        return forecast[:, : self.horizon, :, :]
 
 
 class DecoupleLayer(nn.Module):

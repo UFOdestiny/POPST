@@ -93,7 +93,7 @@ class STTN_Engine(BaseEngine):
                 X, label = self._to_device(self._to_tensor([X, label]))
                 pred = self.model(X)
                 scale = None
-                if type(pred) == tuple:
+                if isinstance(pred, tuple):
                     pred, scale = pred  # mean scale
 
                 if self._normalize:

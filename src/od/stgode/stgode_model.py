@@ -57,10 +57,11 @@ class STGODE(BaseModel):
         self.pred = nn.Sequential(
             nn.Linear(self.seq_len * 64, self.horizon * 32),
             nn.ReLU(),
-            nn.Linear(self.horizon * 32, self.horizon * self.node_num),
+            nn.Linear(self.horizon * 32, self.horizon * self.output_dim),
         )
 
     def forward(self, x, label=None):  # (b, t, n, f)
+        b = x.shape[0]
         x = x.transpose(1, 2)
         outs = []
         # spatial graph
@@ -71,11 +72,13 @@ class STGODE(BaseModel):
             outs.append(blk(x))
         outs = torch.stack(outs)
         x = torch.max(outs, dim=0)[0]
-        x = x.reshape((x.shape[0], x.shape[1], -1))
-        x = self.pred(x)
-        x = x.unsqueeze(-1)
+        n = x.shape[1]
+        x = x.reshape((b, n, -1))
+        x = self.pred(x)                        # (b, n, horizon * output_dim)
+        x = x.view(b, n, self.horizon, self.output_dim)
+        x = x.permute(0, 2, 1, 3)               # (b, horizon, n, output_dim)
 
-        return x.permute(0, 3, 1, 2)
+        return x
 
 
 class STGCNBlock(nn.Module):

@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -26,225 +27,100 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
+# ── Scaler & metadata ───────────────────────────────────────────────────
+
+
+def _scaler_to_meta(scaler) -> dict:
+    """Extract serialisable metadata from a fitted scaler."""
+    cls_name = type(scaler).__name__
+    params = {
+        "data_min": scaler.data_min_.tolist() if hasattr(scaler.data_min_, 'tolist') else float(scaler.data_min_),
+        "data_max": scaler.data_max_.tolist() if hasattr(scaler.data_max_, 'tolist') else float(scaler.data_max_),
+    }
+    return {"scaler": cls_name, "scaler_params": params}
+
+
+def reconstruct_scaler(meta: dict):
+    """Rebuild a scaler from ``meta.json`` metadata."""
+    params = meta.get("scaler_params", {})
+    return MinMaxScaler(data_min=params["data_min"], data_max=params["data_max"])
+
+
+def _save_meta(base_dir: Path, scaler, data_shape, split_sizes: dict):
+    """Save ``meta.json`` alongside ``his.npz``."""
+    meta = _scaler_to_meta(scaler)
+    meta["data_shape"] = list(data_shape)
+    meta["splits"] = split_sizes
+    with open(base_dir / "meta.json", "w") as f:
+        json.dump(meta, f, indent=2)
+    print(f"Saved meta.json to {base_dir / 'meta.json'}")
+
+
 class MinMaxScaler:
-    def __init__(self, _min=None, _max=None):
-        self.min = _min
-        self.max = _max
+    """Min-max normalization to [0, 1].
 
-    def fit(self, data):
-        self.min = data.min()
-        self.max = data.max()
-
-    def transform(self, data):
-        return (data - self.min) / (self.max - self.min)
-
-    def inverse_transform(self, data):
-        return data * (self.max - self.min) + self.min
-
-
-class StandardScaler:
-    """Standard scaler with offset to ensure non-negative normalized values.
-
-    Supports two reshape modes in ``fit()``:
-
-    * ``flatten=False`` (default) -- input shape is ``(sequence, region, dim)``
-      and statistics are computed per feature across sequences and regions.
-    * ``flatten=True`` -- input shape is ``(sequence, region, region2)`` (e.g.
-      an OD matrix) and a single global mean / std is computed.
-
-    :param mean:   Pre-computed mean (optional, for restoring a fitted scaler).
-    :param std:    Pre-computed std (optional).
-    :param offset: Pre-computed offset (optional).
-    :param flatten: If True, flatten all dimensions into a single column before
-                    computing statistics (OD-matrix mode).
+    Computes ``(x - min) / (max - min)`` across all elements.
     """
 
-    def __init__(self, mean=None, std=None, offset=None, flatten=False):
-        self.flatten = flatten
-        if mean is not None:
-            self.mean = torch.tensor(mean)
-            self.std = torch.tensor(std)
-            self.offset = torch.tensor(offset)
+    def __init__(self, data_min=None, data_max=None):
+        if data_min is not None:
+            self.data_min_ = torch.tensor(data_min, dtype=torch.float32)
+            self.data_max_ = torch.tensor(data_max, dtype=torch.float32)
         else:
-            self.mean = mean
-            self.std = std
-            self.offset = offset
+            self.data_min_ = None
+            self.data_max_ = None
 
     def fit(self, data):
-        if self.flatten:
-            # OD-matrix mode: flatten everything into a single column.
-            temp_data = data.reshape(-1, 1)
-        else:
-            # Flow mode: reshape (sequence, region, dim) -> (sequence*region, dim).
-            sequence, region, dim = data.shape
-            temp_data = data.reshape(sequence * region, dim)
-
-        self.mean = np.mean(temp_data, axis=0)
-        self.std = np.std(temp_data, axis=0)
-
-        # Ensure std is never zero to avoid division by zero.
-        self.std[self.std == 0] = 1.0
-
-        # Compute the offset so that the minimum normalized value is zero.
-        normalized_data = (temp_data - self.mean) / self.std
-        self.offset = -np.min(normalized_data, axis=0)
-
-    def transform(self, data):
-        if self.mean is None or self.std is None or self.offset is None:
-            raise ValueError(
-                "StandardScaler is not fitted yet. Call 'fit' with training data first."
-            )
-        normalized_data = (data - self.mean) / self.std
-        return normalized_data + self.offset
-
-    def inverse_transform(self, data, device=None):
-        if self.mean is None or self.std is None or self.offset is None:
-            raise ValueError(
-                "StandardScaler is not fitted yet. Call 'fit' with training data first."
-            )
-        dev = _resolve_device(data, device)
-        offset = self.offset.to(device=dev)
-        std = self.std.to(device=dev)
-        mean = self.mean.to(device=dev)
-
-        if isinstance(data, torch.Tensor):
-            unshifted_data = data - offset
-            return unshifted_data * std + mean
-
-        tensor_data = torch.tensor(data, device=dev)
-        restored = (tensor_data - offset) * std + mean
-        return restored.cpu().numpy()
-
-
-# Backward-compatible alias for code that references the old class name.
-StandardScaler_OD = StandardScaler
-
-
-class LogScaler:
-    def __init__(self):
-        self.base = 1
-
-    def transform(self, data):
-        return np.log(data + 1)
-
-    def inverse_transform(self, data, device=None):
-        if isinstance(data, np.ndarray):
-            return np.exp(data) - 1
-        dev = _resolve_device(data, device)
-        return torch.exp(data).to(device=dev) - 1
-
-
-class LogMinMaxScaler:
-    def __init__(self, data_min=0, data_max=0):
-        self.data_min_ = torch.tensor(data_min)
-        self.data_max_ = torch.tensor(data_max)
-
-    def fit(self, data):
-        log_data = np.log1p(data)
-        self.data_min_ = log_data.min()
-        self.data_max_ = log_data.max()
-        print(f"LogMinMaxScaler min: {self.data_min_}, max:{self.data_max_}")
+        self.data_min_ = torch.tensor(data.min(), dtype=torch.float32)
+        self.data_max_ = torch.tensor(data.max(), dtype=torch.float32)
+        print(f"MinMaxScaler min: {self.data_min_}, max: {self.data_max_}")
         return self
 
     def transform(self, data):
-        log_data = np.log1p(data)
-        return (log_data - self.data_min_) / (self.data_max_ - self.data_min_)
+        span = self.data_max_.item() - self.data_min_.item()
+        if span == 0:
+            return np.zeros_like(data)
+        return (data - self.data_min_.item()) / span
 
     def inverse_transform(self, data, device=None):
-        span = self.data_max_ - self.data_min_
+        dev = _resolve_device(data, device)
+        span = (self.data_max_ - self.data_min_).to(dev)
+        dmin = self.data_min_.to(dev)
         if isinstance(data, torch.Tensor):
-            log_data = data * span + self.data_min_
-            return torch.expm1(log_data.to(device=_resolve_device(data, device)))
-
-        log_data = data * span.cpu().numpy() + self.data_min_.cpu().numpy()
-        return np.expm1(log_data)
+            return data * span + dmin
+        return data * span.cpu().numpy() + dmin.cpu().numpy()
 
 
-class RatioScaler:
-    def __init__(self, ratio=1000):
-        self.ratio = ratio
-
-    def transform(self, data):
-        return data / self.ratio
-
-    def inverse_transform(self, data):
-        return data * self.ratio
+# ── Data splitting & saving ──────────────────────────────────────────────
 
 
-def split_dataset(data, args, tra_ratio, val_ratio, test_ratio):
+def _split_by_ratio(data, args, tra=0.8, val=0.1, test=0.1):
+    """Compute train/val/test index splits for a time series."""
     seq_length_x, seq_length_y = args.seq_length_x, args.seq_length_y
     x_offsets = np.arange(-(seq_length_x - 1), 1, 1)
     y_offsets = np.arange(1, (seq_length_y + 1), 1)
+
     min_t = abs(min(x_offsets))
-    max_t = abs(data.shape[0] - abs(max(y_offsets)))  # Exclusive
-    print(f"Index min: {min_t}, max: {max_t}")
+    max_t = abs(data.shape[0] - abs(max(y_offsets)))
     idx = np.arange(min_t, max_t, 1)
 
     N = len(idx)
-    val_ = int(round(val_ratio * N))
-    test_ = int(round(test_ratio * N))
-    train_ = N - val_ - test_
+    n_val = int(round(val * N))
+    n_test = int(round(test * N))
+    n_train = N - n_val - n_test
 
-    idx_train = idx[:train_]
-    idx_val = idx[train_ : train_ + val_]
-    idx_test = idx[train_ + val_ :]
+    print(f"Index range: [{min_t}, {max_t}), total={N}, train={n_train}, val={n_val}, test={N - n_train - n_val}")
+
+    idx_train = idx[:n_train]
+    idx_val = idx[n_train : n_train + n_val]
+    idx_test = idx[n_train + n_val :]
     idx_all = idx[:]
     return idx_train, idx_val, idx_test, idx_all
 
 
-def generate_data_and_idx(df, x_offsets, y_offsets, add_time_of_day, add_day_of_week):
-    num_samples, num_nodes = df.shape
-    print(df.shape)
-    data = np.expand_dims(df.values, axis=-1)
-
-    feature_list = [data]
-    if add_time_of_day:
-        time_ind = (
-            df.index.values - df.index.values.astype("datetime64[D]")
-        ) / np.timedelta64(1, "D")
-        time_of_day = np.tile(time_ind, [1, num_nodes, 1]).transpose((2, 1, 0))
-        feature_list.append(time_of_day)
-    if add_day_of_week:
-        dow = df.index.dayofweek
-        dow_tiled = np.tile(dow, [1, num_nodes, 1]).transpose((2, 1, 0))
-        day_of_week = dow_tiled / 7
-        feature_list.append(day_of_week)
-
-    data = np.concatenate(feature_list, axis=-1)
-
-    min_t = abs(min(x_offsets))
-    max_t = abs(num_samples - abs(max(y_offsets)))  # Exclusive
-    print("idx min & max:", min_t, max_t)
-    idx = np.arange(min_t, max_t, 1)
-    return data, idx
-
-
-def generate_flow(args):
-    data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/tally/e2018_half.npy"
-    data_path = "/blue/gtyson.fsu/dy23a.fsu/datasets/tally/e2018_half_N0_0.3.npy"
-
-    # Shape: N * D * T
-    data = np.load(data_path)
-    data[data < 0] = 0
-    print(f"data shape: {data.shape}")
-    print(f"Original max: {data.max()}, min: {data.min()}, mean: {data.mean()}")
-
-    if len(data.shape) == 3:
-        data = data.transpose(2, 0, 1)
-    else:
-        data = data[:, np.newaxis].transpose(2, 0, 1)
-
-    # Split indices
-    idx_train, idx_val, idx_test, idx_all = split_dataset(data, args, 0.8, 0.1, 0.1)
-
-    # Normalize
-    scaler = LogMinMaxScaler()
-    scaler.fit(data)
-    data = scaler.transform(data)
-
-    print(f"Normalized max: {data.max()}, min: {data.min()}, mean: {data.mean()}")
-
-    base_dir = _ensure_dir(Path(get_data_path()) / args.dataset / args.years)
+def _save_dataset(base_dir, data, scaler, idx_train, idx_val, idx_test, idx_all):
+    """Save processed data, indices, and metadata to *base_dir*."""
+    _ensure_dir(base_dir)
     np.savez_compressed(
         base_dir / "his.npz",
         data=data,
@@ -252,95 +128,10 @@ def generate_flow(args):
         max=scaler.data_max_,
     )
     _save_indices(base_dir, idx_train, idx_val, idx_test, idx_all)
-
-
-def generate_od(args):
-    seq_length_x, seq_length_y = args.seq_length_x, args.seq_length_y
-    x_offsets = np.arange(-(seq_length_x - 1), 1, 1)
-    y_offsets = np.arange(1, (seq_length_y + 1), 1)
-
-    data_path = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/bike.npy"
-
-    data = np.load(data_path)
-    data = data.transpose(2, 0, 1)
-
-    min_t = abs(min(x_offsets))
-    max_t = abs(data.shape[0] - abs(max(y_offsets)))  # Exclusive
-    print("idx min & max:", min_t, max_t)
-    idx = np.arange(min_t, max_t, 1)
-
-    print("final data shape:", data.shape, "idx shape:", idx.shape)
-    num_samples = len(idx)
-    num_train = round(num_samples * 0.8)
-    num_val = round(num_samples * 0.1)
-    print(num_train, num_val, num_samples - num_train - num_val)
-
-    # Split indices
-    idx_train = idx[:num_train]
-    idx_val = idx[num_train : num_train + num_val]
-    idx_test = idx[num_train + num_val :]
-    idx_all = idx[:]
-    print(data[0][-1])
-    print("max, min, mean: ", data.max(), data.min(), data.mean())
-
-    # Normalize
-    scaler = LogScaler()
-    data = scaler.transform(data)
-    print("max, min, mean: ", data.max(), data.min(), data.mean())
-    d = scaler.inverse_transform(data)
-
-    print(d[0][-1])
-
-    base_dir = _ensure_dir(Path(get_data_path()) / args.dataset / args.years)
-    print("save to: ", base_dir)
-    np.savez_compressed(base_dir / "his.npz", data=data)
-    _save_indices(base_dir, idx_train, idx_val, idx_test, idx_all)
-
-
-def generate_od_2(args):
-    seq_length_x, seq_length_y = args.seq_length_x, args.seq_length_y
-    x_offsets = np.arange(-(seq_length_x - 1), 1, 1)
-    y_offsets = np.arange(1, (seq_length_y + 1), 1)
-
-    data_path1 = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/subway.npy"
-    data_path2 = "/blue/gtyson.fsu/dy23a.fsu/switch/nyc/bike.npy"
-    data = np.load(data_path1).transpose(2, 0, 1)
-    data_2 = np.load(data_path2).transpose(2, 0, 1)
-
-    data = np.concatenate((data, data_2), axis=0)
-    print(data.shape)
-
-    min_t = abs(min(x_offsets))
-    max_t = abs(data.shape[0] - abs(max(y_offsets)))  # Exclusive
-    print("idx min & max:", min_t, max_t)
-    idx = np.arange(min_t, max_t, 1)
-
-    print("final data shape:", data.shape, "idx shape:", idx.shape)
-    num_samples = len(idx)
-    num_val = 287
-    num_test = 287
-    num_train = num_samples - num_test - num_val
-    print(num_train, num_val, num_samples - num_train - num_val)
-
-    # Split indices
-    idx_train = idx[:num_train]
-    idx_val = idx[num_train : num_train + num_val]
-    idx_test = idx[num_train + num_val :]
-    idx_all = idx[:]
-    print("max, min, mean: ", data.max(), data.min(), data.mean())
-
-    # Normalize
-    scaler = LogScaler()
-    data = scaler.transform(data)
-    print("max, min, mean: ", data.max(), data.min(), data.mean())
-    d = scaler.inverse_transform(data)
-
-    print(d[0][-1])
-
-    base_dir = _ensure_dir(Path(get_data_path()) / args.dataset / args.years)
-    print("save to: ", base_dir)
-    np.savez_compressed(base_dir / "his.npz", data=data)
-    _save_indices(base_dir, idx_train, idx_val, idx_test, idx_all)
+    _save_meta(base_dir, scaler, data.shape, {
+        "train": len(idx_train), "val": len(idx_val), "test": len(idx_test),
+    })
+    print(f"Saved to {base_dir}")
 
 
 def _save_indices(base_dir: Path, idx_train, idx_val, idx_test, idx_all):
@@ -350,15 +141,134 @@ def _save_indices(base_dir: Path, idx_train, idx_val, idx_test, idx_all):
     np.save(base_dir / "idx_all", idx_all)
 
 
+def _compute_stats(data, label="data"):
+    """Compute summary statistics for a numpy array."""
+    stats = {
+        "label": label,
+        "shape": list(data.shape),
+        "dtype": str(data.dtype),
+        "min": float(data.min()),
+        "max": float(data.max()),
+        "mean": float(data.mean()),
+        "std": float(data.std()),
+        "median": float(np.median(data)),
+        "nonzero_ratio": float(np.count_nonzero(data) / data.size),
+        "size": int(data.size),
+    }
+    return stats
+
+
+def _save_info(base_dir: Path, raw_stats, transformed_stats, scaler_meta,
+               split_sizes, args_dict):
+    """Save ``info.json`` with raw/transformed data statistics and config."""
+    info = {
+        "raw_data": raw_stats,
+        "transformed_data": transformed_stats,
+        "scaler": scaler_meta,
+        "splits": split_sizes,
+        "config": args_dict,
+    }
+    path = base_dir / "info.json"
+    with open(path, "w") as f:
+        json.dump(info, f, indent=2)
+    print(f"Saved info.json to {path}")
+
+
+# ── Dimension reordering ─────────────────────────────────────────────────
+
+
+def _reorder_to_time_first(data, fmt="NDT"):
+    """Reorder *data* so that T (time) is the first axis.
+
+    *fmt* is a string of dimension labels (case-insensitive):
+        N = spatial (region), T = time, D = feature dimension.
+    Two consecutive N's indicate an OD matrix (e.g. ``"NNDT"``).
+
+    If the input has fewer dimensions than *fmt*, a D=1 axis is appended.
+    Default format is ``"NDT"`` → output ``(T, N, D)``.
+    """
+    fmt = fmt.upper()
+
+    # If format has no D, add a trailing D=1 axis
+    if "D" not in fmt:
+        data = data[..., np.newaxis]
+        fmt = fmt + "D"
+
+    # If input still has fewer dims than format, pad with trailing size-1 axes
+    while data.ndim < len(fmt):
+        data = data[..., np.newaxis]
+
+    if len(fmt) != data.ndim:
+        raise ValueError(
+            f"Format '{fmt}' has {len(fmt)} dims but data has {data.ndim} dims"
+        )
+
+    t_pos = fmt.index("T")
+    perm = [t_pos] + [i for i in range(len(fmt)) if i != t_pos]
+    data = data.transpose(perm)
+
+    new_fmt = "T" + fmt[:t_pos] + fmt[t_pos + 1:]
+    print(f"Reordered {fmt} → {new_fmt}, shape: {data.shape}")
+    return data
+
+
+# ── Unified generate ─────────────────────────────────────────────────────
+
+
+def generate(args):
+    """Unified data generation for flow and OD data.
+
+    Loads a ``.npy`` file, reorders dimensions so T is first, applies
+    MinMaxScaler, and saves ``his.npz`` + ``meta.json`` + ``info.json`` + index files.
+    """
+    data = np.load(args.data_path)
+    print(f"Loaded {args.data_path}, raw shape: {data.shape}")
+
+    if args.clip_neg:
+        data[data < 0] = 0
+        print("Clipped negative values to 0")
+
+    data = _reorder_to_time_first(data, args.fmt)
+    raw_stats = _compute_stats(data, label="raw (after reorder)")
+    print(f"Raw — max: {data.max()}, min: {data.min()}, mean: {data.mean():.4f}, std: {data.std():.4f}")
+
+    idx_train, idx_val, idx_test, idx_all = _split_by_ratio(data, args)
+
+    scaler = MinMaxScaler()
+    scaler.fit(data)
+    data = scaler.transform(data)
+    transformed_stats = _compute_stats(data, label="transformed (MinMaxScaler)")
+    print(f"Normalized — max: {data.max():.4f}, min: {data.min():.4f}, mean: {data.mean():.4f}, std: {data.std():.4f}")
+
+    base_dir = Path(get_data_path()) / args.dataset / args.years
+    _save_dataset(base_dir, data, scaler, idx_train, idx_val, idx_test, idx_all)
+
+    split_sizes = {"train": len(idx_train), "val": len(idx_val), "test": len(idx_test)}
+    args_dict = {
+        "data_path": args.data_path,
+        "fmt": args.fmt,
+        "clip_neg": args.clip_neg,
+        "dataset": args.dataset,
+        "years": args.years,
+        "seq_length_x": args.seq_length_x,
+        "seq_length_y": args.seq_length_y,
+    }
+    _save_info(base_dir, raw_stats, transformed_stats,
+               _scaler_to_meta(scaler), split_sizes, args_dict)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-
-    parser.add_argument("--dataset", type=str, default="Tally_User", help="dataset name")
-    parser.add_argument("--years", type=str, default="2003")
-    parser.add_argument("--seq_length_x", type=int, default=4, help="sequence Length")
-    parser.add_argument("--seq_length_y", type=int, default=1, help="sequence Length")
-    # parser.add_argument("--tod", type=int, default=1, help="time of day")
-    # parser.add_argument("--dow", type=int, default=1, help="day of week")
+    parser.add_argument("--data_path", type=str, required=False, help="path to raw .npy file")
+    parser.add_argument("--fmt", type=str, default="NDT",
+                        help="dimension format, e.g. NDT, NTD, NNDT, NT (default: NDT)")
+    parser.add_argument("--clip_neg", action="store_true", help="clip negative values to 0")
+    parser.add_argument("--dataset", type=str, default="nyc_mobility", help="dataset name")
+    parser.add_argument("--years", type=str, default="2024")
+    parser.add_argument("--seq_length_x", type=int, default=12, help="input sequence length")
+    parser.add_argument("--seq_length_y", type=int, default=1, help="prediction horizon")
 
     args = parser.parse_args()
-    generate_flow(args)
+    args.data_path="/home/dy23a.fsu/st/datasets/nyc_mobility/nyc_ta_bi_sub_2024_15min_arv_NDT.npy"
+    # args.data_path="/home/dy23a.fsu/st/datasets/chicago_mobility/chi_ta_bi_2025_15min_arv_NDT.npy"
+    generate(args)

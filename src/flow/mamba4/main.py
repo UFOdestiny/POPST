@@ -1,78 +1,39 @@
 import os
-import numpy as np
 import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
-from base.engine import BaseEngine
-from base.CQR_engine import CQR_Engine
 
 import torch
-
+from base.runner import run_experiment
 from src.flow.mamba4.mamba_model import UNetMamba
-from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
-from utils.log import get_logger
-from utils.dataloader import load_dataset, get_dataset_info
 
 
-def get_config():
-    parser = get_public_config()
-    
-    # 模型结构参数 (与STLLM2对齐)
+def add_args(parser):
     parser.add_argument("--num_layers", type=int, default=3, help="ST-Mamba块数量")
     parser.add_argument("--d_model", type=int, default=96, help="模型维度")
     parser.add_argument("--num_heads", type=int, default=8, help="空间注意力头数")
     parser.add_argument("--d_ff", type=int, default=256, help="FFN/MoE中间维度")
     parser.add_argument("--dropout", type=float, default=0.3, help="Dropout率")
-    
-    # MoE参数
     parser.add_argument("--num_experts", type=int, default=4, help="MoE专家数量")
     parser.add_argument("--top_k", type=int, default=2, help="MoE激活的专家数")
-    
-    # 空间注意力参数 (保留STLLM2设计)
     parser.add_argument("--window_size", type=int, default=4, help="滑动窗口大小")
-    
-    # Mamba特有参数
     parser.add_argument("--d_state", type=int, default=16, help="Mamba SSM状态维度")
     parser.add_argument("--d_conv", type=int, default=4, help="Mamba局部卷积宽度")
     parser.add_argument("--expand", type=int, default=2, help="Mamba内部扩展因子")
-
-    # 训练参数
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=1e-4)
-    parser.add_argument("--clip_grad_value", type=float, default=5)
-    args = parser.parse_args()
-
-    args.model_name = "Mamba4"
-    if args.quantile:
-        args.model_name += "_CQR"
-    log_dir = get_log_path(args)
-    logger = get_logger(
-        log_dir,
-        __name__,
-    )
-    print_args(logger, args)
-
-    return args, log_dir, logger
+    parser.add_argument("--clip_grad_norm", type=float, default=5)
 
 
-def main():
-    args, log_dir, logger = get_config()
-    set_seed(args.seed)
-    device = torch.device(args.device)
-
-    data_path, _, node_num = get_dataset_info(args.dataset)
-
-    dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
-    model = UNetMamba(
+def build_model(args, node_num, **ctx):
+    return UNetMamba(
         node_num=node_num,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
         seq_len=args.seq_len,
         horizon=args.horizon,
-        # 模型结构参数 (与STLLM2对齐)
         num_layers=args.num_layers,
         d_model=args.d_model,
         num_heads=args.num_heads,
@@ -80,54 +41,18 @@ def main():
         num_experts=args.num_experts,
         top_k=args.top_k,
         window_size=args.window_size,
-        # Mamba特有参数
         d_state=args.d_state,
         d_conv=args.d_conv,
         expand=args.expand,
         dropout=args.dropout,
     )
 
-    # 打印模型参数量
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Total parameters: {total_params:,}")
-    logger.info(f"Trainable parameters: {trainable_params:,}")
-
-    loss_fn = "MAE"
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lrate, weight_decay=args.wdecay
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.max_epochs, eta_min=1e-6
-    )
-
-    engine = engine_template(
-        device=device,
-        model=model,
-        dataloader=dataloader,
-        scaler=scaler,
-        sampler=None,
-        loss_fn=loss_fn,
-        lrate=args.lrate,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        clip_grad_value=args.clip_grad_value,
-        max_epochs=args.max_epochs,
-        patience=args.patience,
-        log_dir=log_dir,
-        logger=logger,
-        seed=args.seed,
-        normalize=args.normalize,
-        alpha=args.quantile_alpha,
-        metric_list=["MAE", "MAPE", "RMSE"],
-        args=args,
-    )
-
-    if args.mode == "train":
-        engine.train()
-    else:
-        engine.evaluate(args.mode, args.model_path, args.export)
-
 
 if __name__ == "__main__":
-    main()
+    run_experiment(
+        model_name="Mamba4",
+        add_args=add_args,
+        build_model=build_model,
+        make_optimizer=lambda m, a: torch.optim.AdamW(m.parameters(), lr=a.lrate, weight_decay=a.wdecay),
+        make_scheduler=lambda o, a: torch.optim.lr_scheduler.CosineAnnealingLR(o, T_max=a.max_epochs, eta_min=1e-6),
+    )

@@ -19,12 +19,11 @@ def get_public_config():
     parser.add_argument("--model_name", type=str, default="")
 
     parser.add_argument("--bs", type=int, default=64)
-    parser.add_argument("--seq_len", type=int, default=24)
-    parser.add_argument("--horizon", type=int, default=6)
+    parser.add_argument("--seq_len", type=int, default=None)
+    parser.add_argument("--horizon", type=int, default=None)
 
-    parser.add_argument("--feature", type=int, default=1)
-    parser.add_argument("--input_dim", type=int, default=1)
-    parser.add_argument("--output_dim", type=int, default=1)
+    parser.add_argument("--input_dim", type=int, default=None)
+    parser.add_argument("--output_dim", type=int, default=None)
 
     parser.add_argument("--max_epochs", type=int, default=2000)
     parser.add_argument("--patience", type=int, default=30)
@@ -33,7 +32,6 @@ def get_public_config():
 
     parser.add_argument("--quantile", action="store_true", default=False)
     parser.add_argument("--quantile_alpha", type=float, default=0.1)
-    parser.add_argument("--hour_day_month", action="store_true", default=False)
 
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--seed", type=int, default=2025)
@@ -78,9 +76,33 @@ def get_data_path():
 
 
 def print_args(logger, args):
-    if not args.not_print_args:
-        for k, v in vars(args).items():
-            logger.info(f"{k:20s}: {v}")
+    if args.not_print_args:
+        return
+
+    groups = {
+        "Data": ["dataset", "years", "seq_len", "horizon", "input_dim", "output_dim", "normalize"],
+        "Model": ["model_name"],
+        "Training": ["bs", "max_epochs", "patience", "lrate", "wdecay", "clip_grad_norm", "seed"],
+        "Quantile": ["quantile", "quantile_alpha"],
+        "System": ["device", "mode", "model_path", "export", "proj", "comment"],
+    }
+
+    known = {k for keys in groups.values() for k in keys}
+    all_vars = vars(args)
+
+    for group_name, keys in groups.items():
+        present = [(k, all_vars[k]) for k in keys if k in all_vars]
+        if not present:
+            continue
+        logger.info(f"--- {group_name} ---")
+        for k, v in present:
+            logger.info(f"  {k:20s}: {v}")
+
+    extra = {k: v for k, v in all_vars.items() if k not in known and k != "not_print_args"}
+    if extra:
+        logger.info("--- Model-specific ---")
+        for k, v in extra.items():
+            logger.info(f"  {k:20s}: {v}")
 
 
 def check_quantile(args, normal_model, quantile_model):

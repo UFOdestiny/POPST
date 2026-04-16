@@ -3,21 +3,12 @@ import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
-import numpy as np
 import torch
-
-from base.CQR_engine import CQR_Engine
+from base.runner import run_experiment
 from mamba_model import Mamba5
-from base.engine import BaseEngine
-from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
-from utils.dataloader import load_dataset, get_dataset_info
-from utils.log import get_logger
 
 
-def get_config():
-    parser = get_public_config()
-
-    # Mamba5 模型特定参数
+def add_args(parser):
     parser.add_argument("--d_model", type=int, default=96, help="模型维度")
     parser.add_argument("--num_heads", type=int, default=8, help="注意力头数 (Spatial)")
     parser.add_argument("--d_ff", type=int, default=256, help="前馈网络维度 (MoE)")
@@ -25,51 +16,22 @@ def get_config():
     parser.add_argument("--num_experts", type=int, default=2, help="MoE专家数量")
     parser.add_argument("--top_k", type=int, default=1, help="MoE激活的专家数")
     parser.add_argument("--window_size", type=int, default=4, help="滑动窗口大小")
-    
-    # Mamba 参数
     parser.add_argument("--d_state", type=int, default=16, help="SSM state dimension")
     parser.add_argument("--d_conv", type=int, default=4, help="SSM convolution kernel size")
     parser.add_argument("--expand", type=int, default=2, help="SSM expansion factor")
-
-    # 兼容性参数 (如果脚本中包含但未使用)
     parser.add_argument("--graph_embed_dim", type=int, default=16, help="Ignored")
     parser.add_argument("--ffn_expand", type=int, default=4, help="Ignored (use d_ff)")
-
-    # 训练参数
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=1e-4)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--clip_grad_value", type=float, default=5)
-
-    args = parser.parse_args()
-    args.model_name = "Mamba5"
-    if args.quantile:
-        args.model_name += "_CQR"
-    args.bs = 16
-
-    log_dir = get_log_path(args)
-    logger = get_logger(
-        log_dir,
-        __name__,
-    )
-    print_args(logger, args)
-
-    return args, log_dir, logger
+    parser.add_argument("--clip_grad_norm", type=float, default=5)
+    parser.set_defaults(bs=16)
 
 
-def main():
-    args, log_dir, logger = get_config()
-    set_seed(args.seed)
-    device = torch.device(args.device)
-
-    data_path, _, node_num = get_dataset_info(args.dataset)
-
-    dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
-
-    model = Mamba5(
+def build_model(args, node_num, **ctx):
+    return Mamba5(
         node_num=node_num,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
@@ -85,44 +47,15 @@ def main():
         dropout=args.dropout,
         d_state=args.d_state,
         d_conv=args.d_conv,
-        expand=args.expand
+        expand=args.expand,
     )
-
-    loss_fn = "MAE"
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lrate, weight_decay=args.wdecay
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.max_epochs, eta_min=1e-6
-    )
-
-    engine = engine_template(
-        device=device,
-        model=model,
-        dataloader=dataloader,
-        scaler=scaler,
-        sampler=None,
-        loss_fn=loss_fn,
-        lrate=args.lrate,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        clip_grad_value=args.clip_grad_value,
-        max_epochs=args.max_epochs,
-        patience=args.patience,
-        log_dir=log_dir,
-        logger=logger,
-        seed=args.seed,
-        normalize=args.normalize,
-        alpha=args.quantile_alpha,
-        metric_list=["MAE", "MAPE", "RMSE"],
-        args=args,
-    )
-
-    if args.mode == "train":
-        engine.train()
-    else:
-        engine.evaluate(args.mode, args.model_path, args.export)
 
 
 if __name__ == "__main__":
-    main()
+    run_experiment(
+        model_name="Mamba5",
+        add_args=add_args,
+        build_model=build_model,
+        make_optimizer=lambda m, a: torch.optim.AdamW(m.parameters(), lr=a.lrate, weight_decay=a.wdecay),
+        make_scheduler=lambda o, a: torch.optim.lr_scheduler.CosineAnnealingLR(o, T_max=a.max_epochs, eta_min=1e-6),
+    )

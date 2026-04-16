@@ -1,13 +1,18 @@
 # POPST
 
-POPST (Probabilistic and OD Prediction for SpatioTemporal data) is a unified benchmarking framework for spatiotemporal forecasting. It covers both **node-level flow prediction** (N -> N) and **origin-destination (OD) matrix forecasting** (N x N -> N x N), with a shared training engine, logging system, evaluation pipeline, and Conformal Quantile Regression (CQR) wrapper so that every model can be compared under identical conditions.
+POPST (Probabilistic and OD Prediction for SpatioTemporal data) is a unified benchmarking framework for spatiotemporal forecasting. It covers both **node-level flow prediction** and **origin-destination (OD) matrix forecasting**, with a shared training engine, logging system, evaluation pipeline, and Conformal Quantile Regression (CQR) wrapper.
 
 ## Key Features
 
-- **Unified Engine**: A single `BaseEngine` handles training loops, early stopping, checkpointing, and evaluation for all deep-learning models.
+- **Shared Runner**: `run_experiment()` in `base/runner.py` — every model's `main.py` reduces to a config dict + model class + one function call.
+- **Unified Engine**: `BaseEngine` handles training loops, early stopping, checkpointing, and evaluation.
 - **Conformal Quantile Regression**: `CQR_Engine` wraps any point-prediction model to produce calibrated prediction intervals with coverage guarantees.
-- **Comprehensive Metrics**: MAE, RMSE, MAPE, KL divergence, CRPS, MPIW, WINK, Coverage, Interval Score, and quantile loss.
-- **Multiple Scalers**: LogScaler, LogMinMaxScaler, StandardScaler (with OD-matrix mode), MinMaxScaler, and RatioScaler.
+- **Comprehensive Metrics**: MAE, RMSE, MAPE, KL divergence, CRPS, MPIW, WINK, Coverage, Interval Score, quantile loss.
+- **MinMaxScaler**: Single, simple normalization to [0, 1] with `info.json` serialization for reproducible inverse transforms.
+- **Config-driven Dataset Registry**: `utils/registry.yaml` defines all dataset paths and metadata — no hardcoded dicts.
+- **PyTorch DataLoader**: `TimeSeriesDataset` + `LoaderAdapter` wraps standard `torch.utils.data.DataLoader` with `num_workers` and `pin_memory` support.
+- **Efficiency Profiling**: Automatic hardware info, memory usage, inference time, and FLOPs reporting after every run.
+- **Auto-Configuration**: `seq_len`, `horizon`, `input_dim`, `output_dim` are auto-filled from `info.json` — no manual specification needed.
 - **Cross-Platform**: Runs on both Linux (HPC cluster) and Windows with automatic path and resource detection.
 
 ## Repository Layout
@@ -15,26 +20,30 @@ POPST (Probabilistic and OD Prediction for SpatioTemporal data) is a unified ben
 ```
 POPST/
   base/                   Core abstractions
-    model.py              BaseModel, QuantileOutputLayer, QuantileRegressor
+    runner.py             Shared experiment runner (run_experiment)
+    model.py              BaseModel, QuantileOutputLayer
     engine.py             BaseEngine (training, evaluation, checkpointing)
     CQR_engine.py         Conformal Quantile Regression engine
     metrics.py            All metric functions and the Metrics tracker
+    efficiency.py         Hardware info, memory/FLOPs/inference profiling
   utils/                  Shared utilities
     args.py               Argument parser, path config, set_seed, check_quantile
-    dataloader.py         DataLoader, dataset registry, dynamic graph construction
-    generate.py           Data generation, scalers (Standard, Log, LogMinMax, MinMax, Ratio)
+    dataloader.py         TimeSeriesDataset, LoaderAdapter, dataset registry (YAML)
+    generate.py           Data generation and MinMaxScaler
+    registry.yaml         Dataset metadata (paths, adjacency, node counts)
     graph_algo.py         Graph normalization (symmetric, asymmetric, Chebyshev, scaled Laplacian)
     get_adj_mat.py        Adjacency matrix construction from geographic data
     log.py                Logger with rotating file handler
   src/
-    flow/                 Flow prediction models (N -> N)
-    od/                   OD matrix prediction models (N x N -> N x N)
+    flow/                 Flow prediction models
+    od/                   OD matrix prediction models
+  jobs/                   Slurm job scripts for HPC
   res.py                  Result visualization and analysis
 ```
 
 ## Supported Models
 
-### Flow Prediction (N -> N)
+### Flow Prediction
 
 Located in `src/flow/`:
 
@@ -46,17 +55,17 @@ Located in `src/flow/`:
 | **Probabilistic** | GluonTS |
 | **Baselines** | HL (Historical Last), STTN |
 
-### OD Matrix Prediction (N x N -> N x N)
+### OD Matrix Prediction
 
 Located in `src/od/`:
 
 | Category | Models |
 | --- | --- |
-| **Graph Neural Networks** | AGCRN, ASTGCN, GWNET, MPGCN, STGCN, STGODE |
+| **Graph Neural Networks** | AGCRN, ASTGCN, GWNET, STGCN, STGODE |
 | **Sequence / MLP** | LSTM, STTN, ODMixer |
 | **Specialized OD** | STZINB, GMEL, HMDLF, MYOD |
-| **Statistical** | ARIMA, SARIMA, VAR |
-| **Baselines** | HA (Historical Average), HL (Historical Last) |
+| **Statistical** | ARIMA, SARIMA, VAR, HA (Historical Average) |
+| **Baselines** | HL (Historical Last) |
 
 ## Getting Started
 
@@ -64,35 +73,48 @@ Located in `src/od/`:
 
 - Python 3.8+
 - PyTorch >= 1.10
-- NumPy, SciPy, statsmodels
-- Optional: `geopandas`, `shapely` (for adjacency matrix generation), `psutil` (for Windows memory tracking)
+- NumPy, PyYAML, statsmodels, psutil
 
 ### Data Preparation
 
-Datasets should follow this directory structure:
+Datasets follow this directory structure:
 
 ```
 <data_root>/
   <dataset_name>/
     adj.npy                 # Adjacency matrix (N x N)
     <year>/
-      his.npz               # Normalized data tensor + optional scaler params (min, max)
+      his.npz               # Normalized data + scaler params (min, max)
+      info.json             # Data metadata (shape, scaler, splits, config)
       idx_train.npy          # Training sample indices
       idx_val.npy            # Validation sample indices
       idx_test.npy           # Test sample indices
 ```
 
-Use `utils/generate.py` to create `his.npz` and index files from raw data. Use `utils/get_adj_mat.py` to build adjacency matrices from geographic shapefiles.
+Use `utils/generate.py` to create `his.npz`, `info.json`, and index files from raw data:
 
-Configure the dataset root path in `utils/args.py` by editing `_SYSTEM_CONFIG`.
+```bash
+# Flow data
+python utils/generate.py --dataset Tally_User --years 2018 --mode flow
 
-### Supported Datasets
+# OD data
+python utils/generate.py --dataset nyc_bike --years 2018 --mode od
+```
 
-The framework includes configurations for: NYISO, CAISO, NYC, Chicago, Shenzhen, Tallahassee, SafeGraph (FL/CA/TX/NY), and various NYC/Shenzhen OD datasets (taxi, bike, subway).
+Use `utils/get_adj_mat.py` to build adjacency matrices from geographic shapefiles.
+
+Register new datasets in `utils/registry.yaml`:
+
+```yaml
+MyDataset:
+  data: /MyDataset
+  adj: /MyDataset/adj.npy
+  nodes: 100
+```
 
 ### Usage
 
-Each model is self-contained in its own directory. To train a model, run its `main.py`:
+Each model's `main.py` uses the shared runner:
 
 ```bash
 # Flow prediction
@@ -104,49 +126,97 @@ python src/od/gwnet/main.py --dataset nyc_taxi_od --years 2018
 # With Conformal Quantile Regression
 python src/flow/gwnet/main.py --dataset NYISO --years 2018 --quantile --quantile_alpha 0.1
 
-# Test mode with a saved model
-python src/flow/stgcn/main.py --dataset NYISO --years 2018 --mode test --model_path /path/to/model.pt
+# Test mode
+python src/flow/stgcn/main.py --dataset NYISO --years 2018 --mode test
 
 # Export predictions
 python src/flow/stgcn/main.py --dataset NYISO --years 2018 --mode test --export
 ```
 
-### Common Arguments
+### HPC (Slurm)
+
+Submit experiment jobs from the `jobs/` directory:
+
+```bash
+sbatch jobs/half.sh        # Half experiment (all flow models)
+bash jobs/run_all.sh       # Submit all experiments
+```
+
+## Arguments Reference
+
+### Data Arguments
 
 | Argument | Default | Description |
 | --- | --- | --- |
-| `--dataset` | `CAISO` | Dataset name (must match `get_dataset_info` registry) |
+| `--dataset` | `CAISO` | Dataset name (must match `registry.yaml`) |
 | `--years` | `2018` | Data sub-folder for the time period |
-| `--seq_len` | `24` | Input sequence length |
-| `--horizon` | `6` | Prediction horizon |
+| `--seq_len` | auto | Input sequence length. Auto-filled from `info.json` if not specified |
+| `--horizon` | auto | Prediction horizon. Auto-filled from `info.json` if not specified |
+| `--input_dim` | auto | Number of input features. Auto-filled from data shape in `info.json` |
+| `--output_dim` | auto | Number of output features. Defaults to `input_dim` if not specified |
+| `--normalize` | `True` | Apply MinMaxScaler normalization. Use `--no_normalize` to disable |
+
+### Training Arguments
+
+| Argument | Default | Description |
+| --- | --- | --- |
 | `--bs` | `64` | Batch size |
 | `--max_epochs` | `2000` | Maximum training epochs |
-| `--patience` | `30` | Early stopping patience |
-| `--quantile` | `True` | Enable CQR prediction intervals |
-| `--quantile_alpha` | `0.1` | Significance level for prediction intervals |
-| `--mode` | `train` | `train` or `test` |
-| `--export` | `False` | Save predictions as `.npy` file |
-| `--seed` | `2026` | Random seed |
+| `--patience` | `30` | Early stopping patience (epochs without validation improvement) |
+| `--seed` | `2025` | Random seed for reproducibility |
 
-## Results
+### Quantile Arguments
 
-Experiment logs, model checkpoints (`.pt`), and exported predictions (`.npy`) are saved to the path configured in `_SYSTEM_CONFIG`. Use `res.py` to load and visualize exported results.
+| Argument | Default | Description |
+| --- | --- | --- |
+| `--quantile` | `False` | Enable CQR prediction intervals |
+| `--quantile_alpha` | `0.1` | Significance level for prediction intervals (1 - coverage) |
+
+### System Arguments
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `--device` | `cuda` | Device to use (`cuda` or `cpu`) |
+| `--mode` | `train` | Execution mode: `train` or `test` |
+| `--model_path` | -- | Path to a specific model checkpoint (for test mode) |
+| `--export` | `False` | Save predictions and test data as `.npy` files |
+| `--proj` | -- | Project name for organizing results into sub-folders |
+| `--comment` | -- | Optional comment for the experiment |
+| `--not_print_args` | `False` | Suppress argument logging at startup |
+
+### Auto-Configuration
+
+When `seq_len`, `horizon`, `input_dim`, or `output_dim` are not specified via CLI, they are automatically filled from the dataset's `info.json`:
+
+- **seq_len** from `config.seq_length_x` (fallback: 12)
+- **horizon** from `config.seq_length_y` (fallback: 1)
+- **input_dim** from last dimension of `raw_data.shape` (fallback: 1)
+- **output_dim** defaults to `input_dim` (models predict all input features)
+
+For OD models that reshape input dimensions, `setup()` can override these values after auto-fill.
 
 ## Architecture
 
-```
-main.py  -->  BaseEngine / CQR_Engine  -->  BaseModel (subclass)
-   |               |                            |
-   |          train / evaluate              forward(x)
-   |               |                            |
-   +--- DataLoader + Scaler             QuantileOutputLayer (optional)
-   |               |
-   +--- Metrics    +--- save_model / load_model
-```
+### Execution Flow
 
-- **BaseModel** provides `param_num()`, `horizon` property, and dimension tracking (`seq_len`, `node_num`, `input_dim`, `output_dim`).
-- **BaseEngine** handles the training loop with gradient clipping, learning rate scheduling, early stopping, GPU/CPU memory logging, and per-horizon test evaluation.
-- **CQR_Engine** extends any engine with conformal calibration: it fits nonconformity scores on a calibration set and adjusts quantile bounds for valid coverage.
+1. **Parse arguments**: CLI args + model-specific args merged
+2. **Auto-fill**: `seq_len`, `horizon`, `input_dim`, `output_dim` from `info.json`
+3. **Load data**: `TimeSeriesDataset` -> `DataLoader` -> `LoaderAdapter`
+4. **Setup callback**: Model-specific preprocessing (adjacency matrices, etc.)
+5. **Print args**: Grouped display (Data / Model / Training / System / Model-specific)
+6. **Build model**: Construct model with final arg values
+7. **Create engine**: `BaseEngine` or `CQR_Engine` with optimizer and scheduler
+8. **Train**: Epoch loop with early stopping, validation, periodic test evaluation
+9. **Test**: Per-horizon metric evaluation with optional export
+10. **Profile**: Hardware info, memory, inference time, FLOPs
+
+### Key Design Decisions
+
+- **run_experiment()** orchestrates the full pipeline. Each model only provides: `add_args()`, `build_model()`, and optionally `setup()`, `make_optimizer()`, `make_scheduler()`.
+- **BaseModel** provides `param_num()`, `horizon` property, and dimension tracking.
+- **BaseEngine** handles gradient clipping, LR scheduling, early stopping, checkpointing, and per-horizon test evaluation.
+- **CQR_Engine** extends any engine with conformal calibration for valid coverage prediction intervals.
+- **profile_efficiency** runs after every experiment to report hardware, memory, timing, and FLOPs.
 
 ## Acknowledgements
 

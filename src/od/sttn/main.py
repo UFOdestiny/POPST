@@ -1,24 +1,18 @@
 import os
 import sys
 
-
 sys.path.append(os.path.abspath(__file__ + '/../../../../'))
 
-from base.CQR_engine import CQR_Engine
-import torch
 import numpy as np
-
+import torch
+from base.runner import run_experiment
 from sttn_model import STTN
-from base.engine import BaseEngine
-from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
-from utils.dataloader import load_adj_from_numpy, load_dataset, get_dataset_info
-from utils.log import get_logger
-from utils.graph_algo import normalize_adj_mx
 from sttn_engine import STTN_Engine
+from utils.dataloader import load_adj_from_numpy
+from utils.graph_algo import normalize_adj_mx
 
-def get_config():
-    parser = get_public_config()
 
+def add_args(parser):
     parser.add_argument("--rank_s", type=int, default=2)
     parser.add_argument("--rank_t", type=int, default=2)
     parser.add_argument("--hidden_dim_s", type=int, default=2)
@@ -30,39 +24,20 @@ def get_config():
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=1e-4)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--clip_grad_value", type=float, default=5)
-    args = parser.parse_args()
-    args.bs = 8
-    
-    args.model_name = "STTN"
-    if args.quantile:
-        args.model_name += "_CQR"
-    log_dir = get_log_path(args)
-    logger = get_logger(
-        log_dir,
-        __name__,
-    )
-    print_args(logger, args)
-
-    return args, log_dir, logger
+    parser.add_argument("--clip_grad_norm", type=float, default=5)
+    parser.set_defaults(bs=8)
 
 
-def main():
-    args, log_dir, logger = get_config()
-    set_seed(args.seed)
-    device = torch.device(args.device)
-
-    data_path, adj_path, node_num = get_dataset_info(args.dataset)
-
+def setup(args, data_path, adj_path, node_num, device, logger):
     adj_mx = load_adj_from_numpy(adj_path)
     adj_mx = adj_mx - np.eye(node_num)
     gso = normalize_adj_mx(adj_mx, "uqgnn")[0]
+    return dict(gso=gso, device=device)
 
-    dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, STTN_Engine, CQR_Engine)
 
-    model = STTN(
-        A=gso,
+def build_model(args, node_num, **ctx):
+    return STTN(
+        A=ctx["gso"],
         seq_len=args.seq_len,
         node_num=node_num,
         hidden_dim_t=args.hidden_dim_t,
@@ -71,48 +46,21 @@ def main():
         rank_s=args.rank_s,
         num_timesteps_input=args.seq_len,
         num_timesteps_output=args.horizon,
-        device=device,
+        device=ctx["device"],
         input_dim=args.input_dim,
         output_dim=args.output_dim,
         min_vec=args.min_vec,
     )
 
-    loss_fn = "MGAU"
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=args.lrate, weight_decay=args.wdecay
-    )
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=args.step_size, gamma=args.gamma
-    )
-
-    engine = engine_template(
-        device=device,
-        model=model,
-        dataloader=dataloader,
-        scaler=scaler,
-        sampler=None,
-        loss_fn=loss_fn,
-        lrate=args.lrate,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        clip_grad_value=args.clip_grad_value,
-        max_epochs=args.max_epochs,
-        patience=args.patience,
-        log_dir=log_dir,
-        logger=logger,
-        seed=args.seed,
-        normalize=args.normalize,
-        alpha=args.quantile_alpha,
-        metric_list=["MSE", "MAE", "MAPE", "RMSE"],
-
-        args=args,
-    )
-
-    if args.mode == "train":
-        engine.train()
-    else:
-        engine.evaluate(args.mode, args.model_path, args.export)
-
 
 if __name__ == "__main__":
-    main()
+    run_experiment(
+        model_name="STTN",
+        add_args=add_args,
+        build_model=build_model,
+        loss_fn="MGAU",
+        engine_cls=STTN_Engine,
+        setup=setup,
+        metric_list=["MSE", "MAE", "MAPE", "RMSE"],
+        make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
+    )

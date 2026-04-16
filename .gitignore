@@ -1,17 +1,69 @@
-*.sh
-*.zip
-*.vscode
-*.log
-*.ipynb
-
 output
-res
 result
-data
-dataset
 datasets
 bash
-core.*
 EnergyAssimilation
+.vscode
+.github
+
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 训练输出 (不要提交大文件到 git)
+outputs/
+checkpoints/
+wandb/
+logs/
+
+# 数据 (大数据集不应提交)
+# data/
+*.arrow
+*.parquet
+
+# 模型权重
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.gguf
+
+# HuggingFace 缓存
+.cache/
+hf_cache/
+
+# SLURM 日志
+*.log
+*.err
+slurm-*.out
+
+# Jupyter
+.ipynb_checkpoints/
+# *.ipynb
+*.png
+
+# 环境变量文件 (可能包含 API Key)
+.env
+.env.*

@@ -1,33 +1,100 @@
+import json
 import math
 import os
-import pickle
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import torch
+from torch.utils.data import Dataset, DataLoader as TorchDataLoader
+import yaml
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
 from utils.args import get_data_path
-from utils.generate import LogMinMaxScaler, LogScaler
-from scipy.spatial import distance
+from utils.generate import MinMaxScaler
 
 
-def _pad_indices(indices, batch_size):
-    if batch_size <= 0:
-        raise ValueError("batch_size must be positive")
-    remainder = len(indices) % batch_size
-    if remainder == 0:
-        return indices
-    num_padding = batch_size - remainder
-    padding = np.repeat(indices[-1:], num_padding, axis=0)
-    return np.concatenate([indices, padding], axis=0)
+# ── PyTorch Dataset + Adapter ────────────────────────────────────────────
+
+
+class TimeSeriesDataset(Dataset):
+    """PyTorch Dataset for sliding-window time series.
+
+    Each sample is an ``(x, y)`` pair created from index offsets:
+    - ``x = data[idx + x_offsets]``  (input window)
+    - ``y = data[idx + y_offsets]``  (prediction horizon)
+    """
+
+    def __init__(self, data, indices, seq_len, horizon):
+        self.data = np.asarray(data, dtype=np.float32)
+        self.indices = np.asarray(indices)
+        self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
+        self.y_offsets = np.arange(1, (horizon + 1), 1)
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        i = self.indices[idx]
+        x = self.data[i + self.x_offsets]
+        y = self.data[i + self.y_offsets]
+        return torch.from_numpy(x), torch.from_numpy(y)
 
 
 def _compute_num_batches(size, batch_size, droplast):
     if droplast:
         return size // batch_size
     return math.ceil(size / batch_size) if batch_size else 0
+
+
+class LoaderAdapter:
+    """Wraps a PyTorch DataLoader to expose the ``.shuffle()`` / ``.get_iterator()``
+    interface expected by :class:`base.engine.BaseEngine`.
+    """
+
+    def __init__(
+        self,
+        dataset,
+        batch_size,
+        shuffle=False,
+        drop_last=False,
+        num_workers=0,
+        pin_memory=False,
+        logger=None,
+        name=None,
+    ):
+        self.dataset = dataset
+        self.bs = batch_size
+        self._shuffle = shuffle
+        self._drop_last = drop_last
+        self._num_workers = num_workers
+        self._pin_memory = pin_memory
+        self.size = len(dataset)
+        self.num_batch = _compute_num_batches(self.size, batch_size, drop_last)
+        if logger:
+            loader_name = name or "loader"
+            logger.info(
+                f"{loader_name:5s} num: {self.size},\tBatch num: {self.num_batch}"
+            )
+
+    def shuffle(self):
+        pass
+
+    def get_iterator(self):
+        loader = TorchDataLoader(
+            self.dataset,
+            batch_size=self.bs,
+            shuffle=self._shuffle,
+            drop_last=self._drop_last,
+            num_workers=self._num_workers,
+            pin_memory=self._pin_memory,
+        )
+        return iter(loader)
+
+
+# ── Data loading ─────────────────────────────────────────────────────────
 
 
 def _load_data_dir(data_path, years):
@@ -38,68 +105,22 @@ def _load_indices(data_dir, split):
     return np.load(data_dir / f"idx_{split}.npy")
 
 
-class DataLoader(object):
-    def __init__(
-        self,
-        data,
-        idx,
-        seq_len,
-        horizon,
-        bs,
-        logger,
-        name=None,
-        pad_last_sample=False,
-        droplast=False,
-    ):
-        if pad_last_sample:
-            idx = _pad_indices(idx, bs)
-
-        self.data = np.asarray(data)
-        self.idx = np.asarray(idx)
-        self.size = len(self.idx)
-        self.bs = bs
-        self.droplast = droplast
-        self.num_batch = _compute_num_batches(self.size, self.bs, droplast)
-
-        self.current_ind = 0
-        loader_name = name or "loader"
-        logger.info(f"{loader_name:5s} num: {self.idx.shape[0]},\tBatch num: {self.num_batch}")        
-        self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
-        self.y_offsets = np.arange(1, (horizon + 1), 1)
-        self.seq_len = seq_len
-        self.horizon = horizon
-
-    def shuffle(self):
-        perm = np.random.permutation(self.size)
-        self.idx = self.idx[perm]
-
-    def get_iterator(self):
-        self.current_ind = 0
-
-        def _wrapper():
-            while self.current_ind < self.num_batch:
-                start_ind = self.bs * self.current_ind
-                end_ind = min(self.size, self.bs * (self.current_ind + 1))
-                idx_ind = np.asarray(self.idx[start_ind:end_ind]).reshape(-1)
-                if len(idx_ind) == 0:
-                    break
-                if self.droplast and len(idx_ind) < self.bs:
-                    self.current_ind += 1
-                    continue
-
-                x_indices = idx_ind[:, None] + self.x_offsets
-                y_indices = idx_ind[:, None] + self.y_offsets
-
-                x = self.data[x_indices, ...].astype(np.float32, copy=False)
-                y = self.data[y_indices, ...].astype(np.float32, copy=False)
-
-                yield x, y
-                self.current_ind += 1
-
-        return _wrapper()
+def _load_scaler(data_dir, ptr):
+    """Reconstruct scaler from meta.json (preferred) or fall back to npz min/max."""
+    meta_path = data_dir / "meta.json"
+    if meta_path.exists():
+        with open(meta_path) as f:
+            meta = json.load(f)
+        from utils.generate import reconstruct_scaler
+        return reconstruct_scaler(meta)
+    # Legacy fallback: reconstruct MinMaxScaler from npz keys
+    if "min" in ptr:
+        return MinMaxScaler(data_min=float(ptr["min"]), data_max=float(ptr["max"]))
+    raise ValueError(f"No meta.json or min/max keys found in {data_dir}")
 
 
 def load_dataset_plain(data_path, args, logger, drop=False):
+    """Load dataset as plain numpy arrays (for statistical models)."""
     data_dir = _load_data_dir(data_path, args.years)
     ptr = np.load(data_dir / "his.npz")
     logger.info(f"{'Data shape':20s}: {ptr['data'].shape}")
@@ -108,10 +129,12 @@ def load_dataset_plain(data_path, args, logger, drop=False):
     for cat in ["train", "val", "test"]:
         idx = _load_indices(data_dir, cat)
         xy.append(X[idx])
-    return xy, LogScaler()
+    scaler = _load_scaler(data_dir, ptr)
+    return xy, scaler
 
 
 def load_dataset(data_path, args, logger, drop=False):
+    """Load dataset as PyTorch DataLoader dict (for neural models)."""
     data_dir = _load_data_dir(data_path, args.years)
     ptr = np.load(data_dir / "his.npz")
     logger.info(f"{'Data shape':20s}: {ptr['data'].shape}")
@@ -121,205 +144,74 @@ def load_dataset(data_path, args, logger, drop=False):
     dataloader = {}
     for cat in ["train", "val", "test"]:
         idx = _load_indices(data_dir, cat)
-        dataloader[f"{cat}_loader"] = DataLoader(
-            X, idx, args.seq_len, args.horizon, args.bs, logger, cat, droplast=drop
+        ds = TimeSeriesDataset(X, idx, args.seq_len, args.horizon)
+        dataloader[f"{cat}_loader"] = LoaderAdapter(
+            ds,
+            batch_size=args.bs,
+            shuffle=(cat == "train"),
+            drop_last=drop,
+            logger=logger,
+            name=cat,
         )
 
-    scaler = LogMinMaxScaler(ptr["min"], ptr["max"]) if "min" in ptr else LogScaler()
-
+    scaler = _load_scaler(data_dir, ptr)
     return dataloader, scaler
 
 
-class DataLoader_MPGCN(object):
-    def __init__(
-        self,
-        data,
-        idx,
-        seq_len,
-        horizon,
-        bs,
-        logger,
-        adj_O,
-        adj_D,
-        name=None,
-        pad_last_sample=False,
-        droplast=False,
-    ):
-        if pad_last_sample:
-            idx = _pad_indices(idx, bs)
-
-        self.data = np.asarray(data)
-        self.idx = np.asarray(idx)
-        self.size = len(self.idx)
-        self.bs = bs
-        self.droplast = droplast
-        self.num_batch = _compute_num_batches(self.size, self.bs, droplast)
-        self.current_ind = 0
-        loader_name = name or "loader"
-        logger.info(f"{loader_name:5s} num: {self.idx.shape[0]:5d},\tBatch num: {self.num_batch:5d}")
-        self.x_offsets = np.arange(-(seq_len - 1), 1, 1)
-        self.y_offsets = np.arange(1, (horizon + 1), 1)
-        self.seq_len = seq_len
-        self.horizon = horizon
-        self.O = adj_O
-        self.D = adj_D
-
-    def shuffle(self):
-        perm = np.random.permutation(self.size)
-        self.idx = self.idx[perm]
-
-    def get_iterator(self):
-        self.current_ind = 0
-
-        def _wrapper():
-            while self.current_ind < self.num_batch:
-                start_ind = self.bs * self.current_ind
-                end_ind = min(self.size, self.bs * (self.current_ind + 1))
-                idx_ind = np.asarray(self.idx[start_ind:end_ind]).reshape(-1)
-                if len(idx_ind) == 0:
-                    break
-                if self.droplast and len(idx_ind) < self.bs:
-                    self.current_ind += 1
-                    continue
-
-                x_indices = idx_ind[:, None] + self.x_offsets
-                y_indices = idx_ind[:, None] + self.y_offsets
-                x = self.data[x_indices, ...].astype(np.float32, copy=False)
-                y = self.data[y_indices, ...].astype(np.float32, copy=False)
-
-                period = self.O.shape[-1]
-                adj_index = np.mod(idx_ind, period)
-                adj_o = self.O[:, :, adj_index].transpose(2, 0, 1)
-                adj_d = self.D[:, :, adj_index].transpose(2, 0, 1)
-
-                yield x, y, adj_o, adj_d
-                self.current_ind += 1
-
-        return _wrapper()
-
-
-def construct_dyn_G(OD_data: np.array, perceived_period: int = 6):
-    """Construct dynamic graphs based on OD history using vectorized cosine distance."""
-
-    train_len = int(OD_data.shape[0] * 0.8)
-    num_periods_in_history = train_len // perceived_period
-    OD_history = OD_data[: num_periods_in_history * perceived_period, :, :, :]
-
-    O_dyn_G, D_dyn_G = [], []
-    for t in range(perceived_period):
-        OD_t_avg = np.mean(OD_history[t::perceived_period, :, :, :], axis=0).squeeze(
-            axis=-1
-        )
-
-        # Vectorized cosine distance computation
-        O_G_t = distance.cdist(OD_t_avg, OD_t_avg, metric="cosine")
-        D_G_t = distance.cdist(OD_t_avg.T, OD_t_avg.T, metric="cosine")
-
-        O_dyn_G.append(O_G_t)
-        D_dyn_G.append(D_G_t)
-
-    return np.stack(O_dyn_G, axis=-1), np.stack(D_dyn_G, axis=-1)
-
-
-def load_dataset_MPGCN(data_path, args, logger):
-    data_dir = _load_data_dir(data_path, args.years)
-    ptr = np.load(data_dir / "his.npz")
-    logger.info(f"Data shape: {ptr['data'].shape}")
-    X = ptr["data"]
-
-    adjo, adjd = construct_dyn_G(X[..., np.newaxis])
-
-    dataloader = {}
-    for cat in ["train", "val", "test"]:
-        idx = _load_indices(data_dir, cat)
-        dataloader[f"{cat}_loader"] = DataLoader_MPGCN(
-            X, idx, args.seq_len, args.horizon, args.bs, logger, adjo, adjd, cat
-        )
-
-    scaler = LogScaler()
-    return dataloader, scaler
-
-
-def load_adj_from_pickle(pickle_file):
-    try:
-        with open(pickle_file, "rb") as f:
-            pickle_data = pickle.load(f)
-    except UnicodeDecodeError:
-        with open(pickle_file, "rb") as f:
-            pickle_data = pickle.load(f, encoding="latin1")
-    except Exception as e:
-        print(f"Unable to load data {pickle_file}: {e}")
-        raise
-    return pickle_data
+# ── Adjacency helpers ────────────────────────────────────────────────────
 
 
 def load_adj_from_numpy(numpy_file):
     return np.load(numpy_file)
 
 
-def get_dataset_info(dataset):
-    # base_dir = os.getcwd() + '/data/'
+# ── Dataset registry ─────────────────────────────────────────────────────
+
+
+_REGISTRY_PATH = Path(__file__).parent / "registry.yaml"
+
+
+@lru_cache(maxsize=1)
+def _load_registry():
+    with open(_REGISTRY_PATH, "r") as f:
+        return yaml.safe_load(f)
+
+
+def get_dataset_info(dataset, years=None):
+    """Return ``(data_path, adj_path, node_num)`` for *dataset*.
+
+    ``data_path`` and ``adj_path`` come from ``utils/registry.yaml``.
+    ``node_num`` is read from ``info.json`` (or ``meta.json``) inside the
+    data directory; if *years* is not provided, defaults to ``None``.
+    """
     base_dir = get_data_path()
+    registry = _load_registry()
+    if dataset not in registry:
+        raise KeyError(
+            f"Dataset '{dataset}' not found in registry. "
+            f"Available: {', '.join(sorted(registry))}"
+        )
+    entry = registry[dataset]
+    data_path = base_dir + entry["data"]
+    adj_path = base_dir + entry["adj"]
 
-    d = {
-        # Flow Prediction: N -> N
-        "Shenzhen": [base_dir + "shenzhen", base_dir + "shenzhen/adj.npy", 491],
-        "Shenzhen2": [base_dir + "shenzhen2", base_dir + "shenzhen2/adj.npy", 491],
-        "NYC": [base_dir + "nyc", base_dir + "nyc/adj.npy", 67],
-        "NYC_Crash": [base_dir + "nyc_crash", base_dir + "nyc_crash/adj.npy", 42],
-        "NYC_Combine": [base_dir + "nyc_combine", base_dir + "nyc_combine/adj.npy", 42],
-        "Chicago": [base_dir + "chicago", base_dir + "chicago/adj.npy", 77],
-        "NYISO": [base_dir + "nyiso", base_dir + "nyiso/adj.npy", 11],
-        "CAISO": [base_dir + "caiso", base_dir + "caiso/adj.npy", 9],
-        "Tallahassee": [base_dir + "Tallahassee", base_dir + "Tallahassee/adj.npy", 201],
-        "Tally_User": [base_dir + "Tally_User", base_dir + "Tally_User/adj.npy", 5000],
-        "NYISO_HDM": [base_dir + "nyiso_hdm", base_dir + "nyiso/adj.npy", 11],
-        "CAISO_HDM": [base_dir + "caiso_hdm", base_dir + "caiso/adj.npy", 9],
-        "Tallahassee_HDM": [
-            base_dir + "tallahassee_hdm",
-            base_dir + "tallahassee/adj.npy",
-            9,
-        ],
-        "panhandle": [base_dir + "panhandle", base_dir + "panhandle/adj.npy", 924],
+    # Read node_num from generated info.json / meta.json
+    node_num = None
+    if years is not None:
+        data_dir = Path(data_path) / years
+        info_path = data_dir / "info.json"
+        meta_path = data_dir / "meta.json"
+        if info_path.exists():
+            with open(info_path) as f:
+                info = json.load(f)
+            shape = info.get("raw_data", {}).get("shape") or info.get("transformed_data", {}).get("shape")
+            if shape and len(shape) >= 2:
+                node_num = shape[1]  # (T, N, ...) → N
+        elif meta_path.exists():
+            with open(meta_path) as f:
+                meta = json.load(f)
+            shape = meta.get("data_shape")
+            if shape and len(shape) >= 2:
+                node_num = shape[1]
 
-        "safegraph_fl": [base_dir + "safegraph_fl", base_dir + "safegraph_fl/adj.npy", 67],
-        "safegraph_ca": [base_dir + "safegraph_ca", base_dir + "safegraph_ca/adj.npy", 58],
-        "safegraph_tx": [base_dir + "safegraph_tx", base_dir + "safegraph_tx/adj.npy", 254],
-        "safegraph_ny": [base_dir + "safegraph_ny", base_dir + "safegraph_ny/adj.npy", 62],
-
-        # OD Prediction: N*N -> N*N
-        "sz_taxi_od": [base_dir + "sz_taxi_od", base_dir + "shenzhen/adj.npy", 491],
-        "sz_bike_od": [base_dir + "sz_bike_od", base_dir + "shenzhen/adj.npy", 491],
-        "sz_subway_bike_od": [
-            base_dir + "sz_subway_bike_od",
-            base_dir + "shenzhen/adj.npy",
-            491,
-        ],
-        "sz_subway_taxi_od": [
-            base_dir + "sz_subway_taxi_od",
-            base_dir + "shenzhen/adj.npy",
-            491,
-        ],
-        "nyc_subway_bike_od": [
-            base_dir + "nyc_subway_bike_od",
-            base_dir + "nyc_taxi_od/adj.npy",
-            67,
-        ],
-        "nyc_subway_taxi_od": [
-            base_dir + "nyc_subway_taxi_od",
-            base_dir + "nyc_taxi_od/adj.npy",
-            67,
-        ],
-        "sz_dd_od": [base_dir + "sz_dd_od", base_dir + "shenzhen/adj.npy", 491],
-        "sz_subway_od": [base_dir + "sz_subway_od", base_dir + "shenzhen/adj.npy", 491],
-        "nyc_taxi_od": [base_dir + "nyc_taxi_od", base_dir + "nyc_taxi_od/adj.npy", 67],
-        "nyc_bike_od": [base_dir + "nyc_bike_od", base_dir + "nyc_taxi_od/adj.npy", 67],
-        "nyc_subway_od": [
-            base_dir + "nyc_subway_od",
-            base_dir + "nyc_taxi_od/adj.npy",
-            67,
-        ],
-    }
-
-    assert dataset in d.keys()
-    return d[dataset]
+    return [data_path, adj_path, node_num]

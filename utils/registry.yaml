@@ -1,0 +1,130 @@
+# Dataset registry — maps dataset names to data/adj paths.
+# Paths are relative to the data base directory (platform-specific).
+# Node count is read from info.json at load time.
+
+# ── Flow Prediction: N → N ────────────────────────────────────────────
+nyc_mobility:
+  data: nyc_mobility
+  adj: nyc_mobility/nyc_adj.npy
+
+chicago_mobility:
+  data: chicago_mobility
+  adj: chicago_mobility/chicago_adj.npy
+
+Shenzhen:
+  data: shenzhen
+  adj: shenzhen/adj.npy
+
+Shenzhen2:
+  data: shenzhen2
+  adj: shenzhen2/adj.npy
+
+NYC:
+  data: nyc
+  adj: nyc/adj.npy
+
+NYC_Crash:
+  data: nyc_crash
+  adj: nyc_crash/adj.npy
+
+NYC_Combine:
+  data: nyc_combine
+  adj: nyc_combine/adj.npy
+
+Chicago:
+  data: chicago
+  adj: chicago/adj.npy
+
+NYISO:
+  data: nyiso
+  adj: nyiso/adj.npy
+
+CAISO:
+  data: caiso
+  adj: caiso/adj.npy
+
+Tallahassee:
+  data: Tallahassee
+  adj: Tallahassee/adj.npy
+
+Tally_User:
+  data: Tally_User
+  adj: Tally_User/adj.npy
+
+NYISO_HDM:
+  data: nyiso_hdm
+  adj: nyiso/adj.npy
+
+CAISO_HDM:
+  data: caiso_hdm
+  adj: caiso/adj.npy
+
+Tallahassee_HDM:
+  data: tallahassee_hdm
+  adj: tallahassee/adj.npy
+
+panhandle:
+  data: panhandle
+  adj: panhandle/adj.npy
+
+safegraph_fl:
+  data: safegraph_fl
+  adj: safegraph_fl/adj.npy
+
+safegraph_ca:
+  data: safegraph_ca
+  adj: safegraph_ca/adj.npy
+
+safegraph_tx:
+  data: safegraph_tx
+  adj: safegraph_tx/adj.npy
+
+safegraph_ny:
+  data: safegraph_ny
+  adj: safegraph_ny/adj.npy
+
+# ── OD Prediction: N×N → N×N ──────────────────────────────────────────
+sz_taxi_od:
+  data: sz_taxi_od
+  adj: shenzhen/adj.npy
+
+sz_bike_od:
+  data: sz_bike_od
+  adj: shenzhen/adj.npy
+
+sz_subway_bike_od:
+  data: sz_subway_bike_od
+  adj: shenzhen/adj.npy
+
+sz_subway_taxi_od:
+  data: sz_subway_taxi_od
+  adj: shenzhen/adj.npy
+
+nyc_subway_bike_od:
+  data: nyc_subway_bike_od
+  adj: nyc_taxi_od/adj.npy
+
+nyc_subway_taxi_od:
+  data: nyc_subway_taxi_od
+  adj: nyc_taxi_od/adj.npy
+
+sz_dd_od:
+  data: sz_dd_od
+  adj: shenzhen/adj.npy
+
+sz_subway_od:
+  data: sz_subway_od
+  adj: shenzhen/adj.npy
+
+nyc_taxi_od:
+  data: nyc_taxi_od
+  adj: nyc_taxi_od/adj.npy
+
+nyc_bike_od:
+  data: nyc_bike_od
+  adj: nyc_taxi_od/adj.npy
+
+nyc_subway_od:
+  data: nyc_subway_od
+  adj: nyc_taxi_od/adj.npy
+

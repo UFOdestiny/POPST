@@ -1,53 +1,24 @@
 import os
-import numpy as np
 import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
-from base.engine import BaseEngine
-from base.CQR_engine import CQR_Engine
+from base.runner import run_experiment, NO_OPTIMIZER
 from var_engine import VAR_Engine
-import torch
-
 from var_model import VAR
-from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
-from utils.dataloader import load_dataset, get_dataset_info, load_dataset_plain
-from utils.log import get_logger
+from utils.dataloader import load_dataset_plain
 
 
-def get_config():
-    parser = get_public_config()
-
+def add_args(parser):
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=5e-4)
-    args = parser.parse_args()
-
-    args.model_name = "VAR"
-    if args.quantile:
-        args.model_name += "_CQR"
-    log_dir = get_log_path(args)
-    logger = get_logger(
-        log_dir,
-        __name__,
-    )
-    print_args(logger, args)
-
-    return args, log_dir, logger
+    parser.add_argument("--clip_grad_norm", type=float, default=0)
 
 
-def main():
-    args, log_dir, logger = get_config()
-    set_seed(args.seed)
-    device = torch.device("cpu")
-
-    data_path, _, node_num = get_dataset_info(args.dataset)
-
-    dataloader, scaler = load_dataset_plain(data_path, args, logger)
-    args, engine_template = check_quantile(args, VAR_Engine, CQR_Engine)
-
-    model = VAR(
+def build_model(args, node_num, **ctx):
+    return VAR(
         k=6,
         node_num=node_num,
         input_dim=args.input_dim,
@@ -56,34 +27,16 @@ def main():
         horizon=args.horizon,
     )
 
-    engine = engine_template(
-        device=device,
-        model=model,
-        dataloader=dataloader,
-        scaler=scaler,
-        sampler=None,
-        loss_fn="MSE",
-        lrate=args.lrate,
-        optimizer=None,
-        scheduler=None,
-        clip_grad_value=0,
-        max_epochs=args.max_epochs,
-        patience=args.patience,
-        log_dir=log_dir,
-        logger=logger,
-        seed=args.seed,
-        normalize=args.normalize,
-        alpha=args.quantile_alpha,
-        metric_list=["MAE", "MAPE", "RMSE"],
-
-        args=args,
-    )
-
-    if args.mode == "train":
-        engine.train(args.export)
-    else:
-        engine.evaluate(args.mode, args.model_path, args.export)
-
 
 if __name__ == "__main__":
-    main()
+    run_experiment(
+        model_name="VAR",
+        add_args=add_args,
+        build_model=build_model,
+        loss_fn="MSE",
+        engine_cls=VAR_Engine,
+        make_optimizer=NO_OPTIMIZER,
+        load_data=load_dataset_plain,
+        device_override="cpu",
+        train_with_export=True,
+    )

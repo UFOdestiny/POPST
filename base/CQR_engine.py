@@ -162,12 +162,12 @@ class CQR_Engine(BaseEngine):
             )
             res.backward()
 
-            if self._clip_grad_value != 0:
+            if self._clip_grad_norm != 0:
                 torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self._clip_grad_value
+                    self.model.parameters(), self._clip_grad_norm
                 )
                 torch.nn.utils.clip_grad_norm_(
-                    self.quantile_head.parameters(), self._clip_grad_value
+                    self.quantile_head.parameters(), self._clip_grad_norm
                 )
             self._optimizer.step()
             self._iter_cnt += 1

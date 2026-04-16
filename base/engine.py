@@ -1,22 +1,9 @@
 import os
-import platform
 import time
 
 import numpy as np
 import torch
 from base.metrics import Metrics
-
-
-def _get_cpu_memory_mb():
-    """Get peak CPU memory usage in MB (cross-platform)."""
-    if platform.system() != "Windows":
-        import resource
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-    try:
-        import psutil
-        return psutil.Process(os.getpid()).memory_info().peak_wset / 1024**2
-    except ImportError:
-        return 0.0
 
 
 class BaseEngine:
@@ -26,23 +13,21 @@ class BaseEngine:
         model,
         dataloader,
         scaler,
-        sampler,
         loss_fn,
         lrate,
         optimizer,
         scheduler,
-        clip_grad_value,
+        clip_grad_norm,
         max_epochs,
         patience,
         log_dir,
         logger,
         seed,
         args,
-        alpha=0.1,
         normalize=True,
-        hour_day_month=False,
         metric_list=None,
         init_weights=False,
+        **kwargs,
     ):
         super().__init__()
 
@@ -54,7 +39,7 @@ class BaseEngine:
         self._lrate = lrate
         self._optimizer = optimizer
         self._lr_scheduler = scheduler
-        self._clip_grad_value = clip_grad_value
+        self._clip_grad_norm = clip_grad_norm
         self._max_epochs = max_epochs
         self._patience = patience
         self._iter_cnt = 0
@@ -87,12 +72,6 @@ class BaseEngine:
             f"Model Save Path: {os.path.join(self._save_path, self._time_model)}"
         )
 
-        # Quantile bounds
-        self.alpha = alpha
-        self.lower_bound = self.alpha / 2
-        self.upper_bound = 1 - self.alpha / 2
-        self.hour_day_month = hour_day_month
-
     def _init_model_weights(self):
         """Xavier/uniform initialization for model parameters."""
         for p in self.model.parameters():
@@ -100,12 +79,6 @@ class BaseEngine:
                 torch.nn.init.xavier_uniform_(p)
             else:
                 torch.nn.init.uniform_(p)
-
-    def split_hour_day_month(self, X, Y):
-        data = X[..., 0].unsqueeze(-1)
-        hdm = X[..., 1:]
-        y = Y[..., 0].unsqueeze(-1)
-        return data, hdm, y
 
     def _predict(self, x, label, iter, *args):
         return self.model(x)
@@ -118,14 +91,15 @@ class BaseEngine:
     def _prepare_batch(self, batch):
         return self._to_device(self._to_tensor(batch))
 
-    def _to_numpy(self, tensors):
-        if isinstance(tensors, list):
-            return [t.detach().cpu().numpy() for t in tensors]
-        return tensors.detach().cpu().numpy()
-
     def _to_tensor(self, nparray):
         if isinstance(nparray, list):
-            return [torch.tensor(arr, dtype=torch.float32) for arr in nparray]
+            return [
+                arr if isinstance(arr, torch.Tensor)
+                else torch.tensor(arr, dtype=torch.float32)
+                for arr in nparray
+            ]
+        if isinstance(nparray, torch.Tensor):
+            return nparray
         return torch.tensor(nparray, dtype=torch.float32)
 
     def _inverse_transform(self, tensors, device="cuda"):
@@ -183,7 +157,7 @@ class BaseEngine:
                 )
             self._optimizer.zero_grad()
 
-            # X (b, t, n, f), label (b, t, n, 1)
+            # X (b, t, n, f), label (b, t, n, f)
             X, label = self._prepare_batch([X, label])
             pred = self._predict(X, label=label, iter=self._iter_cnt)
 
@@ -201,9 +175,9 @@ class BaseEngine:
             )
             res.backward()
 
-            if self._clip_grad_value != 0:
+            if self._clip_grad_norm != 0:
                 torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self._clip_grad_value
+                    self.model.parameters(), self._clip_grad_norm
                 )
             self._optimizer.step()
             self._iter_cnt += 1
@@ -212,40 +186,10 @@ class BaseEngine:
         wait = 0
         min_loss_val = np.inf
         min_loss_test = np.inf
-        max_mem_usage = 0
-        max_cpu_mem_usage = 0
         for epoch in range(self._max_epochs):
-            if self._device.type == "cuda":
-                torch.cuda.reset_peak_memory_stats(self._device)
-
             t1 = time.time()
             self.train_batch()
             t2 = time.time()
-
-            cpu_mem = _get_cpu_memory_mb()
-            max_cpu_mem_usage = max(max_cpu_mem_usage, cpu_mem)
-
-            if self._device.type == "cuda":
-                max_mem = torch.cuda.max_memory_allocated(self._device) / 1024**2
-                max_mem_usage = max(max_mem_usage, max_mem)
-                if epoch < 5:
-                    self._logger.info(
-                        "Epoch: {}, Peak GPU Memory: {:.2f} MB".format(
-                            epoch + 1, max_mem
-                        )
-                    )
-                    self._logger.info(
-                        "Epoch: {}, Peak CPU Memory: {:.2f} MB".format(
-                            epoch + 1, cpu_mem
-                        )
-                    )
-            else:
-                if epoch < 5:
-                    self._logger.info(
-                        "Epoch: {}, Peak CPU Memory: {:.2f} MB".format(
-                            epoch + 1, cpu_mem
-                        )
-                    )
 
             v1 = time.time()
             self.evaluate("val")
@@ -296,16 +240,6 @@ class BaseEngine:
                         )
                     )
                     break
-
-        with self._logger.no_time():
-            self._logger.info("\n" + "=" * 25 + "    Memory    " + "=" * 25)
-
-        if self._device.type == "cuda":
-            final_gpu = torch.cuda.max_memory_allocated(self._device) / 1024**2
-            self._logger.info("Max Peak GPU Memory: {:.2f} MB".format(final_gpu))
-
-        final_cpu = _get_cpu_memory_mb()
-        self._logger.info("Max Peak CPU Memory: {:.2f} MB".format(final_cpu))
 
         self.evaluate("test", export=self.args.export)
 
@@ -413,7 +347,8 @@ class BaseEngine:
 
         with torch.no_grad():
             for X, _ in self._dataloader["test_loader"].get_iterator():
-                test_data.append(torch.from_numpy(X).cpu())
+                t = X if isinstance(X, torch.Tensor) else torch.from_numpy(X)
+                test_data.append(t.cpu())
 
         if not test_data:
             self._logger.info("Test data is empty. Skip saving test inputs.")

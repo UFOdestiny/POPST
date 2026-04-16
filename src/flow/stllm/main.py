@@ -3,61 +3,26 @@ import sys
 
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
-import numpy as np
 import torch
-
-from base.CQR_engine import CQR_Engine
+from base.runner import run_experiment
 from stllm_model import STLLM
-from base.engine import BaseEngine
-from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
-from utils.dataloader import load_dataset, get_dataset_info
-from utils.log import get_logger
 
 
-def get_config():
-    parser = get_public_config()
-
-    # ST-LLM 模型特定参数
+def add_args(parser):
     parser.add_argument("--d_model", type=int, default=64, help="模型维度")
     parser.add_argument("--num_heads", type=int, default=8, help="注意力头数")
     parser.add_argument("--d_ff", type=int, default=384, help="前馈网络维度")
     parser.add_argument("--num_layers", type=int, default=4, help="ST-LLM层数")
-
-    # 训练参数
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=1e-4)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--clip_grad_value", type=float, default=5)
-
-    args = parser.parse_args()
-    args.model_name = "STLLM" # LLaMA
-    if args.quantile:
-        args.model_name += "_CQR"
-    # args.bs = 16
-
-    log_dir = get_log_path(args)
-    logger = get_logger(
-        log_dir,
-        __name__,
-    )
-    print_args(logger, args)
-
-    return args, log_dir, logger
+    parser.add_argument("--clip_grad_norm", type=float, default=5)
 
 
-def main():
-    args, log_dir, logger = get_config()
-    set_seed(args.seed)
-    device = torch.device(args.device)
-
-    data_path, _, node_num = get_dataset_info(args.dataset)
-
-    dataloader, scaler = load_dataset(data_path, args, logger)
-    args, engine_template = check_quantile(args, BaseEngine, CQR_Engine)
-
-    model = STLLM(
+def build_model(args, node_num, **ctx):
+    return STLLM(
         node_num=node_num,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
@@ -70,47 +35,12 @@ def main():
         dropout=args.dropout,
     )
 
-    # 打印模型参数量
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    # logger.info(f"Total parameters: {total_params:,}")
-    # logger.info(f"Trainable parameters: {trainable_params:,}")
-
-    loss_fn = "MAE"
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lrate, weight_decay=args.wdecay
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.max_epochs, eta_min=1e-6
-    )
-
-    engine = engine_template(
-        device=device,
-        model=model,
-        dataloader=dataloader,
-        scaler=scaler,
-        sampler=None,
-        loss_fn=loss_fn,
-        lrate=args.lrate,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        clip_grad_value=args.clip_grad_value,
-        max_epochs=args.max_epochs,
-        patience=args.patience,
-        log_dir=log_dir,
-        logger=logger,
-        seed=args.seed,
-        normalize=args.normalize,
-        alpha=args.quantile_alpha,
-        metric_list=["MAE", "MAPE", "RMSE"],
-        args=args,
-    )
-
-    if args.mode == "train":
-        engine.train()
-    else:
-        engine.evaluate(args.mode, args.model_path, args.export)
-
 
 if __name__ == "__main__":
-    main()
+    run_experiment(
+        model_name="STLLM",
+        add_args=add_args,
+        build_model=build_model,
+        make_optimizer=lambda m, a: torch.optim.AdamW(m.parameters(), lr=a.lrate, weight_decay=a.wdecay),
+        make_scheduler=lambda o, a: torch.optim.lr_scheduler.CosineAnnealingLR(o, T_max=a.max_epochs, eta_min=1e-6),
+    )
