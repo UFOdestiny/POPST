@@ -8,6 +8,8 @@ import torch
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+ENGINE_MODES = ("standard", "flow_matching")
+
 
 def get_public_config():
     """Create argument parser with common training arguments."""
@@ -40,6 +42,25 @@ def get_public_config():
     parser.add_argument("--export", action="store_true", default=False)
     parser.add_argument("--not_print_args", action="store_true", default=False)
     parser.add_argument("--proj", type=str, default="")
+    parser.add_argument(
+        "--engine_mode",
+        type=str,
+        default="standard",
+        choices=ENGINE_MODES,
+    )
+    parser.add_argument("--fm_flow_weight", type=float, default=0.1)
+    parser.add_argument("--fm_ode_steps", type=int, default=20)
+    parser.add_argument("--fm_num_samples", type=int, default=10)
+    parser.add_argument("--fm_context_dim", type=int, default=32)
+    parser.add_argument("--fm_time_dim", type=int, default=32)
+    parser.add_argument("--fm_hidden_dim", type=int, default=64)
+    parser.add_argument("--fm_node_emb_dim", type=int, default=8)
+    parser.add_argument(
+        "--fm_output_activation",
+        type=str,
+        default="relu",
+        choices=["none", "relu"],
+    )
 
     return parser
 
@@ -95,6 +116,17 @@ def print_args(logger, args):
         "Data": ["dataset", "years", "seq_len", "horizon", "input_dim", "output_dim", "normalize"],
         "Model": ["model_name"],
         "Training": ["bs", "max_epochs", "patience", "lrate", "wdecay", "clip_grad_norm", "seed"],
+        "Engine": [
+            "engine_mode",
+            "fm_flow_weight",
+            "fm_ode_steps",
+            "fm_num_samples",
+            "fm_context_dim",
+            "fm_time_dim",
+            "fm_hidden_dim",
+            "fm_node_emb_dim",
+            "fm_output_activation",
+        ],
         "Quantile": ["quantile", "quantile_alpha"],
         "System": ["device", "mode", "model_path", "export", "proj", "comment"],
     }
@@ -117,11 +149,39 @@ def print_args(logger, args):
             logger.info(f"  {k:20s}: {_fmt_value(v)}")
 
 
-def check_quantile(args, normal_model, quantile_model):
-    """Select engine class based on whether quantile mode is enabled."""
+def validate_shared_args(args):
+    if args.quantile and args.engine_mode != "standard":
+        raise ValueError("Quantile mode only supports --engine_mode standard right now.")
+    if args.fm_ode_steps < 1:
+        raise ValueError("--fm_ode_steps must be >= 1.")
+    if args.fm_num_samples < 1:
+        raise ValueError("--fm_num_samples must be >= 1.")
+    if args.fm_context_dim < 1:
+        raise ValueError("--fm_context_dim must be >= 1.")
+    if args.fm_time_dim < 1:
+        raise ValueError("--fm_time_dim must be >= 1.")
+    if args.fm_hidden_dim < 1:
+        raise ValueError("--fm_hidden_dim must be >= 1.")
+    if args.fm_node_emb_dim < 0:
+        raise ValueError("--fm_node_emb_dim must be >= 0.")
+    return args
+
+
+def resolve_engine_template(args, standard_engine, quantile_engine, flow_matching_engine):
     if args.quantile:
-        return args, quantile_model
-    return args, normal_model
+        return quantile_engine
+    if args.engine_mode == "flow_matching":
+        return flow_matching_engine
+    return standard_engine
+
+
+def get_fm_wrapper_kwargs(args):
+    return {
+        "context_dim": args.fm_context_dim,
+        "time_dim": args.fm_time_dim,
+        "flow_hidden_dim": args.fm_hidden_dim,
+        "node_emb_dim": args.fm_node_emb_dim,
+    }
 
 
 def set_seed(seed):

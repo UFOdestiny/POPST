@@ -29,8 +29,18 @@ sys.path.append(os.path.abspath(__file__ + "/../../../"))
 
 from base.engine import BaseEngine
 from base.CQR_engine import CQR_Engine
+from base.fm_engine import FlowMatchingEngine
+from base.fm_model import FlowMatchingWrapper
 from base.efficiency import profile_efficiency
-from utils.args import get_public_config, get_log_path, print_args, check_quantile, set_seed
+from utils.args import (
+    get_fm_wrapper_kwargs,
+    get_public_config,
+    get_log_path,
+    print_args,
+    resolve_engine_template,
+    set_seed,
+    validate_shared_args,
+)
 from utils.dataloader import load_dataset, get_dataset_info
 from utils.log import get_logger
 
@@ -41,6 +51,14 @@ def _default_optimizer(model, args):
 
 _FALLBACK_SEQ_LEN = 12
 _FALLBACK_HORIZON = 1
+
+
+def _wrap_flow_matching_model(model, args):
+    return FlowMatchingWrapper(
+        base_model=model,
+        dropout=getattr(args, "dropout", 0.1),
+        **get_fm_wrapper_kwargs(args),
+    )
 
 
 def _auto_fill_from_info(args, data_path, logger):
@@ -152,6 +170,7 @@ def run_experiment(
     parser = get_public_config()
     add_args(parser)
     args = parser.parse_args()
+    validate_shared_args(args)
     args.model_name = model_name
     if args.quantile:
         args.model_name += "_CQR"
@@ -184,11 +203,15 @@ def run_experiment(
     # Print args after auto-fill and setup so all values are final
     print_args(logger, args)
 
-    # --- Select engine class (point vs quantile) ---
-    args, engine_template = check_quantile(args, engine_cls, engine_quantile_cls)
+    # --- Select engine class ---
+    engine_template = resolve_engine_template(
+        args, engine_cls, engine_quantile_cls, FlowMatchingEngine
+    )
 
     # --- Build model ---
     model = build_model(args, node_num, **ctx)
+    if args.engine_mode == "flow_matching" and not args.quantile:
+        model = _wrap_flow_matching_model(model, args)
 
     # --- Optimizer ---
     if make_optimizer is NO_OPTIMIZER:

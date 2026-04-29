@@ -20,11 +20,10 @@ conda activate st
 
 BASE=/home/dy23a.fsu/st
 SRC=$BASE/src/flow
-PORJ=NYC_Mobi_15min
+PORJ=NYC_Mobi_15min_FM
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 1024 --dataset nyc_mobility --proj $PORJ --years 2024"
-# ARGS="--bs 1024 --dataset chicago_mobility --proj $PORJ --years 2025"
+ARGS="--bs 512 --dataset nyc_mobility --proj $PORJ --years 2024 --engine_mode flow_matching"
 
 # MODELS=(
 #     stgcn
@@ -32,7 +31,7 @@ ARGS="--bs 1024 --dataset nyc_mobility --proj $PORJ --years 2024"
 MODELS=(
     agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
     hl lstm #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
-    patchtst stgcn stgode stllm stllm2 sttn transformer uqgnn
+    patchtst stgcn stgode stllm stllm2 sttn uqgnn
     dcrnn mamba
 )
 

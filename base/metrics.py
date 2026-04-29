@@ -257,11 +257,21 @@ class Metrics:
     def _fmt_metrics(prefix, names, values):
         return [f"{prefix} {n}: {v:.3f}" for n, v in zip(names, values)]
 
-    def get_epoch_msg(self, epoch, lr, training_time, valid_time, test_time):
+    def get_epoch_msg(
+        self, epoch, lr, training_time, valid_time, test_time, include_test=True
+    ):
         """One-line epoch summary; resets accumulators."""
         parts = [f"Epoch: {epoch}"]
-        for pfx, buf in [("Tr", self.train_res), ("V", self.valid_res), ("Te", self.test_res)]:
-            parts += self._fmt_metrics(pfx, self.metric_lst, [np.mean(v) for v in buf])
+        splits = [("Tr", self.train_res), ("V", self.valid_res)]
+        if include_test:
+            splits.append(("Te", self.test_res))
+
+        for pfx, buf in splits:
+            parts += self._fmt_metrics(
+                pfx,
+                self.metric_lst,
+                [np.mean(v) if v else float("nan") for v in buf],
+            )
         parts += [f"LR: {lr:.4e}",
                   f"Tr Time: {training_time:.3f} s",
                   f"V Time: {valid_time:.3f} s",

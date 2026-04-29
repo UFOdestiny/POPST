@@ -430,7 +430,7 @@ if __name__ == "__main__":
                         help="Metric for selecting best log (default: MAE)")
     args = parser.parse_args()
 
-    args.path="/home/dy23a.fsu/st/result/Test"
+    args.path="/home/dy23a.fsu/st/result/NYC_Mobi_15min"
 
     if args.log:
         summarize_log(args.log)
