@@ -11,6 +11,14 @@ chicago_mobility:
   data: chicago_mobility
   adj: chicago_mobility/chicago_adj.npy
 
+nyc_mobility_dense:
+  data: nyc_mobility_dense
+  adj: nyc_mobility_dense/nyc_adj_dense.npy
+
+chicago_mobility_dense:
+  data: chicago_mobility
+  adj: chicago_mobility_dense/chicago_adj_dense.npy
+
 Shenzhen:
   data: shenzhen
   adj: shenzhen/adj.npy

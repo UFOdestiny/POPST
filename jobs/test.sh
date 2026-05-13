@@ -33,7 +33,7 @@ MODELS=(
     agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
     hl lstm #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
     patchtst stgcn stgode stllm stllm2 sttn transformer uqgnn
-    dcrnn mamba
+    dcrnn mamba fmgcn1 fmgcn2 fmgcn3 fmgcn4
 )
 
 for m in "${MODELS[@]}"; do

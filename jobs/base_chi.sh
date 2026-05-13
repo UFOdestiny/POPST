@@ -23,7 +23,7 @@ SRC=$BASE/src/flow
 PORJ=Chi_Mobi_15min_FM
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 1024 --dataset chicago_mobility --proj $PORJ --years 2025 --engine_mode flow_matching"
+ARGS="--bs 1024 --dataset chicago_mobility --proj $PORJ --years 2025" # --engine_mode flow_matching
 
 # MODELS=(
 #     stgcn
@@ -32,7 +32,7 @@ MODELS=(
     agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
     hl lstm #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
     patchtst stgcn stgode stllm stllm2 sttn uqgnn
-    dcrnn mamba
+    dcrnn mamba fmgcn1 fmgcn2 fmgcn3 fmgcn4
 )
 
 for m in "${MODELS[@]}"; do

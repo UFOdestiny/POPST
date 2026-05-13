@@ -52,7 +52,7 @@ POPST/
 
 | Category | Models |
 | --- | --- |
-| **Graph Neural Networks** | AGCRN, ASTGCN, D2STGNN, DCRNN, DGCRN, DSTAGNN, FMGCN, GWNET, STGCN, STGODE, UQGNN |
+| **Graph Neural Networks** | AGCRN, ASTGCN, D2STGNN, DCRNN, DGCRN, DSTAGNN, FMGCN1, FMGCN2, FMGCN3, FMGCN4, GWNET, STGCN, STGODE, UQGNN |
 | **Sequence Models** | LSTM, Transformer, PatchTST |
 | **Mamba State-Space** | Mamba, Mamba2, Mamba3, Mamba4, Mamba5, Mamba6, Mamba7 |
 | **LLM-Based** | STLLM, STLLM2 |
@@ -143,8 +143,8 @@ python src/flow/gwnet/main.py --dataset NYISO --years 2018 --quantile --quantile
 # With flow matching engine (wraps a standard flow model with the shared FM wrapper)
 python src/flow/stgcn/main.py --dataset NYISO --years 2018 --engine_mode flow_matching
 
-# Dedicated FM graph backbone (AGCRN-style recurrent graph model + shared FM engine)
-python src/flow/fmgcn/main.py --dataset chicago_mobility --years 2025 --engine_mode flow_matching --proj Chi_Mobi_15min_FM
+# Dedicated FM graph backbone family
+python src/flow/fmgcn1/main.py --dataset chicago_mobility --years 2025 --engine_mode flow_matching --proj Chi_Mobi_15min_FM
 
 # Test mode
 python src/flow/stgcn/main.py --dataset NYISO --years 2018 --mode test
@@ -162,8 +162,11 @@ python src/flow/stgcn/main.py --dataset NYISO --years 2018 --proj MyExperiment
 # Submit a general test job
 sbatch jobs/test.sh
 
-# Submit the dedicated Chi FMGCN run
-sbatch jobs/fmgcn.sh
+# Submit dedicated FMGCN family runs
+sbatch jobs/fmgcn1.sh
+sbatch jobs/fmgcn2.sh
+sbatch jobs/fmgcn3.sh
+sbatch jobs/fmgcn4.sh
 ```
 
 ## Arguments Reference
@@ -282,7 +285,7 @@ Optional callbacks include `make_optimizer`, `make_scheduler`, `load_data`, `eng
 
 For shared flow matching support, standard flow models do **not** implement a separate FM model class; they are wrapped automatically by the runner when `--engine_mode flow_matching` is used.
 
-`src/flow/fmgcn` is the exception: it is a dedicated graph backbone tuned for the FM path, while still using the shared `FlowMatchingEngine` and wrapper pipeline.
+`src/flow/fmgcn1` to `src/flow/fmgcn4` are dedicated graph backbones tuned for mobility forecasting, while still using the shared `FlowMatchingEngine` and wrapper pipeline.
 
 Statistical models (ARIMA, VAR, etc.) use `make_optimizer=NO_OPTIMIZER` to skip gradient-based training, with custom engine classes for their specific training loops.
 
