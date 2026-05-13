@@ -124,8 +124,22 @@ if __name__ == "__main__":
 
 
 
-    gdf=gpd.GeoDataFrame.from_file("/home/dy23a.fsu/st/utils/NYC Taxi Zones.geojson")
-    save_path = f"/home/dy23a.fsu/st/utils/nyc_adj.npy"
+    gdf=gpd.GeoDataFrame.from_file("/home/dy23a.fsu/st/datasets/nyc_mobility_dense/Manhattan.geojson")
+    save_path = f"/home/dy23a.fsu/st/datasets/nyc_mobility_dense/Manhattan.npy"
+    gdf = gdf.set_geometry("geometry")#.sort_values(by="GEOID")
+    ctr = gdf.centroid.reset_index(drop=True)
+    N = len(ctr)
+    ph_area = list(range(N))
+    distance = []
+    for i in ph_area:
+        for j in ph_area:
+            distance.append([i, j, ctr[i].distance(ctr[j])])
+    adj_mx = get_adjacency_matrix(distance_df=distance, sensor_ids=ph_area)
+    print(f"The shape of Adjacency Matrix: {adj_mx.shape}")
+    np.save(save_path, adj_mx)
+
+    gdf=gpd.GeoDataFrame.from_file("/home/dy23a.fsu/st/datasets/chicago_mobility_dense/Chicago_dense.geojson")
+    save_path = f"/home/dy23a.fsu/st/datasets/chicago_mobility_dense/chicago_adj_dense.npy"
     gdf = gdf.set_geometry("geometry")#.sort_values(by="GEOID")
     ctr = gdf.centroid.reset_index(drop=True)
     N = len(ctr)

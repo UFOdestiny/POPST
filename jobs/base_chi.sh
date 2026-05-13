@@ -20,10 +20,10 @@ conda activate st
 
 BASE=/home/dy23a.fsu/st
 SRC=$BASE/src/flow
-PORJ=Chi_Mobi_15min_FM
+PORJ=Chi_Mobi
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 1024 --dataset chicago_mobility --proj $PORJ --years 2025" # --engine_mode flow_matching
+ARGS="--bs 512 --dataset chicago_mobility_dense --proj $PORJ --years 2025" # --engine_mode flow_matching
 
 # MODELS=(
 #     stgcn
@@ -31,8 +31,8 @@ ARGS="--bs 1024 --dataset chicago_mobility --proj $PORJ --years 2025" # --engine
 MODELS=(
     agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
     hl lstm #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
-    patchtst stgcn stgode stllm stllm2 sttn uqgnn
-    dcrnn mamba fmgcn1 fmgcn2 fmgcn3 fmgcn4
+    patchtst stgcn stgode stllm stllm2 sttn uqgnn 
+    mamba fmgcn1 fmgcn2 fmgcn3 fmgcn4 dcrnn
 )
 
 for m in "${MODELS[@]}"; do

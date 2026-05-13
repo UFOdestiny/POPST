@@ -13,7 +13,7 @@ chicago_mobility:
 
 nyc_mobility_dense:
   data: nyc_mobility_dense
-  adj: nyc_mobility_dense/nyc_adj_dense.npy
+  adj: nyc_mobility_dense/Manhattan.npy
 
 chicago_mobility_dense:
   data: chicago_mobility
