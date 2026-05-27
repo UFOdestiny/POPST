@@ -1,3 +1,9 @@
+"""STLLM4 keeps the STLLM backbone but removes the spatial attention branch.
+
+Compared with the original STLLM, each block only retains temporal attention
+and the feed-forward network, simplifying spatial interaction modeling.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

@@ -1,3 +1,9 @@
+"""STLLM2 keeps the STLLM backbone and only adds a learnable time embedding.
+
+Compared with the original STLLM, the temporal-spatial attention blocks,
+node embedding, and output normalization remain unchanged.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

@@ -1,3 +1,9 @@
+"""STLLM5 keeps the STLLM backbone while removing node embedding and output RMSNorm.
+
+Compared with the original STLLM, the model no longer injects explicit node
+identity embeddings and sends the last hidden state directly to output projection.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

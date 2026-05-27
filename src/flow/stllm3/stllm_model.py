@@ -1,3 +1,9 @@
+"""STLLM3 keeps the STLLM backbone and adds gated residual fusion.
+
+Compared with the original STLLM, temporal and spatial branches use learned
+gates before residual addition, while the rest of the architecture is unchanged.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
