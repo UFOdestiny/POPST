@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=nyc
+#SBATCH --account=fsu-compsci-dept
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=dy23a@fsu.edu
 #SBATCH --nodes=1
@@ -31,8 +32,8 @@ ARGS="--bs 512 --dataset nyc_mobility_dense --proj $PORJ --years 2024" # --engin
 MODELS=(
     agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
     hl lstm #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
-    patchtst stgcn stgode stllm stllm2 sttn uqgnn 
-    mamba fmgcn1 fmgcn2 fmgcn3 fmgcn4 dcrnn 
+    patchtst stgcn stgode stllm stllm2 stllm3 stllm4 stllm5 ST-LLM-plus sttn uqgnn 
+    mamba dcrnn 
 )
 
 for m in "${MODELS[@]}"; do

@@ -5,6 +5,7 @@ bash
 EnergyAssimilation
 .vscode
 .github
+latex
 
 # Python
 __pycache__/

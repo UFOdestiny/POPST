@@ -19,6 +19,8 @@ torchdiffeq==0.2.5       # STGODE (neural ODE solver)
 mamba_ssm==2.2.6.post3   # Mamba models (selective state spaces)
 dgl==2.4.0               # +cu124, D2STGNN/DSTAGNN (deep graph library)
 gluonts==0.16.2          # GluonTS model
+transformers==4.57.1     # ST-LLM-plus (GPT2 backbone)
+peft==0.19.1             # ST-LLM-plus (LoRA adapters)
 
 # Data processing (optional)
 geopandas==1.0.1         # Adjacency matrix from shapefiles

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=chi
+#SBATCH --job-name=stllm_chi
 #SBATCH --account=fsu-compsci-dept
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=dy23a@fsu.edu
@@ -12,8 +12,8 @@
 #SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
 
-# sbatch jobs/base_chi.sh
-# c; jobs/base_chi.sh
+# sbatch jobs/stllm_chi.sh
+# c; jobs/stllm_chi.sh
 
 date
 module load cuda conda
@@ -26,14 +26,8 @@ LOG=$BASE/output/$PORJ
 mkdir -p $LOG
 ARGS="--bs 512 --dataset chicago_mobility_dense --proj $PORJ --years 2025" # --engine_mode flow_matching
 
-# MODELS=(
-#     stgcn
-# )
 MODELS=(
-    agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
-    hl lstm #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
-    patchtst stgcn stgode stllm stllm2 stllm3 stllm4 stllm5 ST-LLM-plus sttn uqgnn 
-    mamba dcrnn
+    stllm stllm2 stllm3 stllm4 stllm5 ST-LLM-plus
 )
 
 for m in "${MODELS[@]}"; do

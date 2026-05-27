@@ -12,7 +12,7 @@ def add_args(parser):
     parser.add_argument("--d_model", type=int, default=64, help="模型维度")
     parser.add_argument("--num_heads", type=int, default=8, help="注意力头数")
     parser.add_argument("--d_ff", type=int, default=384, help="前馈网络维度")
-    parser.add_argument("--num_layers", type=int, default=4, help="STLLM2层数")
+    parser.add_argument("--num_layers", type=int, default=4, help="STLLM3层数")
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
@@ -38,7 +38,7 @@ def build_model(args, node_num, **ctx):
 
 if __name__ == "__main__":
     run_experiment(
-        model_name="STLLM2",
+        model_name="STLLM3",
         add_args=add_args,
         build_model=build_model,
         make_optimizer=lambda m, a: torch.optim.AdamW(m.parameters(), lr=a.lrate, weight_decay=a.wdecay),
