@@ -1,3 +1,8 @@
+"""STLLM is the base spatiotemporal LLM-style forecasting model.
+
+It combines temporal attention, spatial attention, and SwiGLU blocks for sequence forecasting.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,7 +11,7 @@ from base.model import BaseModel
 
 
 class RMSNorm(nn.Module):
-    """RMSNorm - 类似LLaMA中使用的归一化方法"""
+    """RMSNorm used in place of LayerNorm for stable feature scaling."""
     def __init__(self, dim, eps=1e-6):
         super(RMSNorm, self).__init__()
         self.eps = eps
@@ -18,7 +23,7 @@ class RMSNorm(nn.Module):
 
 
 class RotaryPositionalEmbedding(nn.Module):
-    """旋转位置编码 (RoPE) - 类似LLaMA中使用的位置编码"""
+    """Rotary positional embedding used for temporal attention."""
     def __init__(self, dim, max_seq_len=512, base=10000):
         super(RotaryPositionalEmbedding, self).__init__()
         self.dim = dim
@@ -27,7 +32,7 @@ class RotaryPositionalEmbedding(nn.Module):
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq)
         
-        # 预计算位置编码
+        # Precompute the rotary embedding cache.
         self._build_cache(max_seq_len)
     
     def _build_cache(self, seq_len):
@@ -44,20 +49,20 @@ class RotaryPositionalEmbedding(nn.Module):
 
 
 def rotate_half(x):
-    """旋转半个维度"""
+    """Rotate the last dimension by swapping its two halves."""
     x1, x2 = x[..., :x.shape[-1]//2], x[..., x.shape[-1]//2:]
     return torch.cat((-x2, x1), dim=-1)
 
 
 def apply_rotary_pos_emb(q, k, cos, sin):
-    """应用旋转位置编码"""
+    """Apply rotary positional embedding to query and key tensors."""
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
 
 
 class SpatialAttention(nn.Module):
-    """空间注意力模块 - 用于捕获节点间的空间依赖"""
+    """Spatial attention that models dependencies across nodes."""
     def __init__(self, d_model, num_heads, dropout=0.1):
         super(SpatialAttention, self).__init__()
         self.num_heads = num_heads
@@ -90,7 +95,7 @@ class SpatialAttention(nn.Module):
 
 
 class TemporalAttention(nn.Module):
-    """时序注意力模块 - 带有旋转位置编码"""
+    """Temporal attention with rotary positional encoding."""
     def __init__(self, d_model, num_heads, max_seq_len=512, dropout=0.1):
         super(TemporalAttention, self).__init__()
         self.num_heads = num_heads
@@ -116,7 +121,7 @@ class TemporalAttention(nn.Module):
         k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         
-        # 应用旋转位置编码
+        # Apply rotary positional encoding.
         cos, sin = self.rope(x, seq_len)
         cos = cos.unsqueeze(1)  # (1, 1, seq_len, head_dim)
         sin = sin.unsqueeze(1)
@@ -131,7 +136,7 @@ class TemporalAttention(nn.Module):
 
 
 class SwiGLU(nn.Module):
-    """SwiGLU激活函数 - 类似LLaMA中的FFN"""
+    """SwiGLU feed-forward block inspired by LLM architectures."""
     def __init__(self, d_model, d_ff, dropout=0.1):
         super(SwiGLU, self).__init__()
         self.w1 = nn.Linear(d_model, d_ff, bias=False)
@@ -144,19 +149,19 @@ class SwiGLU(nn.Module):
 
 
 class STLLMBlock(nn.Module):
-    """ST-LLM基础块 - 结合时空注意力和FFN"""
+    """Core STLLM block with temporal attention, spatial attention, and FFN."""
     def __init__(self, d_model, num_heads, d_ff, max_seq_len=512, dropout=0.1):
         super(STLLMBlock, self).__init__()
         
-        # 时序注意力
+        # Temporal attention branch.
         self.temporal_norm = RMSNorm(d_model)
         self.temporal_attn = TemporalAttention(d_model, num_heads, max_seq_len, dropout)
         
-        # 空间注意力
+        # Spatial attention branch.
         self.spatial_norm = RMSNorm(d_model)
         self.spatial_attn = SpatialAttention(d_model, num_heads, dropout)
         
-        # 前馈网络
+        # Feed-forward branch.
         self.ffn_norm = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout)
         
@@ -169,21 +174,21 @@ class STLLMBlock(nn.Module):
         """
         batch_size, seq_len, node_num, d_model = x.shape
         
-        # 时序注意力 - 对每个节点独立处理
+        # Run temporal attention independently for each node.
         x_reshape = x.permute(0, 2, 1, 3).contiguous().view(batch_size * node_num, seq_len, d_model)
         x_norm = self.temporal_norm(x_reshape)
         temporal_out = self.temporal_attn(x_norm)
         x_reshape = x_reshape + self.dropout(temporal_out)
         x = x_reshape.view(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
         
-        # 空间注意力 - 对每个时间步独立处理
+        # Run spatial attention independently for each time step.
         x_reshape = x.contiguous().view(batch_size * seq_len, node_num, d_model)
         x_norm = self.spatial_norm(x_reshape)
         spatial_out = self.spatial_attn(x_norm)
         x_reshape = x_reshape + self.dropout(spatial_out)
         x = x_reshape.view(batch_size, seq_len, node_num, d_model)
         
-        # 前馈网络
+        # Apply the feed-forward update to each token.
         x_reshape = x.view(batch_size * seq_len * node_num, d_model)
         x_norm = self.ffn_norm(x_reshape)
         ffn_out = self.ffn(x_norm)
@@ -195,15 +200,9 @@ class STLLMBlock(nn.Module):
 
 class STLLM(BaseModel):
     """
-    ST-LLM: 时空大语言模型风格的预测模型
-    
-    模拟LLM的结构特点：
-    1. RMSNorm代替LayerNorm
-    2. 旋转位置编码 (RoPE)
-    3. SwiGLU激活函数
-    4. 时空分离的注意力机制
-    
-    参数量约1M
+    STLLM is the base model in the series.
+
+    It mixes LLM-style design choices with separated temporal and spatial attention for forecasting.
     """
     def __init__(
         self,
@@ -218,10 +217,10 @@ class STLLM(BaseModel):
         
         self.d_model = d_model
         
-        # 输入嵌入
+        # Input projection.
         self.input_embedding = nn.Linear(self.input_dim, d_model)
         
-        # 节点嵌入
+        # Node identity embedding.
         self.node_embedding = nn.Embedding(self.node_num, d_model)
         
         # ST-LLM blocks
@@ -230,14 +229,14 @@ class STLLM(BaseModel):
             for _ in range(num_layers)
         ])
         
-        # 输出层
+        # Output projection head.
         self.output_norm = RMSNorm(d_model)
         self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
         
         self._init_weights()
     
     def _init_weights(self):
-        """初始化权重"""
+        """Initialize linear and embedding layers."""
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
@@ -248,36 +247,36 @@ class STLLM(BaseModel):
     
     def forward(self, x, label=None):
         """
-        前向传播
-        
+        Forward pass.
+
         Args:
-            x: 输入张量，形状为 (batch, seq_len, node_num, input_dim)
-            label: 标签（可选）
-            
+            x: Input tensor with shape (batch, seq_len, node_num, input_dim).
+            label: Optional label tensor.
+
         Returns:
-            output: 预测结果，形状为 (batch, horizon, node_num, output_dim)
+            Forecast tensor with shape (batch, horizon, node_num, output_dim).
         """
         batch_size, seq_len, node_num, input_dim = x.shape
         
-        # 输入嵌入
+        # Project raw inputs into the model space.
         x = self.input_embedding(x)  # (batch, seq_len, node_num, d_model)
         
-        # 添加节点嵌入
+        # Add node identity features.
         node_ids = torch.arange(node_num, device=x.device)
         node_emb = self.node_embedding(node_ids)  # (node_num, d_model)
-        x = x + node_emb.unsqueeze(0).unsqueeze(0)  # 广播添加
+        x = x + node_emb.unsqueeze(0).unsqueeze(0)  # Broadcast over batch and time.
         
-        # 通过ST-LLM blocks
+        # Pass through the stacked STLLM blocks.
         for block in self.blocks:
             x = block(x)
         
-        # 输出投影
+        # Normalize before decoding.
         x = self.output_norm(x)
         
-        # 取最后一个时间步
+        # Decode from the last observed step.
         x = x[:, -1, :, :]  # (batch, node_num, d_model)
         
-        # 预测
+        # Generate the multi-step forecast.
         x = self.output_proj(x)  # (batch, node_num, output_dim * horizon)
         x = x.view(batch_size, node_num, self.horizon, self.output_dim)
         x = x.permute(0, 2, 1, 3)  # (batch, horizon, node_num, output_dim)
@@ -287,9 +286,9 @@ class STLLM(BaseModel):
 
 class STLLMLight(BaseModel):
     """
-    轻量版ST-LLM
-    
-    适合较小的数据集，参数量更少
+    STLLMLight is a smaller STLLM variant for lighter experiments.
+
+    It keeps the same block design while reducing model width and depth.
     """
     def __init__(
         self,
@@ -304,7 +303,7 @@ class STLLMLight(BaseModel):
         
         self.d_model = d_model
         
-        # 输入嵌入
+        # Input projection.
         self.input_embedding = nn.Linear(self.input_dim, d_model)
         
         # ST-LLM blocks
@@ -313,7 +312,7 @@ class STLLMLight(BaseModel):
             for _ in range(num_layers)
         ])
         
-        # 输出层
+        # Output projection head.
         self.output_norm = RMSNorm(d_model)
         self.output_fc1 = nn.Linear(d_model * self.seq_len, d_model)
         self.output_fc2 = nn.Linear(d_model, self.output_dim * self.horizon)
@@ -330,14 +329,14 @@ class STLLMLight(BaseModel):
     def forward(self, x, label=None):
         batch_size, seq_len, node_num, input_dim = x.shape
         
-        # 输入嵌入
+        # Project raw inputs into the model space.
         x = self.input_embedding(x)
         
-        # 通过ST-LLM blocks
+        # Pass through the stacked STLLM blocks.
         for block in self.blocks:
             x = block(x)
         
-        # 输出
+        # Flatten temporal features and decode the forecast.
         x = self.output_norm(x)
         x = x.permute(0, 2, 1, 3).contiguous()  # (batch, node_num, seq_len, d_model)
         x = x.view(batch_size, node_num, -1)  # (batch, node_num, seq_len * d_model)

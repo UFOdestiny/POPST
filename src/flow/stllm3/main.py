@@ -9,10 +9,10 @@ from stllm_model import STLLM
 
 
 def add_args(parser):
-    parser.add_argument("--d_model", type=int, default=64, help="模型维度")
-    parser.add_argument("--num_heads", type=int, default=8, help="注意力头数")
-    parser.add_argument("--d_ff", type=int, default=384, help="前馈网络维度")
-    parser.add_argument("--num_layers", type=int, default=4, help="STLLM3层数")
+    parser.add_argument("--d_model", type=int, default=64, help="Model dimension")
+    parser.add_argument("--num_heads", type=int, default=8, help="Number of attention heads")
+    parser.add_argument("--d_ff", type=int, default=384, help="Feed-forward dimension")
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of STLLM3 layers")
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
