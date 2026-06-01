@@ -1,7 +1,7 @@
 """STLLM4 keeps the STLLM backbone but removes the spatial attention branch.
 
-Compared with the original STLLM, each block only retains temporal attention
-and the feed-forward network, simplifying spatial interaction modeling.
+Compared with the original STLLM, each block replaces spatial attention with a
+lightweight global node mixer while keeping temporal attention and the feed-forward path.
 """
 
 import torch
@@ -99,11 +99,28 @@ class SwiGLU(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
+class GlobalSpatialMixer(nn.Module):
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super().__init__()
+        self.in_proj = nn.Linear(d_model * 2, d_ff, bias=False)
+        self.out_proj = nn.Linear(d_ff, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+        self.layer_scale = nn.Parameter(torch.full((d_model,), 1e-3))
+
+    def forward(self, x):
+        context = x.mean(dim=1, keepdim=True).expand(-1, x.shape[1], -1)
+        fused = torch.cat([x, context], dim=-1)
+        update = self.out_proj(F.gelu(self.in_proj(fused)))
+        return self.dropout(update * self.layer_scale)
+
+
 class STLLM4Block(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, max_seq_len=512, dropout=0.1):
         super().__init__()
         self.temporal_norm = RMSNorm(d_model)
         self.temporal_attn = TemporalAttention(d_model, num_heads, max_seq_len, dropout)
+        self.spatial_norm = RMSNorm(d_model)
+        self.spatial_mixer = GlobalSpatialMixer(d_model, d_ff, dropout)
         self.ffn_norm = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout)
         self.dropout = nn.Dropout(dropout)
@@ -117,6 +134,11 @@ class STLLM4Block(nn.Module):
         x_reshape = x_reshape + self.dropout(temporal_out)
         x = x_reshape.reshape(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
 
+        x_reshape = x.contiguous().reshape(batch_size * seq_len, node_num, d_model)
+        x_norm = self.spatial_norm(x_reshape)
+        spatial_out = self.spatial_mixer(x_norm)
+        x = (x_reshape + spatial_out).reshape(batch_size, seq_len, node_num, d_model)
+
         x_reshape = x.reshape(batch_size * seq_len * node_num, d_model)
         x_norm = self.ffn_norm(x_reshape)
         ffn_out = self.ffn(x_norm)
@@ -125,9 +147,9 @@ class STLLM4Block(nn.Module):
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM4 removes the spatial attention branch."""
+    """Compared with STLLM, STLLM4 swaps spatial attention for a global node mixer."""
 
-    intro = "Compared with STLLM, STLLM4 removes the spatial attention branch."
+    intro = "Compared with STLLM, STLLM4 swaps spatial attention for a global node mixer."
 
     def __init__(
         self,

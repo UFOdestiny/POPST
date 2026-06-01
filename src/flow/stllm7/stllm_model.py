@@ -1,8 +1,4 @@
-"""STLLM3 keeps the STLLM backbone and adds gated residual fusion.
-
-Compared with the original STLLM, temporal and spatial branches use learned
-gates before residual addition, while the rest of the architecture is unchanged.
-"""
+"""STLLM7 keeps the STLLM backbone and replaces spatial attention with latent memory routing."""
 
 import torch
 import torch.nn as nn
@@ -52,34 +48,6 @@ def apply_rotary_pos_emb(q, k, cos, sin):
     return q_embed, k_embed
 
 
-class SpatialAttention(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.1):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = d_model // num_heads
-        self.scale = self.head_dim ** -0.5
-
-        self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        batch_size, node_num, d_model = x.shape
-
-        q = self.q_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = F.softmax(attn, dim=-1)
-        attn = self.dropout(attn)
-
-        out = (attn @ v).transpose(1, 2).contiguous().reshape(batch_size, node_num, d_model)
-        return self.out_proj(out)
-
-
 class TemporalAttention(nn.Module):
     def __init__(self, d_model, num_heads, max_seq_len=512, dropout=0.1):
         super().__init__()
@@ -127,25 +95,41 @@ class SwiGLU(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
-class STLLM3Block(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, max_seq_len=512, dropout=0.1):
+class LatentMemorySpatialMixer(nn.Module):
+    def __init__(self, d_model, num_memory_slots=8, dropout=0.1):
+        super().__init__()
+        self.num_memory_slots = num_memory_slots
+        self.assign_proj = nn.Linear(d_model, num_memory_slots, bias=False)
+        self.query_proj = nn.Linear(d_model, d_model, bias=False)
+        self.key_proj = nn.Linear(d_model, d_model, bias=False)
+        self.value_proj = nn.Linear(d_model, d_model, bias=False)
+        self.slot_tokens = nn.Parameter(torch.empty(1, num_memory_slots, d_model))
+        self.dropout = nn.Dropout(dropout)
+        self.layer_scale = nn.Parameter(torch.full((d_model,), 1e-3))
+        self.scale = d_model ** -0.5
+
+    def forward(self, x):
+        assign = F.softmax(self.assign_proj(x), dim=-1)
+        slots = torch.einsum("bnm,bnd->bmd", assign, x)
+        slots = slots / (assign.sum(dim=1).unsqueeze(-1) + 1e-6)
+        slots = slots + self.slot_tokens.expand(x.shape[0], -1, -1)
+
+        scores = torch.einsum("bnd,bmd->bnm", self.query_proj(x), self.key_proj(slots)) * self.scale
+        weights = F.softmax(scores, dim=-1)
+        update = torch.einsum("bnm,bmd->bnd", weights, self.value_proj(slots))
+        return self.dropout(update * self.layer_scale)
+
+
+class STLLM7Block(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, max_seq_len=512, num_memory_slots=8, dropout=0.1):
         super().__init__()
         self.temporal_norm = RMSNorm(d_model)
         self.temporal_attn = TemporalAttention(d_model, num_heads, max_seq_len, dropout)
-        self.temporal_gate = nn.Linear(d_model, d_model)
-
         self.spatial_norm = RMSNorm(d_model)
-        self.spatial_attn = SpatialAttention(d_model, num_heads, dropout)
-        self.spatial_gate = nn.Linear(d_model, d_model)
-
+        self.spatial_mixer = LatentMemorySpatialMixer(d_model, num_memory_slots, dropout)
         self.ffn_norm = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout)
         self.dropout = nn.Dropout(dropout)
-
-    def _apply_residual(self, residual, gate_input, update, gate_layer):
-        gate = 1.0 + 0.25 * torch.tanh(gate_layer(gate_input))
-        update = update * gate
-        return residual + self.dropout(update)
 
     def forward(self, x):
         batch_size, seq_len, node_num, d_model = x.shape
@@ -153,13 +137,13 @@ class STLLM3Block(nn.Module):
         x_reshape = x.permute(0, 2, 1, 3).contiguous().reshape(batch_size * node_num, seq_len, d_model)
         x_norm = self.temporal_norm(x_reshape)
         temporal_out = self.temporal_attn(x_norm)
-        x_reshape = self._apply_residual(x_reshape, x_norm, temporal_out, self.temporal_gate)
+        x_reshape = x_reshape + self.dropout(temporal_out)
         x = x_reshape.reshape(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
 
         x_reshape = x.contiguous().reshape(batch_size * seq_len, node_num, d_model)
         x_norm = self.spatial_norm(x_reshape)
-        spatial_out = self.spatial_attn(x_norm)
-        x_reshape = self._apply_residual(x_reshape, x_norm, spatial_out, self.spatial_gate)
+        spatial_out = self.spatial_mixer(x_norm)
+        x_reshape = x_reshape + spatial_out
         x = x_reshape.reshape(batch_size, seq_len, node_num, d_model)
 
         x_reshape = x.reshape(batch_size * seq_len * node_num, d_model)
@@ -170,9 +154,9 @@ class STLLM3Block(nn.Module):
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM3 adds gated fusion on temporal and spatial residuals."""
+    """Compared with STLLM, STLLM7 uses learned latent memory slots for spatial routing."""
 
-    intro = "Compared with STLLM, STLLM3 adds gated fusion on temporal and spatial residuals."
+    intro = "Compared with STLLM, STLLM7 uses learned latent memory slots for spatial routing."
 
     def __init__(
         self,
@@ -180,6 +164,7 @@ class STLLM(BaseModel):
         num_heads=8,
         d_ff=384,
         num_layers=4,
+        num_memory_slots=8,
         dropout=0.1,
         **args,
     ):
@@ -189,7 +174,10 @@ class STLLM(BaseModel):
         self.input_embedding = nn.Linear(self.input_dim, d_model)
         self.node_embedding = nn.Embedding(self.node_num, d_model)
         self.blocks = nn.ModuleList(
-            [STLLM3Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
+            [
+                STLLM7Block(d_model, num_heads, d_ff, self.seq_len, num_memory_slots, dropout)
+                for _ in range(num_layers)
+            ]
         )
         self.output_norm = RMSNorm(d_model)
         self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
@@ -206,10 +194,7 @@ class STLLM(BaseModel):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
         for block in self.blocks:
-            nn.init.zeros_(block.temporal_gate.weight)
-            nn.init.zeros_(block.temporal_gate.bias)
-            nn.init.zeros_(block.spatial_gate.weight)
-            nn.init.zeros_(block.spatial_gate.bias)
+            nn.init.normal_(block.spatial_mixer.slot_tokens, mean=0.0, std=0.02)
 
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape

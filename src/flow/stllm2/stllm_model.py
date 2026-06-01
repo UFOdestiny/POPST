@@ -197,7 +197,7 @@ class STLLM(BaseModel):
             elif isinstance(module, nn.Embedding):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-        nn.init.normal_(self.time_embedding, mean=0.0, std=0.02)
+        nn.init.zeros_(self.time_embedding)
 
     def forward(self, x, label=None):
         batch_size, seq_len, node_num, _ = x.shape

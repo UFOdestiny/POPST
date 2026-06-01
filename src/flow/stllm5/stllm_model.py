@@ -1,8 +1,10 @@
 """STLLM5 keeps the STLLM backbone while removing node embedding and output RMSNorm.
 
-Compared with the original STLLM, the model no longer injects explicit node
-identity embeddings and sends the last hidden state directly to output projection.
+Compared with the original STLLM, the model uses a fixed node encoding instead
+of learned node embeddings and sends the last hidden state directly to output projection.
 """
+
+import math
 
 import torch
 import torch.nn as nn
@@ -50,6 +52,15 @@ def apply_rotary_pos_emb(q, k, cos, sin):
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
+
+
+def build_fixed_node_encoding(node_num, d_model):
+    position = torch.arange(node_num).float().unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+    encoding = torch.zeros(node_num, d_model)
+    encoding[:, 0::2] = torch.sin(position * div_term)
+    encoding[:, 1::2] = torch.cos(position * div_term[: encoding[:, 1::2].shape[1]])
+    return encoding
 
 
 class SpatialAttention(nn.Module):
@@ -161,9 +172,9 @@ class STLLM5Block(nn.Module):
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM5 removes node embedding and the output RMSNorm."""
+    """Compared with STLLM, STLLM5 removes learned node embedding and output RMSNorm."""
 
-    intro = "Compared with STLLM, STLLM5 removes node embedding and the output RMSNorm."
+    intro = "Compared with STLLM, STLLM5 removes learned node embedding and output RMSNorm."
 
     def __init__(
         self,
@@ -178,6 +189,7 @@ class STLLM(BaseModel):
         self.d_model = d_model
 
         self.input_embedding = nn.Linear(self.input_dim, d_model)
+        self.register_buffer("node_encoding", build_fixed_node_encoding(self.node_num, d_model), persistent=False)
         self.blocks = nn.ModuleList(
             [STLLM5Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
@@ -196,6 +208,7 @@ class STLLM(BaseModel):
         batch_size, _, node_num, _ = x.shape
 
         x = self.input_embedding(x)
+        x = x + self.node_encoding[:node_num].unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
