@@ -1,4 +1,4 @@
-"""STLLM7 keeps the STLLM backbone and replaces spatial attention with latent memory routing."""
+"""STLLM7: STLLM backbone with explicit static+dynamic inter-mode graph modeling."""
 
 import torch
 import torch.nn as nn
@@ -48,6 +48,32 @@ def apply_rotary_pos_emb(q, k, cos, sin):
     return q_embed, k_embed
 
 
+class SpatialAttention(nn.Module):
+    def __init__(self, d_model, num_heads, dropout=0.1):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        batch_size, node_num, d_model = x.shape
+        q = self.q_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = F.softmax(attn, dim=-1)
+        attn = self.dropout(attn)
+        out = (attn @ v).transpose(1, 2).contiguous().reshape(batch_size, node_num, d_model)
+        return self.out_proj(out)
+
+
 class TemporalAttention(nn.Module):
     def __init__(self, d_model, num_heads, max_seq_len=512, dropout=0.1):
         super().__init__()
@@ -59,26 +85,20 @@ class TemporalAttention(nn.Module):
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
         self.out_proj = nn.Linear(d_model, d_model)
-
         self.rope = RotaryPositionalEmbedding(self.head_dim, max_seq_len)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         batch_size, seq_len, d_model = x.shape
-
         q = self.q_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = self.rope(x, seq_len)
-        cos = cos.unsqueeze(1)
-        sin = sin.unsqueeze(1)
-        q, k = apply_rotary_pos_emb(q, k, cos, sin)
-
+        q, k = apply_rotary_pos_emb(q, k, cos.unsqueeze(1), sin.unsqueeze(1))
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = F.softmax(attn, dim=-1)
         attn = self.dropout(attn)
-
         out = (attn @ v).transpose(1, 2).contiguous().reshape(batch_size, seq_len, d_model)
         return self.out_proj(out)
 
@@ -95,68 +115,82 @@ class SwiGLU(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
-class LatentMemorySpatialMixer(nn.Module):
-    def __init__(self, d_model, num_memory_slots=8, dropout=0.1):
+class InterModeDynamicGraph(nn.Module):
+    def __init__(self, input_dim, hidden_dim=16):
         super().__init__()
-        self.num_memory_slots = num_memory_slots
-        self.assign_proj = nn.Linear(d_model, num_memory_slots, bias=False)
-        self.query_proj = nn.Linear(d_model, d_model, bias=False)
-        self.key_proj = nn.Linear(d_model, d_model, bias=False)
-        self.value_proj = nn.Linear(d_model, d_model, bias=False)
-        self.slot_tokens = nn.Parameter(torch.empty(1, num_memory_slots, d_model))
-        self.dropout = nn.Dropout(dropout)
-        self.layer_scale = nn.Parameter(torch.full((d_model,), 1e-3))
-        self.scale = d_model ** -0.5
+        self.input_dim = input_dim
+        self.mode_norm = nn.LayerNorm(input_dim)
+        self.static_rel_logits = nn.Parameter(torch.zeros(input_dim, input_dim))
+        self.dynamic_proj = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, input_dim * input_dim),
+        )
+        self.blend_alpha = nn.Parameter(torch.zeros(1))
+        self.gate = nn.Linear(input_dim, input_dim)
 
     def forward(self, x):
-        assign = F.softmax(self.assign_proj(x), dim=-1)
-        slots = torch.einsum("bnm,bnd->bmd", assign, x)
-        slots = slots / (assign.sum(dim=1).unsqueeze(-1) + 1e-6)
-        slots = slots + self.slot_tokens.expand(x.shape[0], -1, -1)
+        # x: (B, T, N, M)
+        residual = x
+        x_norm = self.mode_norm(x)
+        batch_size = x.shape[0]
 
-        scores = torch.einsum("bnd,bmd->bnm", self.query_proj(x), self.key_proj(slots)) * self.scale
-        weights = F.softmax(scores, dim=-1)
-        update = torch.einsum("bnm,bmd->bnd", weights, self.value_proj(slots))
-        return self.dropout(update * self.layer_scale)
+        static_adj = F.softmax(self.static_rel_logits, dim=-1).unsqueeze(0).expand(batch_size, -1, -1)
+        pooled = x_norm.mean(dim=(1, 2))  # (B, M)
+        dynamic_logits = self.dynamic_proj(pooled).reshape(batch_size, self.input_dim, self.input_dim)
+        dynamic_adj = F.softmax(dynamic_logits, dim=-1)
+
+        alpha = torch.sigmoid(self.blend_alpha)
+        adj = alpha * static_adj + (1.0 - alpha) * dynamic_adj
+        mixed = torch.einsum("bij,btnj->btni", adj, x_norm)
+
+        gate = 1.0 + 0.25 * torch.tanh(self.gate(x_norm))
+        return residual + gate * mixed
 
 
 class STLLM7Block(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, max_seq_len=512, num_memory_slots=8, dropout=0.1):
+    def __init__(self, d_model, num_heads, d_ff, max_seq_len=512, dropout=0.1):
         super().__init__()
         self.temporal_norm = RMSNorm(d_model)
         self.temporal_attn = TemporalAttention(d_model, num_heads, max_seq_len, dropout)
+        self.temporal_gate = nn.Linear(d_model, d_model)
+
         self.spatial_norm = RMSNorm(d_model)
-        self.spatial_mixer = LatentMemorySpatialMixer(d_model, num_memory_slots, dropout)
+        self.spatial_attn = SpatialAttention(d_model, num_heads, dropout)
+        self.spatial_gate = nn.Linear(d_model, d_model)
+
         self.ffn_norm = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout)
         self.dropout = nn.Dropout(dropout)
 
+    def _apply_residual(self, residual, gate_input, update, gate_layer):
+        gate = 1.0 + 0.25 * torch.tanh(gate_layer(gate_input))
+        return residual + self.dropout(update * gate)
+
     def forward(self, x):
         batch_size, seq_len, node_num, d_model = x.shape
-
         x_reshape = x.permute(0, 2, 1, 3).contiguous().reshape(batch_size * node_num, seq_len, d_model)
         x_norm = self.temporal_norm(x_reshape)
         temporal_out = self.temporal_attn(x_norm)
-        x_reshape = x_reshape + self.dropout(temporal_out)
+        x_reshape = self._apply_residual(x_reshape, x_norm, temporal_out, self.temporal_gate)
         x = x_reshape.reshape(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
 
         x_reshape = x.contiguous().reshape(batch_size * seq_len, node_num, d_model)
         x_norm = self.spatial_norm(x_reshape)
-        spatial_out = self.spatial_mixer(x_norm)
-        x_reshape = x_reshape + spatial_out
+        spatial_out = self.spatial_attn(x_norm)
+        x_reshape = self._apply_residual(x_reshape, x_norm, spatial_out, self.spatial_gate)
         x = x_reshape.reshape(batch_size, seq_len, node_num, d_model)
 
         x_reshape = x.reshape(batch_size * seq_len * node_num, d_model)
         x_norm = self.ffn_norm(x_reshape)
-        ffn_out = self.ffn(x_norm)
-        x_reshape = x_reshape + ffn_out
+        x_reshape = x_reshape + self.ffn(x_norm)
         return x_reshape.reshape(batch_size, seq_len, node_num, d_model)
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM7 uses learned latent memory slots for spatial routing."""
+    """Compared with STLLM, STLLM7 adds explicit dynamic inter-mode graph propagation."""
 
-    intro = "Compared with STLLM, STLLM7 uses learned latent memory slots for spatial routing."
+    intro = "Compared with STLLM, STLLM7 adds explicit dynamic inter-mode graph propagation."
 
     def __init__(
         self,
@@ -164,24 +198,20 @@ class STLLM(BaseModel):
         num_heads=8,
         d_ff=384,
         num_layers=4,
-        num_memory_slots=8,
+        mode_hidden_dim=16,
         dropout=0.1,
         **args,
     ):
         super().__init__(**args)
         self.d_model = d_model
-
+        self.inter_mode = InterModeDynamicGraph(self.input_dim, hidden_dim=mode_hidden_dim)
         self.input_embedding = nn.Linear(self.input_dim, d_model)
         self.node_embedding = nn.Embedding(self.node_num, d_model)
         self.blocks = nn.ModuleList(
-            [
-                STLLM7Block(d_model, num_heads, d_ff, self.seq_len, num_memory_slots, dropout)
-                for _ in range(num_layers)
-            ]
+            [STLLM7Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
         self.output_norm = RMSNorm(d_model)
         self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
-
         self._init_weights()
 
     def _init_weights(self):
@@ -194,22 +224,25 @@ class STLLM(BaseModel):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
         for block in self.blocks:
-            nn.init.normal_(block.spatial_mixer.slot_tokens, mean=0.0, std=0.02)
+            nn.init.zeros_(block.temporal_gate.weight)
+            nn.init.zeros_(block.temporal_gate.bias)
+            nn.init.zeros_(block.spatial_gate.weight)
+            nn.init.zeros_(block.spatial_gate.bias)
+        nn.init.eye_(self.inter_mode.static_rel_logits)
+        nn.init.zeros_(self.inter_mode.gate.weight)
+        nn.init.zeros_(self.inter_mode.gate.bias)
 
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
-
+        x = self.inter_mode(x)
         x = self.input_embedding(x)
-
         node_ids = torch.arange(node_num, device=x.device)
-        node_emb = self.node_embedding(node_ids)
-        x = x + node_emb.unsqueeze(0).unsqueeze(0)
+        x = x + self.node_embedding(node_ids).unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
 
         x = self.output_norm(x)
-        x = x[:, -1, :, :]
-        x = self.output_proj(x)
+        x = self.output_proj(x[:, -1, :, :])
         x = x.reshape(batch_size, node_num, self.horizon, self.output_dim)
         return x.permute(0, 2, 1, 3)

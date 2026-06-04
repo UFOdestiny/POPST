@@ -1,7 +1,8 @@
-"""STLLM5 keeps the STLLM backbone while removing node embedding and output RMSNorm.
+"""STLLM5 keeps the STLLM backbone with a fixed node prior and lightweight node adaptation.
 
-Compared with the original STLLM, the model uses a fixed node encoding instead
-of learned node embeddings and sends the last hidden state directly to output projection.
+Compared with the original STLLM, the model starts from a fixed sinusoidal node
+encoding, adds only a learnable residual node bias, and keeps output RMSNorm for
+stable decoding on larger-scale datasets.
 """
 
 import math
@@ -172,9 +173,9 @@ class STLLM5Block(nn.Module):
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM5 removes learned node embedding and output RMSNorm."""
+    """Compared with STLLM, STLLM5 uses a fixed node prior plus a learnable node bias."""
 
-    intro = "Compared with STLLM, STLLM5 removes learned node embedding and output RMSNorm."
+    intro = "Compared with STLLM, STLLM5 uses a fixed node prior plus a learnable node bias."
 
     def __init__(
         self,
@@ -190,9 +191,11 @@ class STLLM(BaseModel):
 
         self.input_embedding = nn.Linear(self.input_dim, d_model)
         self.register_buffer("node_encoding", build_fixed_node_encoding(self.node_num, d_model), persistent=False)
+        self.node_bias = nn.Parameter(torch.zeros(self.node_num, d_model))
         self.blocks = nn.ModuleList(
             [STLLM5Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
+        self.output_norm = RMSNorm(d_model)
         self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
 
         self._init_weights()
@@ -209,10 +212,12 @@ class STLLM(BaseModel):
 
         x = self.input_embedding(x)
         x = x + self.node_encoding[:node_num].unsqueeze(0).unsqueeze(0)
+        x = x + self.node_bias[:node_num].unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
 
+        x = self.output_norm(x)
         x = x[:, -1, :, :]
         x = self.output_proj(x)
         x = x.reshape(batch_size, node_num, self.horizon, self.output_dim)

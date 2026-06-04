@@ -1,5 +1,6 @@
-"""STLLM9 keeps the STLLM backbone and decodes from full-sequence temporal attention pooling."""
+"""STLLM9: STLLM3-style backbone with token-conditioned inter-mode relation routing."""
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -54,7 +55,6 @@ class SpatialAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
         self.scale = self.head_dim ** -0.5
-
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
@@ -63,7 +63,6 @@ class SpatialAttention(nn.Module):
 
     def forward(self, x):
         batch_size, node_num, d_model = x.shape
-
         q = self.q_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
@@ -71,7 +70,6 @@ class SpatialAttention(nn.Module):
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = F.softmax(attn, dim=-1)
         attn = self.dropout(attn)
-
         out = (attn @ v).transpose(1, 2).contiguous().reshape(batch_size, node_num, d_model)
         return self.out_proj(out)
 
@@ -82,31 +80,24 @@ class TemporalAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
         self.scale = self.head_dim ** -0.5
-
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
         self.out_proj = nn.Linear(d_model, d_model)
-
         self.rope = RotaryPositionalEmbedding(self.head_dim, max_seq_len)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         batch_size, seq_len, d_model = x.shape
-
         q = self.q_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = self.rope(x, seq_len)
-        cos = cos.unsqueeze(1)
-        sin = sin.unsqueeze(1)
-        q, k = apply_rotary_pos_emb(q, k, cos, sin)
-
+        q, k = apply_rotary_pos_emb(q, k, cos.unsqueeze(1), sin.unsqueeze(1))
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = F.softmax(attn, dim=-1)
         attn = self.dropout(attn)
-
         out = (attn @ v).transpose(1, 2).contiguous().reshape(batch_size, seq_len, d_model)
         return self.out_proj(out)
 
@@ -123,24 +114,37 @@ class SwiGLU(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
-class TemporalAttentionPool(nn.Module):
-    def __init__(self, d_model):
+class InterModeTokenRouter(nn.Module):
+    def __init__(self, input_dim, mode_rel_dim=16, dropout=0.1):
         super().__init__()
-        self.query = nn.Parameter(torch.empty(1, 1, d_model))
-        self.key_proj = nn.Linear(d_model, d_model, bias=False)
-        self.value_proj = nn.Linear(d_model, d_model, bias=False)
-        self.out_proj = nn.Linear(d_model, d_model, bias=False)
-        self.scale = d_model ** -0.5
+        self.mode_norm = nn.LayerNorm(input_dim)
+        self.query_mode = nn.Parameter(torch.empty(input_dim, mode_rel_dim))
+        self.key_mode = nn.Parameter(torch.empty(input_dim, mode_rel_dim))
+        self.value_proj = nn.Linear(1, mode_rel_dim, bias=False)
+        self.out_proj = nn.Linear(mode_rel_dim, 1, bias=False)
+        self.scale_proj = nn.Linear(input_dim, input_dim)
+        self.gate = nn.Linear(input_dim, input_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.scale = math.sqrt(mode_rel_dim)
 
     def forward(self, x):
-        batch_size, seq_len, node_num, d_model = x.shape
-        tokens = x.permute(0, 2, 1, 3).contiguous().reshape(batch_size * node_num, seq_len, d_model)
-        query = self.query.expand(batch_size * node_num, -1, -1)
-        scores = (query @ self.key_proj(tokens).transpose(-2, -1)) * self.scale
-        weights = F.softmax(scores, dim=-1)
-        pooled = weights @ self.value_proj(tokens)
-        pooled = self.out_proj(pooled.squeeze(1))
-        return pooled.reshape(batch_size, node_num, d_model)
+        # x: (B, T, N, M)
+        residual = x
+        x_norm = self.mode_norm(x)
+        token_scale = 1.0 + 0.1 * torch.tanh(self.scale_proj(x_norm)).unsqueeze(-1)  # (B, T, N, M, 1)
+
+        q = token_scale * self.query_mode.view(1, 1, 1, *self.query_mode.shape)
+        k = token_scale * self.key_mode.view(1, 1, 1, *self.key_mode.shape)
+        rel = torch.matmul(q, k.transpose(-2, -1)) / self.scale  # (B, T, N, M, M)
+        rel = F.softmax(rel, dim=-1)
+        rel = self.dropout(rel)
+
+        v = self.value_proj(x_norm.unsqueeze(-1))
+        mixed = torch.matmul(rel, v)
+        mixed = self.out_proj(mixed).squeeze(-1)
+
+        gate = 1.0 + 0.25 * torch.tanh(self.gate(x_norm))
+        return residual + gate * mixed
 
 
 class STLLM9Block(nn.Module):
@@ -148,38 +152,44 @@ class STLLM9Block(nn.Module):
         super().__init__()
         self.temporal_norm = RMSNorm(d_model)
         self.temporal_attn = TemporalAttention(d_model, num_heads, max_seq_len, dropout)
+        self.temporal_gate = nn.Linear(d_model, d_model)
+
         self.spatial_norm = RMSNorm(d_model)
         self.spatial_attn = SpatialAttention(d_model, num_heads, dropout)
+        self.spatial_gate = nn.Linear(d_model, d_model)
+
         self.ffn_norm = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout)
         self.dropout = nn.Dropout(dropout)
 
+    def _apply_residual(self, residual, gate_input, update, gate_layer):
+        gate = 1.0 + 0.25 * torch.tanh(gate_layer(gate_input))
+        return residual + self.dropout(update * gate)
+
     def forward(self, x):
         batch_size, seq_len, node_num, d_model = x.shape
-
         x_reshape = x.permute(0, 2, 1, 3).contiguous().reshape(batch_size * node_num, seq_len, d_model)
         x_norm = self.temporal_norm(x_reshape)
         temporal_out = self.temporal_attn(x_norm)
-        x_reshape = x_reshape + self.dropout(temporal_out)
+        x_reshape = self._apply_residual(x_reshape, x_norm, temporal_out, self.temporal_gate)
         x = x_reshape.reshape(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
 
         x_reshape = x.contiguous().reshape(batch_size * seq_len, node_num, d_model)
         x_norm = self.spatial_norm(x_reshape)
         spatial_out = self.spatial_attn(x_norm)
-        x_reshape = x_reshape + self.dropout(spatial_out)
+        x_reshape = self._apply_residual(x_reshape, x_norm, spatial_out, self.spatial_gate)
         x = x_reshape.reshape(batch_size, seq_len, node_num, d_model)
 
         x_reshape = x.reshape(batch_size * seq_len * node_num, d_model)
         x_norm = self.ffn_norm(x_reshape)
-        ffn_out = self.ffn(x_norm)
-        x_reshape = x_reshape + ffn_out
+        x_reshape = x_reshape + self.ffn(x_norm)
         return x_reshape.reshape(batch_size, seq_len, node_num, d_model)
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM9 decodes by pooling the full temporal context."""
+    """Compared with STLLM, STLLM9 adds token-conditioned explicit inter-mode relation routing."""
 
-    intro = "Compared with STLLM, STLLM9 decodes by pooling the full temporal context."
+    intro = "Compared with STLLM, STLLM9 adds token-conditioned explicit inter-mode relation routing."
 
     def __init__(
         self,
@@ -187,19 +197,20 @@ class STLLM(BaseModel):
         num_heads=8,
         d_ff=384,
         num_layers=4,
+        mode_rel_dim=16,
         dropout=0.1,
         **args,
     ):
         super().__init__(**args)
         self.d_model = d_model
-
+        self.inter_mode = InterModeTokenRouter(self.input_dim, mode_rel_dim=mode_rel_dim, dropout=dropout)
         self.input_embedding = nn.Linear(self.input_dim, d_model)
         self.node_embedding = nn.Embedding(self.node_num, d_model)
-        self.blocks = nn.ModuleList([STLLM9Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)])
+        self.blocks = nn.ModuleList(
+            [STLLM9Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
+        )
         self.output_norm = RMSNorm(d_model)
-        self.temporal_pool = TemporalAttentionPool(d_model)
         self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
-
         self._init_weights()
 
     def _init_weights(self):
@@ -211,22 +222,29 @@ class STLLM(BaseModel):
             elif isinstance(module, nn.Embedding):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-        nn.init.normal_(self.temporal_pool.query, mean=0.0, std=0.02)
+        for block in self.blocks:
+            nn.init.zeros_(block.temporal_gate.weight)
+            nn.init.zeros_(block.temporal_gate.bias)
+            nn.init.zeros_(block.spatial_gate.weight)
+            nn.init.zeros_(block.spatial_gate.bias)
+        nn.init.normal_(self.inter_mode.query_mode, mean=0.0, std=0.02)
+        nn.init.normal_(self.inter_mode.key_mode, mean=0.0, std=0.02)
+        nn.init.zeros_(self.inter_mode.scale_proj.weight)
+        nn.init.zeros_(self.inter_mode.scale_proj.bias)
+        nn.init.zeros_(self.inter_mode.gate.weight)
+        nn.init.zeros_(self.inter_mode.gate.bias)
 
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
-
+        x = self.inter_mode(x)
         x = self.input_embedding(x)
-
         node_ids = torch.arange(node_num, device=x.device)
-        node_emb = self.node_embedding(node_ids)
-        x = x + node_emb.unsqueeze(0).unsqueeze(0)
+        x = x + self.node_embedding(node_ids).unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
 
         x = self.output_norm(x)
-        x = self.temporal_pool(x)
-        x = self.output_proj(x)
+        x = self.output_proj(x[:, -1, :, :])
         x = x.reshape(batch_size, node_num, self.horizon, self.output_dim)
         return x.permute(0, 2, 1, 3)

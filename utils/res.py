@@ -431,6 +431,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args.path="/home/dy23a.fsu/st/result/NYC_Mobi"
+    # args.path="/home/dy23a.fsu/st/result/Chi_Mobi"
 
     if args.log:
         summarize_log(args.log)

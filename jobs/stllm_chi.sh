@@ -27,7 +27,8 @@ mkdir -p $LOG
 ARGS="--bs 512 --dataset chicago_mobility_dense --proj $PORJ --years 2025" # --engine_mode flow_matching
 
 MODELS=(
-    stllm stllm2 stllm3 stllm4 stllm5 stllm6 stllm7 stllm8 stllm9 ST-LLM-plus
+    # stllm stllm2 stllm3 stllm4 stllm5 stllm6 stllm7 stllm8 stllm9 ST-LLM-plus
+    stllm6 stllm7 stllm8 stllm9
 )
 
 for m in "${MODELS[@]}"; do

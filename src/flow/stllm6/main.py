@@ -13,7 +13,7 @@ def add_args(parser):
     parser.add_argument("--num_heads", type=int, default=8, help="Number of attention heads")
     parser.add_argument("--d_ff", type=int, default=384, help="Feed-forward dimension")
     parser.add_argument("--num_layers", type=int, default=4, help="Number of STLLM6 layers")
-    parser.add_argument("--temporal_kernel_size", type=int, default=3, help="Local temporal convolution kernel size")
+    parser.add_argument("--mode_attn_dim", type=int, default=16, help="Inter-mode self-attention hidden size")
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
@@ -33,7 +33,7 @@ def build_model(args, node_num, **ctx):
         num_heads=args.num_heads,
         d_ff=args.d_ff,
         num_layers=args.num_layers,
-        temporal_kernel_size=args.temporal_kernel_size,
+        mode_attn_dim=args.mode_attn_dim,
         dropout=args.dropout,
     )
 

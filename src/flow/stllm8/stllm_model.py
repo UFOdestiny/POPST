@@ -1,4 +1,4 @@
-"""STLLM8 keeps the STLLM backbone and adds post-block channel recalibration."""
+"""STLLM8: STLLM3-style backbone with explicit bilinear inter-mode interaction."""
 
 import torch
 import torch.nn as nn
@@ -54,7 +54,6 @@ class SpatialAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
         self.scale = self.head_dim ** -0.5
-
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
@@ -63,7 +62,6 @@ class SpatialAttention(nn.Module):
 
     def forward(self, x):
         batch_size, node_num, d_model = x.shape
-
         q = self.q_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).reshape(batch_size, node_num, self.num_heads, self.head_dim).transpose(1, 2)
@@ -71,7 +69,6 @@ class SpatialAttention(nn.Module):
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = F.softmax(attn, dim=-1)
         attn = self.dropout(attn)
-
         out = (attn @ v).transpose(1, 2).contiguous().reshape(batch_size, node_num, d_model)
         return self.out_proj(out)
 
@@ -82,31 +79,24 @@ class TemporalAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
         self.scale = self.head_dim ** -0.5
-
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
         self.out_proj = nn.Linear(d_model, d_model)
-
         self.rope = RotaryPositionalEmbedding(self.head_dim, max_seq_len)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         batch_size, seq_len, d_model = x.shape
-
         q = self.q_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).reshape(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = self.rope(x, seq_len)
-        cos = cos.unsqueeze(1)
-        sin = sin.unsqueeze(1)
-        q, k = apply_rotary_pos_emb(q, k, cos, sin)
-
+        q, k = apply_rotary_pos_emb(q, k, cos.unsqueeze(1), sin.unsqueeze(1))
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = F.softmax(attn, dim=-1)
         attn = self.dropout(attn)
-
         out = (attn @ v).transpose(1, 2).contiguous().reshape(batch_size, seq_len, d_model)
         return self.out_proj(out)
 
@@ -123,57 +113,70 @@ class SwiGLU(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
-class ChannelRecalibration(nn.Module):
-    def __init__(self, d_model, reduction_ratio=4):
+class InterModeBilinearMixer(nn.Module):
+    def __init__(self, input_dim):
         super().__init__()
-        hidden_dim = max(d_model // reduction_ratio, 16)
-        self.in_proj = nn.Linear(d_model, hidden_dim)
-        self.out_proj = nn.Linear(hidden_dim, d_model)
+        self.mode_norm = nn.LayerNorm(input_dim)
+        self.relation_logits = nn.Parameter(torch.zeros(input_dim, input_dim))
+        self.msg_gain = nn.Parameter(torch.full((input_dim,), 1e-3))
+        self.cross_gain = nn.Parameter(torch.full((input_dim,), 1e-3))
+        self.gate = nn.Linear(input_dim, input_dim)
 
     def forward(self, x):
-        context = x.mean(dim=(1, 2))
-        gate = 1.0 + 0.25 * torch.tanh(self.out_proj(F.silu(self.in_proj(context))))
-        return x * gate.unsqueeze(1).unsqueeze(1)
+        # x: (B, T, N, M)
+        residual = x
+        x_norm = self.mode_norm(x)
+        rel = F.softmax(self.relation_logits, dim=-1)
+        message = torch.einsum("ij,btnj->btni", rel, x_norm)
+        interaction = x_norm * message
+        mixed = self.msg_gain.view(1, 1, 1, -1) * message + self.cross_gain.view(1, 1, 1, -1) * interaction
+        gate = 1.0 + 0.25 * torch.tanh(self.gate(x_norm))
+        return residual + gate * mixed
 
 
 class STLLM8Block(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, max_seq_len=512, reduction_ratio=4, dropout=0.1):
+    def __init__(self, d_model, num_heads, d_ff, max_seq_len=512, dropout=0.1):
         super().__init__()
         self.temporal_norm = RMSNorm(d_model)
         self.temporal_attn = TemporalAttention(d_model, num_heads, max_seq_len, dropout)
+        self.temporal_gate = nn.Linear(d_model, d_model)
+
         self.spatial_norm = RMSNorm(d_model)
         self.spatial_attn = SpatialAttention(d_model, num_heads, dropout)
+        self.spatial_gate = nn.Linear(d_model, d_model)
+
         self.ffn_norm = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout)
-        self.recalibration = ChannelRecalibration(d_model, reduction_ratio)
         self.dropout = nn.Dropout(dropout)
+
+    def _apply_residual(self, residual, gate_input, update, gate_layer):
+        gate = 1.0 + 0.25 * torch.tanh(gate_layer(gate_input))
+        return residual + self.dropout(update * gate)
 
     def forward(self, x):
         batch_size, seq_len, node_num, d_model = x.shape
-
         x_reshape = x.permute(0, 2, 1, 3).contiguous().reshape(batch_size * node_num, seq_len, d_model)
         x_norm = self.temporal_norm(x_reshape)
         temporal_out = self.temporal_attn(x_norm)
-        x_reshape = x_reshape + self.dropout(temporal_out)
+        x_reshape = self._apply_residual(x_reshape, x_norm, temporal_out, self.temporal_gate)
         x = x_reshape.reshape(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
 
         x_reshape = x.contiguous().reshape(batch_size * seq_len, node_num, d_model)
         x_norm = self.spatial_norm(x_reshape)
         spatial_out = self.spatial_attn(x_norm)
-        x_reshape = x_reshape + self.dropout(spatial_out)
+        x_reshape = self._apply_residual(x_reshape, x_norm, spatial_out, self.spatial_gate)
         x = x_reshape.reshape(batch_size, seq_len, node_num, d_model)
 
         x_reshape = x.reshape(batch_size * seq_len * node_num, d_model)
         x_norm = self.ffn_norm(x_reshape)
-        ffn_out = self.ffn(x_norm)
-        x = (x_reshape + ffn_out).reshape(batch_size, seq_len, node_num, d_model)
-        return self.recalibration(x)
+        x_reshape = x_reshape + self.ffn(x_norm)
+        return x_reshape.reshape(batch_size, seq_len, node_num, d_model)
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM8 adds block-level channel recalibration."""
+    """Compared with STLLM, STLLM8 adds explicit bilinear inter-mode interactions."""
 
-    intro = "Compared with STLLM, STLLM8 adds block-level channel recalibration."
+    intro = "Compared with STLLM, STLLM8 adds explicit bilinear inter-mode interactions."
 
     def __init__(
         self,
@@ -181,21 +184,19 @@ class STLLM(BaseModel):
         num_heads=8,
         d_ff=384,
         num_layers=4,
-        reduction_ratio=4,
         dropout=0.1,
         **args,
     ):
         super().__init__(**args)
         self.d_model = d_model
-
+        self.inter_mode = InterModeBilinearMixer(self.input_dim)
         self.input_embedding = nn.Linear(self.input_dim, d_model)
         self.node_embedding = nn.Embedding(self.node_num, d_model)
         self.blocks = nn.ModuleList(
-            [STLLM8Block(d_model, num_heads, d_ff, self.seq_len, reduction_ratio, dropout) for _ in range(num_layers)]
+            [STLLM8Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
         self.output_norm = RMSNorm(d_model)
         self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
-
         self._init_weights()
 
     def _init_weights(self):
@@ -208,23 +209,25 @@ class STLLM(BaseModel):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
         for block in self.blocks:
-            nn.init.zeros_(block.recalibration.out_proj.weight)
-            nn.init.zeros_(block.recalibration.out_proj.bias)
+            nn.init.zeros_(block.temporal_gate.weight)
+            nn.init.zeros_(block.temporal_gate.bias)
+            nn.init.zeros_(block.spatial_gate.weight)
+            nn.init.zeros_(block.spatial_gate.bias)
+        nn.init.zeros_(self.inter_mode.relation_logits)
+        nn.init.zeros_(self.inter_mode.gate.weight)
+        nn.init.zeros_(self.inter_mode.gate.bias)
 
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
-
+        x = self.inter_mode(x)
         x = self.input_embedding(x)
-
         node_ids = torch.arange(node_num, device=x.device)
-        node_emb = self.node_embedding(node_ids)
-        x = x + node_emb.unsqueeze(0).unsqueeze(0)
+        x = x + self.node_embedding(node_ids).unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
 
         x = self.output_norm(x)
-        x = x[:, -1, :, :]
-        x = self.output_proj(x)
+        x = self.output_proj(x[:, -1, :, :])
         x = x.reshape(batch_size, node_num, self.horizon, self.output_dim)
         return x.permute(0, 2, 1, 3)
