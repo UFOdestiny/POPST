@@ -13,7 +13,9 @@ def add_args(parser):
     parser.add_argument("--num_heads", type=int, default=8, help="Number of attention heads")
     parser.add_argument("--d_ff", type=int, default=384, help="Feed-forward dimension")
     parser.add_argument("--num_layers", type=int, default=4, help="Number of STLLM8 layers")
-    parser.add_argument("--reduction_ratio", type=int, default=4, help="Channel recalibration reduction ratio")
+    parser.add_argument("--d_pm", type=int, default=16, help="Per-mode embedding dim")
+    parser.add_argument("--mode_rank", type=int, default=8, help="Low-rank size for cross-mode bilinear mixer")
+    parser.add_argument("--reduction_ratio", type=int, default=4, help="(unused; kept for backward-compat)")
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
@@ -33,6 +35,8 @@ def build_model(args, node_num, **ctx):
         num_heads=args.num_heads,
         d_ff=args.d_ff,
         num_layers=args.num_layers,
+        d_pm=args.d_pm,
+        mode_rank=args.mode_rank,
         reduction_ratio=args.reduction_ratio,
         dropout=args.dropout,
     )

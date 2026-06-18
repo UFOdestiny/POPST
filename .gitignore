@@ -68,3 +68,5 @@ slurm-*.out
 # 环境变量文件 (可能包含 API Key)
 .env
 .env.*
+.claude
+CLAUDE*

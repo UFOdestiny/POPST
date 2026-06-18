@@ -1,4 +1,19 @@
-"""STLLM9: STLLM3-style backbone with token-conditioned inter-mode relation routing."""
+"""STLLM9: per-mode embedding + token-conditioned cross-mode router.
+
+The original STLLM9 routed M scalar mode values with a token-conditioned
+softmax relation matrix and a single Linear(M, d_model) bottleneck. This
+redesign keeps each mode in a d_pm-dim subspace and routes information
+across modes with attention whose query/key are mode-signature vectors
+modulated by per-token content. Concretely, for each token (b, t, n) the
+router constructs
+
+  q_m = (q_m^proto) ⊙ (1 + tanh α_m(token))
+  k_m = (k_m^proto) ⊙ (1 + tanh β_m(token))
+
+so that the cross-mode adjacency adapts to what each token currently
+encodes. The mixer is applied at both the encoder side (after embedding)
+and the decoder side (before the per-mode forecast head).
+"""
 
 import math
 import torch
@@ -114,37 +129,95 @@ class SwiGLU(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
-class InterModeTokenRouter(nn.Module):
-    def __init__(self, input_dim, mode_rel_dim=16, dropout=0.1):
+class PerModeEmbedding(nn.Module):
+    def __init__(self, num_modes, d_pm):
         super().__init__()
-        self.mode_norm = nn.LayerNorm(input_dim)
-        self.query_mode = nn.Parameter(torch.empty(input_dim, mode_rel_dim))
-        self.key_mode = nn.Parameter(torch.empty(input_dim, mode_rel_dim))
-        self.value_proj = nn.Linear(1, mode_rel_dim, bias=False)
-        self.out_proj = nn.Linear(mode_rel_dim, 1, bias=False)
-        self.scale_proj = nn.Linear(input_dim, input_dim)
-        self.gate = nn.Linear(input_dim, input_dim)
-        self.dropout = nn.Dropout(dropout)
-        self.scale = math.sqrt(mode_rel_dim)
+        self.weight = nn.Parameter(torch.empty(num_modes, d_pm))
+        self.bias = nn.Parameter(torch.zeros(num_modes, d_pm))
+        self.mode_emb = nn.Parameter(torch.zeros(num_modes, d_pm))
+        nn.init.normal_(self.weight, std=0.02)
+        nn.init.normal_(self.mode_emb, std=0.02)
 
     def forward(self, x):
-        # x: (B, T, N, M)
-        residual = x
-        x_norm = self.mode_norm(x)
-        token_scale = 1.0 + 0.1 * torch.tanh(self.scale_proj(x_norm)).unsqueeze(-1)  # (B, T, N, M, 1)
+        x = x.unsqueeze(-1) * self.weight + self.bias
+        return x + self.mode_emb
 
-        q = token_scale * self.query_mode.view(1, 1, 1, *self.query_mode.shape)
-        k = token_scale * self.key_mode.view(1, 1, 1, *self.key_mode.shape)
-        rel = torch.matmul(q, k.transpose(-2, -1)) / self.scale  # (B, T, N, M, M)
+
+class ModeFuser(nn.Module):
+    def __init__(self, num_modes, d_pm, d_model):
+        super().__init__()
+        self.norm = RMSNorm(num_modes * d_pm)
+        self.proj = nn.Linear(num_modes * d_pm, d_model)
+
+    def forward(self, x):
+        flat = x.reshape(*x.shape[:-2], x.shape[-2] * x.shape[-1])
+        return self.proj(self.norm(flat))
+
+
+class ModeUnfuser(nn.Module):
+    def __init__(self, num_modes, d_pm, d_model):
+        super().__init__()
+        self.num_modes = num_modes
+        self.d_pm = d_pm
+        self.norm = RMSNorm(d_model)
+        self.proj = nn.Linear(d_model, num_modes * d_pm)
+
+    def forward(self, x):
+        out = self.proj(self.norm(x))
+        return out.reshape(*out.shape[:-1], self.num_modes, self.d_pm)
+
+
+class PerModeHead(nn.Module):
+    def __init__(self, num_modes, d_pm, horizon):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(num_modes, d_pm, horizon))
+        self.bias = nn.Parameter(torch.zeros(num_modes, horizon))
+        nn.init.normal_(self.weight, std=0.02)
+
+    def forward(self, x):
+        return torch.einsum("bnmd,mdh->bnmh", x, self.weight) + self.bias
+
+
+class TokenConditionedRouter(nn.Module):
+    """Cross-mode router whose adjacency is mode-signature × token-conditioned scale."""
+
+    def __init__(self, num_modes, d_pm, mode_rel_dim=16, dropout=0.1):
+        super().__init__()
+        self.num_modes = num_modes
+        self.d_pm = d_pm
+        self.mode_rel_dim = mode_rel_dim
+        self.norm = RMSNorm(d_pm)
+        self.query_mode = nn.Parameter(torch.empty(num_modes, mode_rel_dim))
+        self.key_mode = nn.Parameter(torch.empty(num_modes, mode_rel_dim))
+        # Per-mode scalar modulators driven by the local token.
+        self.q_scale = nn.Linear(d_pm, mode_rel_dim)
+        self.k_scale = nn.Linear(d_pm, mode_rel_dim)
+        self.value_proj = nn.Linear(d_pm, d_pm)
+        self.out_proj = nn.Linear(d_pm, d_pm)
+        self.dropout = nn.Dropout(dropout)
+        self.gate = nn.Parameter(torch.zeros(d_pm))
+        self.scale = math.sqrt(mode_rel_dim)
+        nn.init.normal_(self.query_mode, std=0.02)
+        nn.init.normal_(self.key_mode, std=0.02)
+
+    def forward(self, x):
+        # x: (..., M, d_pm).
+        residual = x
+        x_n = self.norm(x)
+
+        q_mod = 1.0 + 0.1 * torch.tanh(self.q_scale(x_n))                    # (..., M, mode_rel_dim)
+        k_mod = 1.0 + 0.1 * torch.tanh(self.k_scale(x_n))
+        q = q_mod * self.query_mode                                          # (..., M, mode_rel_dim)
+        k = k_mod * self.key_mode
+
+        rel = torch.matmul(q, k.transpose(-2, -1)) / self.scale              # (..., M, M)
         rel = F.softmax(rel, dim=-1)
         rel = self.dropout(rel)
 
-        v = self.value_proj(x_norm.unsqueeze(-1))
+        v = self.value_proj(x_n)                                             # (..., M, d_pm)
         mixed = torch.matmul(rel, v)
-        mixed = self.out_proj(mixed).squeeze(-1)
-
-        gate = 1.0 + 0.25 * torch.tanh(self.gate(x_norm))
-        return residual + gate * mixed
+        mixed = self.out_proj(mixed)
+        return residual + self.gate * mixed
 
 
 class STLLM9Block(nn.Module):
@@ -187,9 +260,9 @@ class STLLM9Block(nn.Module):
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM9 adds token-conditioned explicit inter-mode relation routing."""
+    """STLLM9: per-mode embedding + token-conditioned cross-mode router."""
 
-    intro = "Compared with STLLM, STLLM9 adds token-conditioned explicit inter-mode relation routing."
+    intro = "STLLM9: per-mode embedding with a token-conditioned cross-mode router bracketing the ST backbone."
 
     def __init__(
         self,
@@ -197,20 +270,28 @@ class STLLM(BaseModel):
         num_heads=8,
         d_ff=384,
         num_layers=4,
+        d_pm=16,
         mode_rel_dim=16,
         dropout=0.1,
         **args,
     ):
         super().__init__(**args)
         self.d_model = d_model
-        self.inter_mode = InterModeTokenRouter(self.input_dim, mode_rel_dim=mode_rel_dim, dropout=dropout)
-        self.input_embedding = nn.Linear(self.input_dim, d_model)
+        self.d_pm = d_pm
+        self.num_modes = self.input_dim
+
+        self.mode_embed = PerModeEmbedding(self.num_modes, d_pm)
+        self.encoder_mixer = TokenConditionedRouter(self.num_modes, d_pm, mode_rel_dim=mode_rel_dim, dropout=dropout)
+        self.decoder_mixer = TokenConditionedRouter(self.num_modes, d_pm, mode_rel_dim=mode_rel_dim, dropout=dropout)
+        self.mode_fuser = ModeFuser(self.num_modes, d_pm, d_model)
+
         self.node_embedding = nn.Embedding(self.node_num, d_model)
         self.blocks = nn.ModuleList(
             [STLLM9Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
-        self.output_norm = RMSNorm(d_model)
-        self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
+
+        self.mode_unfuser = ModeUnfuser(self.num_modes, d_pm, d_model)
+        self.head = PerModeHead(self.num_modes, d_pm, self.horizon)
         self._init_weights()
 
     def _init_weights(self):
@@ -227,24 +308,29 @@ class STLLM(BaseModel):
             nn.init.zeros_(block.temporal_gate.bias)
             nn.init.zeros_(block.spatial_gate.weight)
             nn.init.zeros_(block.spatial_gate.bias)
-        nn.init.normal_(self.inter_mode.query_mode, mean=0.0, std=0.02)
-        nn.init.normal_(self.inter_mode.key_mode, mean=0.0, std=0.02)
-        nn.init.zeros_(self.inter_mode.scale_proj.weight)
-        nn.init.zeros_(self.inter_mode.scale_proj.bias)
-        nn.init.zeros_(self.inter_mode.gate.weight)
-        nn.init.zeros_(self.inter_mode.gate.bias)
+
+        # The token-conditioned scale projections start near unity (tanh(0)=0).
+        for mixer in (self.encoder_mixer, self.decoder_mixer):
+            nn.init.zeros_(mixer.q_scale.weight)
+            nn.init.zeros_(mixer.q_scale.bias)
+            nn.init.zeros_(mixer.k_scale.weight)
+            nn.init.zeros_(mixer.k_scale.bias)
 
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
-        x = self.inter_mode(x)
-        x = self.input_embedding(x)
+
+        x = self.mode_embed(x)
+        x = self.encoder_mixer(x)
+        x = self.mode_fuser(x)
+
         node_ids = torch.arange(node_num, device=x.device)
         x = x + self.node_embedding(node_ids).unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
 
-        x = self.output_norm(x)
-        x = self.output_proj(x[:, -1, :, :])
-        x = x.reshape(batch_size, node_num, self.horizon, self.output_dim)
-        return x.permute(0, 2, 1, 3)
+        token = x[:, -1, :, :]
+        modes = self.mode_unfuser(token)
+        modes = self.decoder_mixer(modes)
+        out = self.head(modes)
+        return out.permute(0, 3, 1, 2).contiguous()

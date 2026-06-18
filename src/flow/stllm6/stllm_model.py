@@ -1,4 +1,14 @@
-"""STLLM6: STLLM3-style backbone with explicit inter-mode self-attention."""
+"""STLLM6: per-mode embedding + multi-head cross-mode self-attention.
+
+The original STLLM6 mixed the M raw mobility modes once before flattening
+them into the d_model channel space, after which the temporal/spatial
+backbone could no longer reason about which feature belonged to which
+mode. This redesign keeps mode identity explicit by giving each mode its
+own embedding vector and runs a multi-head cross-mode self-attention
+mixer on the per-mode tokens at BOTH the encoder side (after embedding)
+and the decoder side (before the per-mode head). The backbone is kept
+untouched.
+"""
 
 import torch
 import torch.nn as nn
@@ -115,36 +125,100 @@ class SwiGLU(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
-class InterModeSelfAttention(nn.Module):
-    def __init__(self, input_dim, mode_attn_dim=16, dropout=0.1):
+class PerModeEmbedding(nn.Module):
+    """Lift each scalar mode value into its own d_pm-dim subspace."""
+
+    def __init__(self, num_modes, d_pm):
         super().__init__()
-        self.input_dim = input_dim
-        self.mode_norm = nn.LayerNorm(input_dim)
-        self.q_proj = nn.Linear(1, mode_attn_dim, bias=False)
-        self.k_proj = nn.Linear(1, mode_attn_dim, bias=False)
-        self.v_proj = nn.Linear(1, mode_attn_dim, bias=False)
-        self.out_proj = nn.Linear(mode_attn_dim, 1, bias=False)
-        self.gate = nn.Linear(input_dim, input_dim)
-        self.scale = mode_attn_dim ** -0.5
-        self.dropout = nn.Dropout(dropout)
+        self.weight = nn.Parameter(torch.empty(num_modes, d_pm))
+        self.bias = nn.Parameter(torch.zeros(num_modes, d_pm))
+        self.mode_emb = nn.Parameter(torch.zeros(num_modes, d_pm))
+        nn.init.normal_(self.weight, std=0.02)
+        nn.init.normal_(self.mode_emb, std=0.02)
 
     def forward(self, x):
-        # x: (B, T, N, M)
+        # x: (B, T, N, M) -> (B, T, N, M, d_pm)
+        x = x.unsqueeze(-1) * self.weight + self.bias
+        return x + self.mode_emb
+
+
+class ModeFuser(nn.Module):
+    """Concatenate per-mode features and project into the d_model space."""
+
+    def __init__(self, num_modes, d_pm, d_model):
+        super().__init__()
+        self.norm = RMSNorm(num_modes * d_pm)
+        self.proj = nn.Linear(num_modes * d_pm, d_model)
+
+    def forward(self, x):
+        # x: (..., M, d_pm) -> (..., d_model)
+        flat = x.reshape(*x.shape[:-2], x.shape[-2] * x.shape[-1])
+        return self.proj(self.norm(flat))
+
+
+class ModeUnfuser(nn.Module):
+    """Project a d_model token back into per-mode (M, d_pm) features."""
+
+    def __init__(self, num_modes, d_pm, d_model):
+        super().__init__()
+        self.num_modes = num_modes
+        self.d_pm = d_pm
+        self.norm = RMSNorm(d_model)
+        self.proj = nn.Linear(d_model, num_modes * d_pm)
+
+    def forward(self, x):
+        out = self.proj(self.norm(x))
+        return out.reshape(*out.shape[:-1], self.num_modes, self.d_pm)
+
+
+class PerModeHead(nn.Module):
+    """Independent linear head per mode predicting `horizon` steps."""
+
+    def __init__(self, num_modes, d_pm, horizon):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(num_modes, d_pm, horizon))
+        self.bias = nn.Parameter(torch.zeros(num_modes, horizon))
+        nn.init.normal_(self.weight, std=0.02)
+
+    def forward(self, x):
+        # x: (B, N, M, d_pm) -> (B, N, M, horizon)
+        return torch.einsum("bnmd,mdh->bnmh", x, self.weight) + self.bias
+
+
+class CrossModeAttention(nn.Module):
+    """Multi-head self-attention across modes; modes are tokens of dim d_pm."""
+
+    def __init__(self, d_pm, num_heads=2, dropout=0.1):
+        super().__init__()
+        if d_pm % num_heads != 0:
+            num_heads = 1
+        self.num_heads = num_heads
+        self.head_dim = d_pm // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.norm = RMSNorm(d_pm)
+        self.qkv = nn.Linear(d_pm, 3 * d_pm)
+        self.out_proj = nn.Linear(d_pm, d_pm)
+        self.dropout = nn.Dropout(dropout)
+        self.gate = nn.Parameter(torch.zeros(d_pm))
+
+    def forward(self, x):
+        # x: (..., M, d_pm)
         residual = x
-        x_norm = self.mode_norm(x)
-        x_tok = x_norm.unsqueeze(-1)  # (B, T, N, M, 1)
-        q = self.q_proj(x_tok)
-        k = self.k_proj(x_tok)
-        v = self.v_proj(x_tok)
-
-        rel = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # (B, T, N, M, M)
-        rel = F.softmax(rel, dim=-1)
-        rel = self.dropout(rel)
-        mixed = torch.matmul(rel, v)
-        mixed = self.out_proj(mixed).squeeze(-1)
-
-        gate = 1.0 + 0.25 * torch.tanh(self.gate(x_norm))
-        return residual + gate * mixed
+        x_n = self.norm(x)
+        lead = x_n.shape[:-2]
+        M, D = x_n.shape[-2], x_n.shape[-1]
+        qkv = self.qkv(x_n).reshape(*lead, M, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv.unbind(dim=-3)
+        # Bring head dim before mode for attention.
+        q = q.transpose(-2, -3)  # (..., heads, M, head_dim)
+        k = k.transpose(-2, -3)
+        v = v.transpose(-2, -3)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = F.softmax(attn, dim=-1)
+        attn = self.dropout(attn)
+        out = attn @ v  # (..., heads, M, head_dim)
+        out = out.transpose(-2, -3).reshape(*lead, M, D)
+        return residual + self.gate * self.out_proj(out)
 
 
 class STLLM6Block(nn.Module):
@@ -187,9 +261,9 @@ class STLLM6Block(nn.Module):
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM6 adds explicit inter-mode self-attention before ST blocks."""
+    """STLLM6: per-mode embedding + cross-mode self-attention at encoder and decoder."""
 
-    intro = "Compared with STLLM, STLLM6 adds explicit inter-mode self-attention before ST blocks."
+    intro = "STLLM6: per-mode embedding with cross-mode multi-head self-attention bracketing the ST backbone."
 
     def __init__(
         self,
@@ -197,20 +271,29 @@ class STLLM(BaseModel):
         num_heads=8,
         d_ff=384,
         num_layers=4,
-        mode_attn_dim=16,
+        d_pm=16,
+        mode_attn_heads=2,
+        mode_attn_dim=16,  # kept for backward-compat CLI; unused
         dropout=0.1,
         **args,
     ):
         super().__init__(**args)
         self.d_model = d_model
-        self.inter_mode = InterModeSelfAttention(self.input_dim, mode_attn_dim=mode_attn_dim, dropout=dropout)
-        self.input_embedding = nn.Linear(self.input_dim, d_model)
+        self.d_pm = d_pm
+        self.num_modes = self.input_dim
+
+        self.mode_embed = PerModeEmbedding(self.num_modes, d_pm)
+        self.encoder_mixer = CrossModeAttention(d_pm, num_heads=mode_attn_heads, dropout=dropout)
+        self.decoder_mixer = CrossModeAttention(d_pm, num_heads=mode_attn_heads, dropout=dropout)
+        self.mode_fuser = ModeFuser(self.num_modes, d_pm, d_model)
+
         self.node_embedding = nn.Embedding(self.node_num, d_model)
         self.blocks = nn.ModuleList(
             [STLLM6Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
-        self.output_norm = RMSNorm(d_model)
-        self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
+
+        self.mode_unfuser = ModeUnfuser(self.num_modes, d_pm, d_model)
+        self.head = PerModeHead(self.num_modes, d_pm, self.horizon)
         self._init_weights()
 
     def _init_weights(self):
@@ -227,20 +310,24 @@ class STLLM(BaseModel):
             nn.init.zeros_(block.temporal_gate.bias)
             nn.init.zeros_(block.spatial_gate.weight)
             nn.init.zeros_(block.spatial_gate.bias)
-        nn.init.zeros_(self.inter_mode.gate.weight)
-        nn.init.zeros_(self.inter_mode.gate.bias)
 
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
-        x = self.inter_mode(x)
-        x = self.input_embedding(x)
+
+        # Per-mode encoding with cross-mode attention.
+        x = self.mode_embed(x)               # (B, T, N, M, d_pm)
+        x = self.encoder_mixer(x)
+        x = self.mode_fuser(x)               # (B, T, N, d_model)
+
         node_ids = torch.arange(node_num, device=x.device)
         x = x + self.node_embedding(node_ids).unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
 
-        x = self.output_norm(x)
-        x = self.output_proj(x[:, -1, :, :])
-        x = x.reshape(batch_size, node_num, self.horizon, self.output_dim)
-        return x.permute(0, 2, 1, 3)
+        # Decode the last step in per-mode subspace with another cross-mode mixer.
+        token = x[:, -1, :, :]               # (B, N, d_model)
+        modes = self.mode_unfuser(token)     # (B, N, M, d_pm)
+        modes = self.decoder_mixer(modes)
+        out = self.head(modes)               # (B, N, M, H)
+        return out.permute(0, 3, 1, 2).contiguous()  # (B, H, N, M)

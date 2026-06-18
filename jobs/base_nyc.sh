@@ -24,7 +24,7 @@ SRC=$BASE/src/flow
 PORJ=NYC_Mobi
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 512 --dataset nyc_mobility_dense --proj $PORJ --years 2024" # --engine_mode flow_matching
+ARGS="--bs 512 --dataset nyc_mobility --proj $PORJ --years 2024" # --engine_mode flow_matching
 
 # MODELS=(
 #     stgcn

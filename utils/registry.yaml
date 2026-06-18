@@ -5,7 +5,7 @@
 # ── Flow Prediction: N → N ────────────────────────────────────────────
 nyc_mobility:
   data: nyc_mobility
-  adj: nyc_mobility/nyc_adj.npy
+  adj: nyc_mobility/Manhattan.npy
 
 chicago_mobility:
   data: chicago_mobility

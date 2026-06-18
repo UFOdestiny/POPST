@@ -1,4 +1,18 @@
-"""STLLM8: STLLM3-style backbone with explicit bilinear inter-mode interaction."""
+"""STLLM8: per-mode embedding + low-rank cross-mode bilinear mixer.
+
+The original STLLM8 mixed M raw scalar mode values with a softmax
+relation matrix and a Hadamard cross term, then collapsed them with a
+single Linear(M, d_model). This redesign keeps each mode in its own
+d_pm-dim subspace, then runs a low-rank bilinear cross-mode mixer that
+combines
+
+  msg_i  = sum_j  A_ij * (W_v x_j)        (additive correlation)
+  cross  = (W_l x_i) ⊙ (W_r msg_i)        (multiplicative interaction)
+
+with low-rank per-mode projections so the parameter count stays small.
+The mixer is applied at both the encoder side (after embedding) and the
+decoder side (before the per-mode forecast head).
+"""
 
 import torch
 import torch.nn as nn
@@ -113,25 +127,96 @@ class SwiGLU(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
-class InterModeBilinearMixer(nn.Module):
-    def __init__(self, input_dim):
+class PerModeEmbedding(nn.Module):
+    def __init__(self, num_modes, d_pm):
         super().__init__()
-        self.mode_norm = nn.LayerNorm(input_dim)
-        self.relation_logits = nn.Parameter(torch.zeros(input_dim, input_dim))
-        self.msg_gain = nn.Parameter(torch.full((input_dim,), 1e-3))
-        self.cross_gain = nn.Parameter(torch.full((input_dim,), 1e-3))
-        self.gate = nn.Linear(input_dim, input_dim)
+        self.weight = nn.Parameter(torch.empty(num_modes, d_pm))
+        self.bias = nn.Parameter(torch.zeros(num_modes, d_pm))
+        self.mode_emb = nn.Parameter(torch.zeros(num_modes, d_pm))
+        nn.init.normal_(self.weight, std=0.02)
+        nn.init.normal_(self.mode_emb, std=0.02)
 
     def forward(self, x):
-        # x: (B, T, N, M)
+        x = x.unsqueeze(-1) * self.weight + self.bias
+        return x + self.mode_emb
+
+
+class ModeFuser(nn.Module):
+    def __init__(self, num_modes, d_pm, d_model):
+        super().__init__()
+        self.norm = RMSNorm(num_modes * d_pm)
+        self.proj = nn.Linear(num_modes * d_pm, d_model)
+
+    def forward(self, x):
+        flat = x.reshape(*x.shape[:-2], x.shape[-2] * x.shape[-1])
+        return self.proj(self.norm(flat))
+
+
+class ModeUnfuser(nn.Module):
+    def __init__(self, num_modes, d_pm, d_model):
+        super().__init__()
+        self.num_modes = num_modes
+        self.d_pm = d_pm
+        self.norm = RMSNorm(d_model)
+        self.proj = nn.Linear(d_model, num_modes * d_pm)
+
+    def forward(self, x):
+        out = self.proj(self.norm(x))
+        return out.reshape(*out.shape[:-1], self.num_modes, self.d_pm)
+
+
+class PerModeHead(nn.Module):
+    def __init__(self, num_modes, d_pm, horizon):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(num_modes, d_pm, horizon))
+        self.bias = nn.Parameter(torch.zeros(num_modes, horizon))
+        nn.init.normal_(self.weight, std=0.02)
+
+    def forward(self, x):
+        return torch.einsum("bnmd,mdh->bnmh", x, self.weight) + self.bias
+
+
+class LowRankBilinearMixer(nn.Module):
+    """Cross-mode bilinear mixer with low-rank per-mode projections."""
+
+    def __init__(self, num_modes, d_pm, rank=8, dropout=0.1):
+        super().__init__()
+        self.num_modes = num_modes
+        self.d_pm = d_pm
+        self.rank = min(rank, d_pm)
+        self.norm = RMSNorm(d_pm)
+        self.relation_logits = nn.Parameter(torch.zeros(num_modes, num_modes))
+        # Low-rank per-mode value, left, and right projections.
+        self.W_value_in = nn.Parameter(torch.empty(num_modes, d_pm, self.rank))
+        self.W_value_out = nn.Parameter(torch.empty(num_modes, self.rank, d_pm))
+        self.W_left = nn.Parameter(torch.empty(num_modes, d_pm, self.rank))
+        self.W_right = nn.Parameter(torch.empty(num_modes, d_pm, self.rank))
+        self.W_cross_out = nn.Parameter(torch.empty(num_modes, self.rank, d_pm))
+        self.msg_gain = nn.Parameter(torch.full((d_pm,), 1e-3))
+        self.cross_gain = nn.Parameter(torch.full((d_pm,), 1e-3))
+        self.gate = nn.Parameter(torch.zeros(d_pm))
+        self.dropout = nn.Dropout(dropout)
+        for w in (self.W_value_in, self.W_value_out, self.W_left, self.W_right, self.W_cross_out):
+            nn.init.normal_(w, std=0.02)
+
+    def forward(self, x):
+        # x: (..., M, d_pm).
         residual = x
-        x_norm = self.mode_norm(x)
-        rel = F.softmax(self.relation_logits, dim=-1)
-        message = torch.einsum("ij,btnj->btni", rel, x_norm)
-        interaction = x_norm * message
-        mixed = self.msg_gain.view(1, 1, 1, -1) * message + self.cross_gain.view(1, 1, 1, -1) * interaction
-        gate = 1.0 + 0.25 * torch.tanh(self.gate(x_norm))
-        return residual + gate * mixed
+        x_n = self.norm(x)
+        adj = F.softmax(self.relation_logits, dim=-1)                          # (M, M)
+
+        v_low = torch.einsum("...md,mdr->...mr", x_n, self.W_value_in)         # (..., M, r)
+        message_low = torch.einsum("ij,...jr->...ir", adj, v_low)              # (..., M, r)
+        message = torch.einsum("...mr,mrd->...md", message_low, self.W_value_out)
+
+        left_low = torch.einsum("...md,mdr->...mr", x_n, self.W_left)
+        right_low = torch.einsum("...md,mdr->...mr", message, self.W_right)
+        cross_low = left_low * right_low
+        cross = torch.einsum("...mr,mrd->...md", cross_low, self.W_cross_out)
+
+        mixed = self.msg_gain * message + self.cross_gain * cross
+        mixed = self.dropout(mixed)
+        return residual + self.gate * mixed
 
 
 class STLLM8Block(nn.Module):
@@ -174,9 +259,9 @@ class STLLM8Block(nn.Module):
 
 
 class STLLM(BaseModel):
-    """Compared with STLLM, STLLM8 adds explicit bilinear inter-mode interactions."""
+    """STLLM8: per-mode embedding + low-rank cross-mode bilinear mixer."""
 
-    intro = "Compared with STLLM, STLLM8 adds explicit bilinear inter-mode interactions."
+    intro = "STLLM8: per-mode embedding with a low-rank cross-mode bilinear mixer bracketing the ST backbone."
 
     def __init__(
         self,
@@ -184,19 +269,29 @@ class STLLM(BaseModel):
         num_heads=8,
         d_ff=384,
         num_layers=4,
+        d_pm=16,
+        mode_rank=8,
+        reduction_ratio=4,  # kept for backward-compat CLI; unused
         dropout=0.1,
         **args,
     ):
         super().__init__(**args)
         self.d_model = d_model
-        self.inter_mode = InterModeBilinearMixer(self.input_dim)
-        self.input_embedding = nn.Linear(self.input_dim, d_model)
+        self.d_pm = d_pm
+        self.num_modes = self.input_dim
+
+        self.mode_embed = PerModeEmbedding(self.num_modes, d_pm)
+        self.encoder_mixer = LowRankBilinearMixer(self.num_modes, d_pm, rank=mode_rank, dropout=dropout)
+        self.decoder_mixer = LowRankBilinearMixer(self.num_modes, d_pm, rank=mode_rank, dropout=dropout)
+        self.mode_fuser = ModeFuser(self.num_modes, d_pm, d_model)
+
         self.node_embedding = nn.Embedding(self.node_num, d_model)
         self.blocks = nn.ModuleList(
             [STLLM8Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
-        self.output_norm = RMSNorm(d_model)
-        self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
+
+        self.mode_unfuser = ModeUnfuser(self.num_modes, d_pm, d_model)
+        self.head = PerModeHead(self.num_modes, d_pm, self.horizon)
         self._init_weights()
 
     def _init_weights(self):
@@ -213,21 +308,22 @@ class STLLM(BaseModel):
             nn.init.zeros_(block.temporal_gate.bias)
             nn.init.zeros_(block.spatial_gate.weight)
             nn.init.zeros_(block.spatial_gate.bias)
-        nn.init.zeros_(self.inter_mode.relation_logits)
-        nn.init.zeros_(self.inter_mode.gate.weight)
-        nn.init.zeros_(self.inter_mode.gate.bias)
 
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
-        x = self.inter_mode(x)
-        x = self.input_embedding(x)
+
+        x = self.mode_embed(x)
+        x = self.encoder_mixer(x)
+        x = self.mode_fuser(x)
+
         node_ids = torch.arange(node_num, device=x.device)
         x = x + self.node_embedding(node_ids).unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
 
-        x = self.output_norm(x)
-        x = self.output_proj(x[:, -1, :, :])
-        x = x.reshape(batch_size, node_num, self.horizon, self.output_dim)
-        return x.permute(0, 2, 1, 3)
+        token = x[:, -1, :, :]
+        modes = self.mode_unfuser(token)
+        modes = self.decoder_mixer(modes)
+        out = self.head(modes)
+        return out.permute(0, 3, 1, 2).contiguous()

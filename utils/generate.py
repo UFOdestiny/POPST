@@ -263,12 +263,14 @@ if __name__ == "__main__":
     parser.add_argument("--fmt", type=str, default="NDT",
                         help="dimension format, e.g. NDT, NTD, NNDT, NT (default: NDT)")
     parser.add_argument("--clip_neg", action="store_true", help="clip negative values to 0")
-    parser.add_argument("--dataset", type=str, default="chicago_mobility_dense", help="dataset name")
-    parser.add_argument("--years", type=str, default="2025")
+    parser.add_argument("--dataset", type=str, default="nyc_mobility", help="dataset name")
+    parser.add_argument("--years", type=str, default="2024")
     parser.add_argument("--seq_length_x", type=int, default=12, help="input sequence length")
     parser.add_argument("--seq_length_y", type=int, default=1, help="prediction horizon")
 
     args = parser.parse_args()
     # args.data_path="/home/dy23a.fsu/st/datasets/nyc_mobility_dense/nyc_ta_bi_sub_2024_15min_arv_NDT.npy"
-    args.data_path="/home/dy23a.fsu/st/datasets/chicago_mobility_dense/chi_ta_bi_2025_15min_arv_NDT.npy"
+    # args.data_path="/home/dy23a.fsu/st/datasets/chicago_mobility_dense/chi_ta_bi_2025_15min_arv_NDT.npy"
+
+    args.data_path="/blue/gtyson.fsu/dy23a.fsu/jupyter/mobility_datasets/nyc/processed/nyc_ta_bi_sub_2024_1hour_arv_NDT.npy"
     generate(args)
