@@ -214,25 +214,33 @@ class STLLM(BaseModel):
         **args
     ):
         super(STLLM, self).__init__(**args)
-        
+
         self.d_model = d_model
-        
+
         # Input projection.
         self.input_embedding = nn.Linear(self.input_dim, d_model)
-        
+
         # Node identity embedding.
         self.node_embedding = nn.Embedding(self.node_num, d_model)
-        
+
         # ST-LLM blocks
         self.blocks = nn.ModuleList([
             STLLMBlock(d_model, num_heads, d_ff, self.seq_len, dropout)
             for _ in range(num_layers)
         ])
-        
+
         # Output projection head.
         self.output_norm = RMSNorm(d_model)
+        # Attention-pooled decoder: query the full encoded sequence with the
+        # last step as the seed query, so the decoder is informed by every
+        # observed step rather than only x[:, -1].
+        self.pool_query = nn.Linear(d_model, d_model)
+        self.pool_key = nn.Linear(d_model, d_model)
+        self.pool_value = nn.Linear(d_model, d_model)
+        self.pool_scale = (d_model // num_heads) ** -0.5
+        self.pool_heads = num_heads
         self.output_proj = nn.Linear(d_model, self.output_dim * self.horizon)
-        
+
         self._init_weights()
     
     def _init_weights(self):
@@ -272,15 +280,29 @@ class STLLM(BaseModel):
         
         # Normalize before decoding.
         x = self.output_norm(x)
-        
-        # Decode from the last observed step.
-        x = x[:, -1, :, :]  # (batch, node_num, d_model)
-        
+
+        # Attention-pooled decoder: query the encoded sequence with the
+        # last-step token as the seed query, gather every observed step.
+        # x: (batch, seq_len, node_num, d_model) -> (batch * node_num, seq_len, d_model)
+        seq = x.permute(0, 2, 1, 3).contiguous().view(batch_size * node_num, seq_len, self.d_model)
+        q = self.pool_query(seq[:, -1:, :])  # (BN, 1, d_model)
+        k = self.pool_key(seq)
+        v = self.pool_value(seq)
+        head_dim = self.d_model // self.pool_heads
+        q = q.view(batch_size * node_num, 1, self.pool_heads, head_dim).transpose(1, 2)
+        k = k.view(batch_size * node_num, seq_len, self.pool_heads, head_dim).transpose(1, 2)
+        v = v.view(batch_size * node_num, seq_len, self.pool_heads, head_dim).transpose(1, 2)
+        attn = F.softmax((q @ k.transpose(-2, -1)) * self.pool_scale, dim=-1)
+        ctx = (attn @ v).transpose(1, 2).contiguous().view(batch_size * node_num, self.d_model)
+        # Residual with the last-step token to keep STLLM's "read last step" behavior as a fallback.
+        token = ctx + seq[:, -1, :]
+        token = token.view(batch_size, node_num, self.d_model)
+
         # Generate the multi-step forecast.
-        x = self.output_proj(x)  # (batch, node_num, output_dim * horizon)
+        x = self.output_proj(token)  # (batch, node_num, output_dim * horizon)
         x = x.view(batch_size, node_num, self.horizon, self.output_dim)
         x = x.permute(0, 2, 1, 3)  # (batch, horizon, node_num, output_dim)
-        
+
         return x
 
 

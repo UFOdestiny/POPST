@@ -100,18 +100,32 @@ class SwiGLU(nn.Module):
 
 
 class GlobalSpatialMixer(nn.Module):
+    """Global node mixer with mean + max + gated content context.
+
+    A single mean-pool collapses node heterogeneity into one signal per
+    batch token. Adding a max-pool keeps the most-active node's signature,
+    and a learned content-conditioned gate decides per-node how much of
+    the global context to inject.
+    """
+
     def __init__(self, d_model, d_ff, dropout=0.1):
         super().__init__()
-        self.in_proj = nn.Linear(d_model * 2, d_ff, bias=False)
+        # 3 streams: per-node feature, mean-pool context, max-pool context.
+        self.in_proj = nn.Linear(d_model * 3, d_ff, bias=False)
         self.out_proj = nn.Linear(d_ff, d_model, bias=False)
+        # Per-node, content-conditioned gate so heterogeneous nodes can
+        # selectively absorb the global summary.
+        self.gate_proj = nn.Linear(d_model, d_model, bias=True)
         self.dropout = nn.Dropout(dropout)
         self.layer_scale = nn.Parameter(torch.full((d_model,), 1e-3))
 
     def forward(self, x):
-        context = x.mean(dim=1, keepdim=True).expand(-1, x.shape[1], -1)
-        fused = torch.cat([x, context], dim=-1)
+        mean_ctx = x.mean(dim=1, keepdim=True).expand(-1, x.shape[1], -1)
+        max_ctx = x.amax(dim=1, keepdim=True).expand(-1, x.shape[1], -1)
+        fused = torch.cat([x, mean_ctx, max_ctx], dim=-1)
         update = self.out_proj(F.gelu(self.in_proj(fused)))
-        return self.dropout(update * self.layer_scale)
+        gate = torch.sigmoid(self.gate_proj(x))
+        return self.dropout(update * gate * self.layer_scale)
 
 
 class STLLM4Block(nn.Module):

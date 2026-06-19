@@ -3,6 +3,12 @@
 Compared with the original STLLM, the model starts from a fixed sinusoidal node
 encoding, adds only a learnable residual node bias, and keeps output RMSNorm for
 stable decoding on larger-scale datasets.
+
+The fixed sinusoidal prior is scaled to roughly match the input-embedding
+output magnitude (scale ~ init_std * sqrt(d_model)) and an RMSNorm is
+applied after the node prior + bias are added so the post-embedding
+distribution is stable. This avoids the prior overwhelming the embedded
+input on datasets where the normalized features are small.
 """
 
 import math
@@ -190,8 +196,20 @@ class STLLM(BaseModel):
         self.d_model = d_model
 
         self.input_embedding = nn.Linear(self.input_dim, d_model)
-        self.register_buffer("node_encoding", build_fixed_node_encoding(self.node_num, d_model), persistent=False)
-        self.node_bias = nn.Parameter(torch.zeros(self.node_num, d_model))
+        # Scale the sinusoidal prior so its magnitude matches the
+        # 0.02-std-init linear embedding output. Without this scaling the
+        # prior (~1.0) overwhelms the embedded input (~0.02 * sqrt(d))
+        # and training diverges on datasets like NYC mobility.
+        encoding = build_fixed_node_encoding(self.node_num, d_model)
+        encoding = encoding * (0.02 * (d_model ** 0.5))
+        self.register_buffer("node_encoding", encoding, persistent=False)
+        # Small-noise init for the residual node bias so each node has a
+        # distinct trainable signature from epoch 1 (zero-init starves
+        # spatial attention of a useful query/key signal early on).
+        self.node_bias = nn.Parameter(torch.empty(self.node_num, d_model))
+        # RMSNorm after embedding fusion keeps the input scale of the
+        # attention blocks consistent across datasets.
+        self.embed_norm = RMSNorm(d_model)
         self.blocks = nn.ModuleList(
             [STLLM5Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
@@ -206,6 +224,7 @@ class STLLM(BaseModel):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+        nn.init.normal_(self.node_bias, mean=0.0, std=0.02)
 
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
@@ -213,6 +232,7 @@ class STLLM(BaseModel):
         x = self.input_embedding(x)
         x = x + self.node_encoding[:node_num].unsqueeze(0).unsqueeze(0)
         x = x + self.node_bias[:node_num].unsqueeze(0).unsqueeze(0)
+        x = self.embed_norm(x)
 
         for block in self.blocks:
             x = block(x)

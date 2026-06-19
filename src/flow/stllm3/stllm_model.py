@@ -1,7 +1,9 @@
 """STLLM3 keeps the STLLM backbone and adds gated residual fusion.
 
 Compared with the original STLLM, temporal and spatial branches use learned
-gates before residual addition, while the rest of the architecture is unchanged.
+gates before residual addition. The gates are sigmoid-based and conditioned
+on the branch update, so the model can fully suppress a noisy branch
+(gate -> 0) or amplify it up to 2x. The rest of the architecture is unchanged.
 """
 
 import torch
@@ -142,10 +144,12 @@ class STLLM3Block(nn.Module):
         self.ffn = SwiGLU(d_model, d_ff, dropout)
         self.dropout = nn.Dropout(dropout)
 
-    def _apply_residual(self, residual, gate_input, update, gate_layer):
-        gate = 1.0 + 0.25 * torch.tanh(gate_layer(gate_input))
-        update = update * gate
-        return residual + self.dropout(update)
+    def _apply_residual(self, residual, update, gate_layer):
+        # Sigmoid gate conditioned on the branch update: range [0, 2], so
+        # the model can fully drop (gate=0) or fully amplify (gate=2) the
+        # branch's contribution. Bias toward identity at init via zero-init.
+        gate = 2.0 * torch.sigmoid(gate_layer(update))
+        return residual + self.dropout(update * gate)
 
     def forward(self, x):
         batch_size, seq_len, node_num, d_model = x.shape
@@ -153,13 +157,13 @@ class STLLM3Block(nn.Module):
         x_reshape = x.permute(0, 2, 1, 3).contiguous().reshape(batch_size * node_num, seq_len, d_model)
         x_norm = self.temporal_norm(x_reshape)
         temporal_out = self.temporal_attn(x_norm)
-        x_reshape = self._apply_residual(x_reshape, x_norm, temporal_out, self.temporal_gate)
+        x_reshape = self._apply_residual(x_reshape, temporal_out, self.temporal_gate)
         x = x_reshape.reshape(batch_size, node_num, seq_len, d_model).permute(0, 2, 1, 3)
 
         x_reshape = x.contiguous().reshape(batch_size * seq_len, node_num, d_model)
         x_norm = self.spatial_norm(x_reshape)
         spatial_out = self.spatial_attn(x_norm)
-        x_reshape = self._apply_residual(x_reshape, x_norm, spatial_out, self.spatial_gate)
+        x_reshape = self._apply_residual(x_reshape, spatial_out, self.spatial_gate)
         x = x_reshape.reshape(batch_size, seq_len, node_num, d_model)
 
         x_reshape = x.reshape(batch_size * seq_len * node_num, d_model)

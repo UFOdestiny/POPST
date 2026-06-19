@@ -1,8 +1,13 @@
 """STLLM2 keeps the STLLM backbone and only adds a learnable time embedding.
 
 Compared with the original STLLM, the temporal-spatial attention blocks,
-node embedding, and output normalization remain unchanged.
+node embedding, and output normalization remain unchanged. The time
+embedding is sinusoidally initialized so the first epoch already sees a
+useful position signal, and its scale is constrained by an RMSNorm
+applied after embedding fusion to keep the input distribution stable.
 """
+
+import math
 
 import torch
 import torch.nn as nn
@@ -180,6 +185,9 @@ class STLLM(BaseModel):
         self.input_embedding = nn.Linear(self.input_dim, d_model)
         self.time_embedding = nn.Parameter(torch.empty(1, self.seq_len, 1, d_model))
         self.node_embedding = nn.Embedding(self.node_num, d_model)
+        # Stabilize the post-embedding distribution so the additive
+        # time/node priors do not skew the attention input scale.
+        self.embed_norm = RMSNorm(d_model)
         self.blocks = nn.ModuleList(
             [STLLM2Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
@@ -197,7 +205,17 @@ class STLLM(BaseModel):
             elif isinstance(module, nn.Embedding):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-        nn.init.zeros_(self.time_embedding)
+        # Sinusoidal init so the time prior carries signal from epoch 1
+        # while remaining trainable.
+        d_model = self.time_embedding.shape[-1]
+        seq_len = self.time_embedding.shape[1]
+        position = torch.arange(seq_len).float().unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(seq_len, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[: pe[:, 1::2].shape[1]])
+        with torch.no_grad():
+            self.time_embedding.copy_(pe.view(1, seq_len, 1, d_model) * 0.02)
 
     def forward(self, x, label=None):
         batch_size, seq_len, node_num, _ = x.shape
@@ -208,6 +226,7 @@ class STLLM(BaseModel):
         node_ids = torch.arange(node_num, device=x.device)
         node_emb = self.node_embedding(node_ids)
         x = x + node_emb.unsqueeze(0).unsqueeze(0)
+        x = self.embed_norm(x)
 
         for block in self.blocks:
             x = block(x)
