@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from base.runner import run_experiment
 from stzinb_model import STZINB
+from stzinb_engine import STZINB_Engine
 from utils.dataloader import load_adj_from_numpy
 from utils.graph_algo import normalize_adj_mx
 
@@ -36,6 +37,7 @@ def build_model(args, node_num, **ctx):
     return STZINB(
         A=ctx["gso"],
         seq_len=args.seq_len,
+        horizon=args.horizon,
         node_num=node_num,
         hidden_dim_t=args.hidden_dim_t,
         hidden_dim_s=args.hidden_dim_s,
@@ -54,7 +56,9 @@ if __name__ == "__main__":
         model_name="STZINB",
         add_args=add_args,
         build_model=build_model,
-        loss_fn="MSE",
+        loss_fn="MAE",
+        od=True,
+        engine_cls=STZINB_Engine,
         setup=setup,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
     )

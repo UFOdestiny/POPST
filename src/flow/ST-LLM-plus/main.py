@@ -10,11 +10,11 @@ from utils.dataloader import load_adj_from_numpy
 
 
 def add_args(parser):
-    parser.add_argument("--gpt_channel", type=int, default=256, help="卷积侧隐层维度")
-    parser.add_argument("--llm_layer", type=int, default=6, help="保留的 GPT2 block 数量")
-    parser.add_argument("--U", type=int, default=1, help="图注意力+LoRA 重点微调的后部层数")
+    parser.add_argument("--gpt_channel", type=int, default=256, help="conv-side hidden dimension")
+    parser.add_argument("--llm_layer", type=int, default=6, help="number of retained GPT2 blocks")
+    parser.add_argument("--U", type=int, default=1, help="number of trailing layers fine-tuned with graph attention + LoRA")
     parser.add_argument("--lora_rank", type=int, default=16, help="LoRA rank")
-    parser.add_argument("--pretrained_model", type=str, default="gpt2", help="HuggingFace 预训练模型名")
+    parser.add_argument("--pretrained_model", type=str, default="gpt2", help="HuggingFace pretrained model name")
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=1e-4)
     parser.add_argument("--dropout", type=float, default=0.1)

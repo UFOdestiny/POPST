@@ -27,9 +27,12 @@ class AGCRN(BaseModel):
         output, _ = self.encoder(source, init_state, self.node_embed)
         output = output[:, -1:, :, :]  # (B, 1, N, rnn_unit)
         pred = self.end_conv(output)  # (B, horizon*out_dim, N, 1)
-        B, HC, N, _ = pred.shape
-        pred = pred.view(B, self.output_dim, self.horizon, N)
-        pred = pred.permute(0, 2, 3, 1)
+        # Conv channels are laid out (horizon, output_dim); split that axis BEFORE
+        # moving N into place so the horizon/feature axes are not interleaved
+        # (matches the official reshape: (B, T*C, N, 1) -> (B, T, C, N) -> (B, T, N, C)).
+        B = pred.shape[0]
+        pred = pred.squeeze(-1).reshape(B, self.horizon, self.output_dim, self.node_num)
+        pred = pred.permute(0, 1, 3, 2)  # (B, horizon, N, output_dim)
 
         return pred
 

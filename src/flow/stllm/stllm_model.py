@@ -6,7 +6,6 @@ It combines temporal attention, spatial attention, and SwiGLU blocks for sequenc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 from base.model import BaseModel
 
 

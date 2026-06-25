@@ -32,6 +32,7 @@ def build_model(args, node_num, **ctx):
         layer=args.layer,
         dropout=args.dropout,
         seq_len=args.seq_len,
+        horizon=args.horizon,
     )
 
 
@@ -41,5 +42,6 @@ if __name__ == "__main__":
         add_args=add_args,
         build_model=build_model,
         loss_fn="MSE",
+        od=True,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
     )

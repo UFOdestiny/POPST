@@ -4,11 +4,26 @@ import sys
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
 import numpy as np
+import scipy.sparse as sp
+from scipy.sparse import linalg
 import torch
 from base.runner import run_experiment
 from astgcn_model import ASTGCN
 from utils.dataloader import load_adj_from_numpy
-from utils.graph_algo import normalize_adj_mx, calculate_cheb_poly
+from utils.graph_algo import calculate_cheb_poly
+
+
+def _scaled_combinatorial_laplacian(adj):
+    """ASTGCN's official scaled Laplacian: scale the *combinatorial* Laplacian
+    ``L = D - W`` by ``2/lambda_max`` and subtract I (guoshnBJTU/ASTGCN-r-pytorch
+    ``lib/utils.scaled_Laplacian``).  This differs from the shared ``scalap``
+    helper, which scales the *symmetric-normalized* Laplacian."""
+    adj = np.asarray(adj, dtype=np.float32)
+    adj = np.maximum(adj, adj.T)
+    D = np.diag(adj.sum(axis=1))
+    L = D - adj
+    lambda_max = linalg.eigsh(sp.csr_matrix(L), k=1, which="LM")[0][0]
+    return (2.0 * L / lambda_max) - np.identity(adj.shape[0], dtype=np.float32)
 
 
 def add_args(parser):
@@ -31,7 +46,7 @@ def setup(args, data_path, adj_path, node_num, device, logger):
         idx = np.nonzero(adj_mx[n])[0]
         adj[n, idx] = 1
 
-    L_tilde = normalize_adj_mx(adj, "scalap")[0]
+    L_tilde = _scaled_combinatorial_laplacian(adj)
     cheb_poly = [
         torch.from_numpy(i).type(torch.FloatTensor).to(device)
         for i in calculate_cheb_poly(L_tilde, args.order)

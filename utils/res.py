@@ -15,7 +15,6 @@ import re
 import argparse
 import pandas as pd
 from pandas.api.types import CategoricalDtype
-import numpy as np
 from datetime import datetime
 
 
@@ -186,30 +185,6 @@ def _parse_training_epochs(log_path):
 
             epochs.append(epoch_data)
     return epochs
-
-
-def _parse_test_horizons(log_path):
-    """Parse per-horizon test results.
-
-    Returns list of dicts: [{'horizon': 1, 'MAE': ..., 'RMSE': ...}, ...]
-    """
-    horizons = []
-    with open(log_path) as f:
-        for line in f:
-            if "Test Horizon:" not in line:
-                continue
-            m = re.search(r"Test Horizon:\s*(\d+)", line)
-            if not m:
-                continue
-            h = {"horizon": int(m.group(1))}
-            for key, val in re.findall(r"(\w+):\s*([\d.eE+-]+)", line):
-                if key != "Horizon":
-                    try:
-                        h[key] = float(val)
-                    except ValueError:
-                        pass
-            horizons.append(h)
-    return horizons
 
 
 def get_time(log_path):
@@ -430,8 +405,8 @@ if __name__ == "__main__":
                         help="Metric for selecting best log (default: MAE)")
     args = parser.parse_args()
 
-    args.path="/home/dy23a.fsu/st/result/NYC_Mobi"
-    args.path="/home/dy23a.fsu/st/result/Chi_Mobi"
+    args.path="/home/dy23a.fsu/st/result/NYC_Flow"
+    # args.path="/home/dy23a.fsu/st/result/Chi_Flow"
 
     if args.log:
         summarize_log(args.log)

@@ -81,14 +81,26 @@ class D2STGNN(BaseModel):
         node_emb_u = self.node_emb_u
         node_emb_d = self.node_emb_d
 
-        tpd = self._model_args["tpd"]
-        tid_idx = (history_data[:, :, :, num_feat - 1] * tpd).long().clamp(0, tpd - 1)
+        if self._model_args.get("has_time_feat", False):
+            # Calendar channels are appended after the signal channels (official
+            # METR-LA/PEMS layout: [signal..., time-of-day, day-of-week]).
+            tpd = self._model_args["tpd"]
+            tid_idx = (history_data[:, :, :, num_feat] * tpd).long().clamp(0, tpd - 1)
+            diw_idx = (history_data[:, :, :, num_feat + 1] * 7).long().clamp(0, 6)
+            history_data = history_data[:, :, :, :num_feat]
+        else:
+            # This benchmark's channels are mobility volumes (taxi/fhv/bike) with
+            # no calendar features.  Use a fixed (index-0) time embedding instead
+            # of indexing mobility values as if they were time-of-day / day-of-week
+            # indices (which fed the estimation gate and dynamic graph garbage).
+            # Shapes are unchanged; all num_feat channels feed the signal path.
+            b, l, n, _ = history_data.shape
+            tid_idx = history_data.new_zeros(b, l, n, dtype=torch.long)
+            diw_idx = history_data.new_zeros(b, l, n, dtype=torch.long)
+            history_data = history_data[:, :, :, :num_feat]
+
         time_in_day_feat = self.T_i_D_emb[tid_idx]
-
-        diw_idx = (history_data[:, :, :, num_feat - 2] * 7).long().clamp(0, 6)
         day_in_week_feat = self.D_i_W_emb[diw_idx]
-
-        history_data = history_data[:, :, :, :num_feat]
         return history_data, node_emb_u, node_emb_d, time_in_day_feat, day_in_week_feat
 
     def forward(self, history_data, label=None):  # (b, t, n, f)

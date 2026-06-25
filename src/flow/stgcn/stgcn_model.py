@@ -33,7 +33,7 @@ class STConvBlock(nn.Module):
 
 
 class OutputBlock(nn.Module):
-    def __init__(self, Ko, last_block_channel, channels, end_channel, node_num):
+    def __init__(self, Ko, last_block_channel, channels, end_channel, node_num, dropout=0.0):
         super(OutputBlock, self).__init__()
         self.tmp_conv1 = TemporalConvLayer(
             Ko, last_block_channel, channels[0], node_num
@@ -43,6 +43,7 @@ class OutputBlock(nn.Module):
 
         self.tc1_ln = nn.LayerNorm([node_num, channels[0]])
         self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x):
         # x: (b, c_in, t, n)
@@ -52,6 +53,7 @@ class OutputBlock(nn.Module):
         x = self.tc1_ln(x)  # (b, t, n, channels[0])
         x = self.fc1(x)  # (b, t, n, channels[1])
         x = self.relu(x)
+        x = self.dropout(x)  # official applies dropout between relu and fc2
         x = self.fc2(x)  # (b, t, n, end_channel)
         # Convert back to (b, end_channel, t, n)
         x = x.permute(0, 3, 1, 2)  # (b, end_channel, t, n)
@@ -236,9 +238,8 @@ class STGCN(BaseModel):
         Ko = self.seq_len - (len(blocks) - 3) * 2 * (Kt - 1)
         self.Ko = Ko
         if self.Ko > 1:
-            # self.output = OutputBlock(Ko, blocks[-3][-1], blocks[-2], blocks[-1][0], self.node_num, dropout)
             self.output = OutputBlock(
-                Ko, blocks[-3][-1], blocks[-2], feature, self.node_num
+                Ko, blocks[-3][-1], blocks[-2], feature, self.node_num, dropout
             )
         elif self.Ko == 0:
             self.fc1 = nn.Linear(in_features=blocks[-3][-1], out_features=blocks[-2][0])
@@ -263,17 +264,24 @@ class STGCN(BaseModel):
                 x = self.relu(x)
                 x = self.fc2(x).permute(0, 3, 1, 2)  # (b, f, t, n)
             
-            # Take only the last timestep and convert back to (b, t, n, f) format
-            # x is (b, f, t, n), take last timestep -> (b, f, 1, n)
-            x_last = x[:, :, -1:, :]  # (b, f, 1, n)
-            x_last = x_last.permute(0, 2, 3, 1)  # (b, 1, n, f)
+            # Take only the last timestep and convert back to (b, t, n, c) format
+            # x is (b, c, t, n), take last timestep -> (b, c, 1, n); c = output_dim
+            x_last = x[:, :, -1:, :]  # (b, c, 1, n)
+            x_last = x_last.permute(0, 2, 3, 1)  # (b, 1, n, c)
 
             if result is None:
                 result = x_last
             else:
                 result = torch.cat([result, x_last], dim=1)  # concatenate along time dimension
 
-            origin_x = torch.cat([origin_x, x_last], dim=1)  # (b, t+1, n, f)
+            # Autoregressive feedback must keep the input's channel count
+            # (input_dim).  Under CQR the output has 3 channels per feature
+            # (q_lo, q_mid, q_hi); feed back only the median.  Reshaping the
+            # last axis to (input_dim, -1) and taking [..., 0] yields the
+            # median under CQR and is a no-op when output_dim == input_dim.
+            x_feedback = x_last.reshape(*x_last.shape[:-1], origin_x.shape[-1], -1)[..., 0]
+
+            origin_x = torch.cat([origin_x, x_feedback], dim=1)  # (b, t+1, n, input_dim)
             x = origin_x[:, -step:, :, :]  # get last 'step' timesteps
 
         return result

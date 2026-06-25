@@ -1,11 +1,15 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from base.model import BaseModel
+from base.model import BaseODModel
 
-class AGCRN(BaseModel):
+class AGCRN(BaseODModel):
     '''
     Reference code: https://github.com/LeiBAI/AGCRN
+
+    Single-channel OD backbone (input_dim = output_dim = node_num) run under the
+    channel-as-batch contract of BaseODModel: forward_single receives a 4-D
+    (B', T, N, N) tensor (B' = B*D) and returns (B', horizon, N, N).
     '''
     def __init__(self, embed_dim, rnn_unit, num_layer, cheb_k, **args):
         super(AGCRN, self).__init__(**args)
@@ -16,13 +20,16 @@ class AGCRN(BaseModel):
         self.end_conv = nn.Conv2d(1, self.horizon * self.output_dim, kernel_size=(1, rnn_unit), bias=True)
 
 
-    def forward(self, source, label=None):  # (b, t, n, f)
+    def forward_single(self, source, label=None):  # (B', t, n, f)
         bs, _, node_num, _ = source.shape
         init_state = self.encoder.init_hidden(bs, node_num)
         output, _ = self.encoder(source, init_state, self.node_embed)
-        output = output[:, -1:, :, :]
-        pred = self.end_conv(output)
-        return pred.permute(0,3,1,2)
+        output = output[:, -1:, :, :]            # (B', 1, N, rnn_unit)
+        pred = self.end_conv(output)             # (B', horizon*output_dim, N, 1)
+        B, _, N, _ = pred.shape
+        pred = pred.view(B, self.output_dim, self.horizon, N)
+        pred = pred.permute(0, 2, 3, 1)          # (B', horizon, N, output_dim=N)
+        return pred
 
 
 class AVWDCRNN(nn.Module):

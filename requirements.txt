@@ -1,4 +1,4 @@
-# Core
+# Core (CUDA 12.8 build)
 torch==2.8.0
 torchaudio==2.8.0
 torchvision==0.23.0
@@ -15,14 +15,14 @@ psutil==6.1.1
 pyyaml==6.0.2
 
 # Model-specific
-torchdiffeq==0.2.5       # STGODE (neural ODE solver)
-mamba_ssm==2.2.6.post3   # Mamba models (selective state spaces)
-dgl==2.4.0               # +cu124, D2STGNN/DSTAGNN (deep graph library)
-gluonts==0.16.2          # GluonTS model
-transformers==4.57.1     # ST-LLM-plus (GPT2 backbone)
-peft==0.19.1             # ST-LLM-plus (LoRA adapters)
+torchdiffeq==0.2.5
+mamba_ssm==2.2.6.post3
+dgl==2.4.0          # +cu124
+gluonts==0.16.2
+transformers==4.57.1
+peft==0.19.1
 
-# Data processing (optional)
-geopandas==1.0.1         # Adjacency matrix from shapefiles
-shapely==2.1.2           # Geometry operations
-fastdtw==0.2.0           # Dynamic time warping
+# Geo / data processing
+geopandas==1.0.1
+shapely==2.1.2
+fastdtw==0.2.0

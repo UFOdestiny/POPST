@@ -36,9 +36,9 @@ class myTransformer(BaseModel):
             encoder_layer, num_layers=self.num_layers
         )
 
-        # **Project back to original feature dim**
-        # (d_model → F)
-        self.output_proj = nn.Linear(self.d_model, self.feature)
+        # **Project to output dim** (defaults to F; widened to 3F under CQR)
+        # (d_model → output_dim)
+        self.output_proj = nn.Linear(self.d_model, self.output_dim)
 
         # **Sequence length projection (T → H)**
         self.time_proj = nn.Linear(self.seq_len, self.horizon)
@@ -63,10 +63,10 @@ class myTransformer(BaseModel):
         x = self.time_proj(x)  # (B*N, d_model, H)
         x = x.permute(0, 2, 1)  # (B*N, H, d_model)
 
-        # === Restore feature dim ===
-        x = self.output_proj(x)  # (B*N, H, F)
+        # === Project to output dim ===
+        x = self.output_proj(x)  # (B*N, H, output_dim)
 
-        # === Reshape back to (B, H, N, F) ===
-        x = x.reshape(B, N, self.horizon, F)
+        # === Reshape back to (B, H, N, output_dim) ===
+        x = x.reshape(B, N, self.horizon, self.output_dim)
         x = x.permute(0, 2, 1, 3)
         return x

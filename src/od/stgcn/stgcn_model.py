@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
-from base.model import BaseModel
+from base.model import BaseODModel
 
 
 class STConvBlock(nn.Module):
@@ -36,7 +36,7 @@ class OutputBlock(nn.Module):
     def __init__(self, Ko, Kt, last_block_channel, channels, end_channel, node_num):
         super(OutputBlock, self).__init__()
         self.tmp_conv1 = TemporalConvLayer(
-            Kt, last_block_channel, channels[0], node_num
+            Ko, last_block_channel, channels[0], node_num
         )
         self.fc1 = nn.Linear(in_features=channels[0], out_features=channels[1])
         self.fc2 = nn.Linear(in_features=channels[1], out_features=end_channel)
@@ -218,13 +218,13 @@ class CausalConv2d(nn.Conv2d):
         return result
 
 
-class STGCN_OD(BaseModel):
+class STGCN_OD(BaseODModel):
     """
     Reference code: https://github.com/hazdzz/STGCN
     """
 
     def __init__(self, gso, blocks, Kt, Ks, dropout, feature, horizon, **args):
-        super(STGCN_OD, self).__init__(**args)
+        super(STGCN_OD, self).__init__(horizon=horizon, **args)
         # print(blocks)
         modules = []
         for l in range(len(blocks) - 3):
@@ -247,7 +247,7 @@ class STGCN_OD(BaseModel):
             self.relu = nn.ReLU()
         self.horizon = horizon
 
-    def forward(self, x, label=None):  # (b, t, n, f)
+    def forward_single(self, x, label=None):  # (b, t, n, f)
         origin_x = x
         step = x.shape[1]
 

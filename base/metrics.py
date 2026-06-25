@@ -116,6 +116,53 @@ def mnormal_loss(preds, labels, null_val, scales):
 
 
 
+def zinb_nll(n, p, pi, y, null_val=float("nan"), eps=1e-8):
+    """Zero-Inflated Negative Binomial negative log-likelihood (Zhuang et al.,
+    KDD 2019/2021 — STZINB).
+
+    The distribution mixes a point mass at zero (weight ``pi``) with a
+    Negative-Binomial(``n``, ``p``) over counts:
+
+        P(y=0)  = pi + (1-pi) * p**n
+        P(y=k)  = (1-pi) * C(k+n-1, k) * p**n * (1-p)**k ,  k > 0
+
+    where ``n>0`` (dispersion), ``p in (0,1)`` (NB success prob), ``pi in (0,1)``
+    (zero-inflation).  Computed in the original count space; ``y`` must be the
+    inverse-transformed (count) labels.  NaN-masked and averaged over valid cells.
+    """
+    mask = get_mask(y, null_val)
+    p = p.clamp(eps, 1 - eps)
+    n = n.clamp(min=eps)
+    pi = pi.clamp(eps, 1 - eps)
+    y = torch.clamp(y, min=0.0)
+
+    # log NB pmf for the count y
+    log_nb = (
+        torch.lgamma(y + n)
+        - torch.lgamma(n)
+        - torch.lgamma(y + 1.0)
+        + n * torch.log(p)
+        + y * torch.log(1 - p)
+    )
+    # log P(y=0) under NB = n*log(p)
+    log_nb_zero = n * torch.log(p)
+
+    is_zero = (y < eps).float()
+    # log-sum-exp for the zero case: log(pi + (1-pi)*exp(log_nb_zero))
+    log_zero = torch.log(pi + (1 - pi) * torch.exp(log_nb_zero) + eps)
+    log_nonzero = torch.log(1 - pi) + log_nb
+    log_prob = is_zero * log_zero + (1 - is_zero) * log_nonzero
+
+    return _masked_mean(-log_prob, mask)
+
+
+def zinb_mean(n, p, pi, eps=1e-8):
+    """Point prediction (expected value) of the zero-inflated NB:
+    ``E[y] = (1 - pi) * n * (1 - p) / p``."""
+    p = p.clamp(eps, 1 - eps)
+    return (1 - pi) * n * (1 - p) / p
+
+
 def masked_quantile(y_lower, y_middle, y_upper, y_true,
                     q_lower=0.05, q_upper=0.95, q_middle=0.5, lam=1.0):
     mask = get_mask(y_true, y_true.new_tensor(float("nan")))
@@ -171,7 +218,11 @@ def _dispatch(fn, kind, preds, labels, null, kw):
     if kind == "interval_target":
         return fn(kw["lower"], kw["upper"], labels, alpha=kw.get("alpha", 0.1))
     if kind == "quantile":
-        return fn(kw["lower"], preds, kw["upper"], labels)
+        return fn(
+            kw["lower"], preds, kw["upper"], labels,
+            q_lower=kw.get("q_lower", 0.05),
+            q_upper=kw.get("q_upper", 0.95),
+        )
     raise ValueError(f"Unknown metric kind: {kind}")
 
 
@@ -194,7 +245,7 @@ class Metrics:
     """Accumulates per-batch metrics for train / valid / test splits
     and formats human-readable epoch & test summaries."""
 
-    def __init__(self, loss_func, metric_lst, horizon=1, early_stop_method="MAE"):
+    def __init__(self, loss_func, metric_lst, horizon=1):
         seen, names = set(), []
         for m in metric_lst:
             if m not in _REGISTRY:
@@ -240,10 +291,6 @@ class Metrics:
         return grad_res
 
     # -- query --------------------------------------------------------------
-
-    def get_loss(self, mode="valid", method="MAE"):
-        idx = self.metric_lst.index(method)
-        return getattr(self, self._SPLITS.get(mode, "test_res"))[idx]
 
     def get_valid_loss(self):
         return np.mean(self.valid_res[self.early_stop_method_index])

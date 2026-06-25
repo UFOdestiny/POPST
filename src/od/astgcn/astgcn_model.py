@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from base.model import BaseModel
+from base.model import BaseODModel
 
 
-class ASTGCN(BaseModel):
+class ASTGCN(BaseODModel):
     """
     Reference code: https://github.com/guoshnBJTU/ASTGCN-r-pytorch
     """
@@ -55,22 +55,28 @@ class ASTGCN(BaseModel):
             ]
         )
 
+        # The ST blocks collapse the feature (destination) axis into
+        # nb_time_filter; the (1, nb_time_filter) kernel reduces that to 1, so
+        # final_conv must re-emit both the forecast horizon and the N
+        # destinations.  Output horizon*output_dim channels, then split.
         self.final_conv = nn.Conv2d(
             int(self.seq_len / time_stride),
-            self.horizon,
+            self.horizon * self.output_dim,
             kernel_size=(1, nb_time_filter),
         )
-        self.horizon = 1
 
-    def forward(self, x, label=None):  # (b, t, n, f)
-        x = x.permute(0, 2, 3, 1)  # (b, n, f, t)
+    def forward_single(self, x, label=None):  # (B', t, n, f)
+        b = x.shape[0]
+        x = x.permute(0, 2, 3, 1)  # (B', n, f, t)
 
         for block in self.BlockList:
             x = block(x)
 
-        output = self.final_conv(x.permute(0, 3, 1, 2))  # [:, :, :, -1]  # (b, t, n)
-        # print(output.shape)
-        return output.permute(0, 3, 1, 2)
+        # x: (B', n, nb_time_filter, t)
+        output = self.final_conv(x.permute(0, 3, 1, 2))  # (B', horizon*n, n, 1)
+        output = output.squeeze(-1)  # (B', horizon*output_dim, n)
+        output = output.reshape(b, self.horizon, self.output_dim, self.node_num)
+        return output.permute(0, 1, 3, 2)  # (B', horizon, n, output_dim)
 
 
 class ASTGCN_block(nn.Module):

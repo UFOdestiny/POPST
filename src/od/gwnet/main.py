@@ -27,9 +27,6 @@ def add_args(parser):
 
 
 def setup(args, data_path, adj_path, node_num, device, logger):
-    args.input_dim = node_num
-    args.output_dim = node_num
-
     adj_mx = load_adj_from_numpy(adj_path)
     adj_mx = normalize_adj_mx(adj_mx, args.adj_type)
     supports = [torch.tensor(i).to(device) for i in adj_mx]
@@ -37,8 +34,6 @@ def setup(args, data_path, adj_path, node_num, device, logger):
 
 
 def build_model(args, node_num, **ctx):
-    if args.quantile:
-        args.output_dim = 1
     return GWNET_OD(
         node_num=node_num,
         supports=ctx["supports"],
@@ -50,6 +45,7 @@ def build_model(args, node_num, **ctx):
         end_channels=args.end_dim,
         input_dim=args.input_dim,
         output_dim=args.output_dim,
+        seq_len=args.seq_len,
         horizon=args.horizon,
     )
 
@@ -61,5 +57,6 @@ if __name__ == "__main__":
         build_model=build_model,
         loss_fn="MSE",
         setup=setup,
+        od=True,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
     )

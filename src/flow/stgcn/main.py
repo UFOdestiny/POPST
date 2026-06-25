@@ -41,7 +41,7 @@ def build_model(args, node_num, **ctx):
         blocks.append([128])
     elif Ko > 0:
         blocks.append([128, 128])
-    blocks.append([args.input_dim])
+    blocks.append([args.output_dim])
 
     return STGCN(
         node_num=node_num,
@@ -52,7 +52,7 @@ def build_model(args, node_num, **ctx):
         Kt=args.Kt,
         Ks=args.Ks,
         dropout=args.dropout,
-        feature=args.input_dim,
+        feature=args.output_dim,
         horizon=args.horizon,
         seq_len=args.seq_len,
     )

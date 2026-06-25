@@ -12,16 +12,17 @@ from utils.graph_algo import normalize_adj_mx
 
 
 def add_args(parser):
-    parser.add_argument("--rank_s", type=int, default=512)
-    parser.add_argument("--rank_t", type=int, default=512)
     parser.add_argument("--hidden_dim_s", type=int, default=64)
     parser.add_argument("--hidden_dim_t", type=int, default=64)
+    parser.add_argument("--emb_dim", type=int, default=32)
+    parser.add_argument("--kernel_size", type=int, default=3)
+    parser.add_argument("--temporal_layers", type=int, default=2)
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)
     parser.add_argument("--wdecay", type=float, default=5e-4)
     parser.add_argument("--dropout", type=float, default=0.5)
-    parser.add_argument("--clip_grad_norm", type=float, default=0)
+    parser.add_argument("--clip_grad_norm", type=float, default=5)
     parser.add_argument("--min_vec", type=float, default=1e-6)
 
 
@@ -38,11 +39,11 @@ def build_model(args, node_num, **ctx):
         A=ctx["gso"],
         seq_len=args.seq_len,
         node_num=node_num,
-        hidden_dim_t=args.hidden_dim_t,
         hidden_dim_s=args.hidden_dim_s,
-        rank_t=args.rank_t,
-        rank_s=args.rank_s,
-        num_timesteps_input=args.seq_len,
+        hidden_dim_t=args.hidden_dim_t,
+        emb_dim=args.emb_dim,
+        kernel_size=args.kernel_size,
+        temporal_layers=args.temporal_layers,
         num_timesteps_output=args.horizon,
         device=device,
         input_dim=args.input_dim,
@@ -58,6 +59,8 @@ if __name__ == "__main__":
         add_args=add_args,
         build_model=build_model,
         setup=setup,
+        loss_fn="MGAU",
+        metric_list=["MGAU", "MAE", "MAPE", "RMSE", "CRPS", "KL"],
         device_override="cuda:0",
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
     )

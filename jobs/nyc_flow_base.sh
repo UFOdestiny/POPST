@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stllm_chi
+#SBATCH --job-name=nyc_f_b
 #SBATCH --account=fsu-compsci-dept
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=dy23a@fsu.edu
@@ -12,8 +12,8 @@
 #SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
 
-# sbatch jobs/stllm_chi.sh
-# c; jobs/stllm_chi.sh
+# sbatch /home/dy23a.fsu/st/jobs/nyc_flow_base.sh
+# c; /home/dy23a.fsu/st/jobs/nyc_flow_base.sh
 
 date
 module load cuda conda
@@ -21,14 +21,18 @@ conda activate st
 
 BASE=/home/dy23a.fsu/st
 SRC=$BASE/src/flow
-PORJ=Chi_Mobi
+PORJ=NYC_Flow
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 512 --dataset chicago_mobility_dense --proj $PORJ --years 2025" # --engine_mode flow_matching
+ARGS="--bs 512 --dataset nyc_manhattan_15min --proj $PORJ --years 2025"
 
+# MODELS=(
+#     stgcn
+# )
 MODELS=(
-    stllm stllm2 stllm3 stllm4 stllm5 
-    stllm6 stllm7 stllm8 stllm9
+    agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
+    hl lstm transformer patchtst stgcn stgode ST-LLM-plus sttn 
+    mamba uqgnn trustenergy healthmamba energymamba dcrnn
 )
 
 for m in "${MODELS[@]}"; do

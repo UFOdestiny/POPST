@@ -15,6 +15,13 @@ class DGCRN(BaseModel):
     Reference code: https://github.com/tsinghua-fib-lab/Traffic-Benchmark/tree/master/methods/DGCRN
     """
 
+    # Autoregressive decoder: each step's prediction (width output_dim) is fed
+    # back as the next decoder input, and the GRU gate widths assume
+    # input_dim == output_dim + time-channels.  Under CQR output_dim widens to
+    # 3*F, breaking that invariant (the feedback is not restricted to the
+    # median channel).  Reject --cqr rather than mis-feed the decoder.
+    cqr_compatible = False
+
     def __init__(
         self,
         device,
@@ -90,7 +97,7 @@ class DGCRN(BaseModel):
         self, input, Hidden_State, Cell_State, predefined_adj, type="encoder", i=None
     ):
         x = input
-        # 确保 x 是 3D 张量 (batch, features, nodes)
+        # ensure x is a 3D tensor (batch, features, nodes)
         if x.dim() == 2:
             x = x.unsqueeze(1)  # (batch, nodes) -> (batch, 1, nodes)
         x = x.transpose(1, 2).contiguous()  # (batch, nodes, features)
@@ -157,39 +164,16 @@ class DGCRN(BaseModel):
         )
 
     def compute_future_info(self, his):
+        # The official DGCRN conditions its decoder on KNOWN future time-of-day /
+        # day-of-week features (channels appended to the input on METR-LA/PEMS).
+        # This benchmark's channels are mobility volumes (taxi/fhv/bike) with no
+        # calendar features, so there is no future time signal to feed.  Emit
+        # zeros (no time conditioning) rather than reconstructing time-of-day
+        # from mobility magnitudes, which would inject target-correlated noise
+        # into the decoder at every step.  The 2 zero channels keep the decoder
+        # input width consistent (output_dim + 2 == input_dim).
         b, f, n, t = his.shape
-        
-        # 如果特征数小于2，返回零张量作为时间信息
-        if f < 2:
-            out = torch.zeros((b, 2, n, self.seq_len), device=his.device)
-            return out
-        
-        tod, dow = his[:, 0, 0, :], his[:, 1, 0, :]
-        time_unit = 1 / self.tpd * self.seq_len  # seq_len horizon
-        day_unit = 1 / 7
-
-        out_tod = torch.full_like(tod, 0)
-        out_dow = torch.full_like(dow, 0)
-        for i in range(b):
-            temp = tod[i] + time_unit
-            temp2 = dow[i, -1].repeat(self.seq_len)  # seq_len horizon
-
-            idxs = torch.where(temp >= 1)[0]
-            if len(idxs) != 0:
-                temp[idxs] -= 1
-
-                idx = torch.where(temp == 0)[0]
-                if len(idx) != 0:
-                    temp2[idx:] += day_unit
-
-            out_tod[i] = temp
-            out_dow[i] = temp2
-
-        out_tod = out_tod.unsqueeze(-1).expand(-1, -1, n).unsqueeze(-1)
-        out_dow = out_dow.unsqueeze(-1).expand(-1, -1, n).unsqueeze(-1)
-
-        out = torch.cat((out_tod, out_dow), dim=-1).transpose(1, 3)
-        return out
+        return torch.zeros((b, 2, n, self.seq_len), device=his.device)
 
     def forward(
         self, input, label=None, batches_seen=None, task_level=12

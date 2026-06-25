@@ -12,15 +12,15 @@ from utils.graph_algo import normalize_adj_mx
 
 def add_args(parser):
     parser.add_argument("--num_hidden", type=int, default=32)
-    parser.add_argument("--node_hidden", type=int, default=12)
-    parser.add_argument("--time_emb_dim", type=int, default=6)
+    parser.add_argument("--node_hidden", type=int, default=10)
+    parser.add_argument("--time_emb_dim", type=int, default=10)
     parser.add_argument("--layer", type=int, default=5)
     parser.add_argument("--k_t", type=int, default=3)
     parser.add_argument("--k_s", type=int, default=2)
     parser.add_argument("--gap", type=int, default=3)
     parser.add_argument("--cl_epoch", type=int, default=3)
     parser.add_argument("--warm_epoch", type=int, default=30)
-    parser.add_argument("--tpd", type=int, default=16)
+    parser.add_argument("--tpd", type=int, default=96, help="time slots per day (96 = 24h x 15-min); only used if --has_time_feat")
     parser.add_argument("--lrate", type=float, default=2e-3)
     parser.add_argument("--wdecay", type=float, default=1e-5)
     parser.add_argument("--dropout", type=float, default=0.1)
@@ -29,6 +29,10 @@ def add_args(parser):
 
 def setup(args, data_path, adj_path, node_num, device, logger):
     args.num_feat = args.input_dim
+    # This benchmark's channels are mobility volumes (no calendar features), so
+    # the time-of-day / day-of-week embeddings are disabled (fed a fixed index).
+    # Set True only if the data appends [time-of-day, day-of-week] channels.
+    args.has_time_feat = False
     adj_mx = load_adj_from_numpy(adj_path)
     adj_mx = normalize_adj_mx(adj_mx, "doubletransition")
     args.adjs = [torch.tensor(i).to(device) for i in adj_mx]
@@ -53,5 +57,5 @@ if __name__ == "__main__":
         build_model=build_model,
         setup=setup,
         make_optimizer=lambda m, a: torch.optim.Adam(m.parameters(), lr=a.lrate, weight_decay=a.wdecay, eps=1e-8),
-        make_scheduler=lambda o, a: torch.optim.lr_scheduler.MultiStepLR(o, milestones=[1, 38, 46, 54, 62, 70, 80], gamma=0.5),
+        make_scheduler=lambda o, a: torch.optim.lr_scheduler.MultiStepLR(o, milestones=[1, 30, 38, 46, 54, 62, 70, 80], gamma=0.5),
     )

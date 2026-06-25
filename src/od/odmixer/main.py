@@ -20,11 +20,6 @@ def add_args(parser):
     parser.add_argument("--clip_grad_norm", type=float, default=0)
 
 
-def setup(args, data_path, adj_path, node_num, device, logger):
-    args.input_dim = node_num
-    args.output_dim = node_num
-
-
 def build_model(args, node_num, **ctx):
     return ODMixer(
         node_num=node_num,
@@ -45,7 +40,7 @@ if __name__ == "__main__":
         add_args=add_args,
         build_model=build_model,
         loss_fn="MSE",
-        setup=setup,
+        od=True,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
         device_override="cuda:0",
     )

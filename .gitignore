@@ -1,11 +1,22 @@
+# Project outputs / data (large, not tracked)
 output
+outputs/
 result
 datasets
-bash
+checkpoints/
+wandb/
+logs/
 EnergyAssimilation
+latex
+
+# Editor / tooling
+bash
 .vscode
 .github
-latex
+.idea/
+*.swp
+*.swo
+*~
 
 # Python
 __pycache__/
@@ -18,55 +29,43 @@ build/
 eggs/
 *.egg
 
-# 虚拟环境
+# Virtual environments
 venv/
 env/
 .venv/
 
-# IDE
-.idea/
-*.swp
-*.swo
-*~
-
-# 系统文件
+# OS files
 .DS_Store
 Thumbs.db
 
-# 训练输出 (不要提交大文件到 git)
-outputs/
-checkpoints/
-wandb/
-logs/
-
-# 数据 (大数据集不应提交)
-# data/
+# Data files
 *.arrow
 *.parquet
 
-# 模型权重
+# Model weights
 *.pth
 *.pt
 *.bin
 *.safetensors
 *.gguf
 
-# HuggingFace 缓存
+# Caches (HuggingFace, etc.)
 .cache/
 hf_cache/
 
-# SLURM 日志
+# SLURM / logs
 *.log
 *.err
 slurm-*.out
 
 # Jupyter
 .ipynb_checkpoints/
-# *.ipynb
 *.png
 
-# 环境变量文件 (可能包含 API Key)
+# Secrets / environment files
 .env
 .env.*
+
+# Claude
 .claude
 CLAUDE*

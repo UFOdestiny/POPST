@@ -36,6 +36,7 @@ def _scaler_to_meta(scaler) -> dict:
     params = {
         "data_min": scaler.data_min_.tolist() if hasattr(scaler.data_min_, 'tolist') else float(scaler.data_min_),
         "data_max": scaler.data_max_.tolist() if hasattr(scaler.data_max_, 'tolist') else float(scaler.data_max_),
+        "use_log1p": bool(getattr(scaler, "use_log1p", False)),
     }
     return {"scaler": cls_name, "scaler_params": params}
 
@@ -43,7 +44,11 @@ def _scaler_to_meta(scaler) -> dict:
 def reconstruct_scaler(meta: dict):
     """Rebuild a scaler from ``meta.json`` metadata."""
     params = meta.get("scaler_params", {})
-    return MinMaxScaler(data_min=params["data_min"], data_max=params["data_max"])
+    return MinMaxScaler(
+        data_min=params["data_min"],
+        data_max=params["data_max"],
+        use_log1p=params.get("use_log1p", False),
+    )
 
 
 def _save_meta(base_dir: Path, scaler, data_shape, split_sizes: dict):
@@ -57,44 +62,92 @@ def _save_meta(base_dir: Path, scaler, data_shape, split_sizes: dict):
 
 
 class MinMaxScaler:
-    """Min-max normalization to [0, 1].
+    """Min-max normalization to [0, 1] with optional per-channel and log1p modes.
 
-    Computes ``(x - min) / (max - min)`` across all elements.
+    Modes:
+        * Global  — ``data_min_``/``data_max_`` are 0-d tensors (legacy behavior).
+        * Per-channel — ``data_min_``/``data_max_`` are 1-d tensors of shape ``(D,)``;
+          broadcasting expects data with a trailing D axis (e.g. ``(T, N, D)``).
+        * log1p — applies ``log1p`` before fit/transform; the stored min/max are
+          in log-space, and ``inverse_transform`` undoes both steps.
     """
 
-    def __init__(self, data_min=None, data_max=None):
+    def __init__(self, data_min=None, data_max=None, use_log1p=False):
+        self.use_log1p = bool(use_log1p)
         if data_min is not None:
-            self.data_min_ = torch.tensor(data_min, dtype=torch.float32)
-            self.data_max_ = torch.tensor(data_max, dtype=torch.float32)
+            self.data_min_ = torch.as_tensor(data_min, dtype=torch.float32)
+            self.data_max_ = torch.as_tensor(data_max, dtype=torch.float32)
         else:
             self.data_min_ = None
             self.data_max_ = None
 
-    def fit(self, data):
-        self.data_min_ = torch.tensor(data.min(), dtype=torch.float32)
-        self.data_max_ = torch.tensor(data.max(), dtype=torch.float32)
-        print(f"MinMaxScaler min: {self.data_min_}, max: {self.data_max_}")
+    def _maybe_log1p(self, data):
+        if not self.use_log1p:
+            return data
+        if isinstance(data, torch.Tensor):
+            return torch.log1p(data)
+        return np.log1p(data)
+
+    def _maybe_expm1(self, data):
+        if not self.use_log1p:
+            return data
+        if isinstance(data, torch.Tensor):
+            return torch.expm1(data)
+        return np.expm1(data)
+
+    def fit(self, data, per_channel=False):
+        work = self._maybe_log1p(data)
+        if per_channel:
+            # Reduce over every axis except the trailing D axis -> shape (D,)
+            d = work.shape[-1]
+            flat = work.reshape(-1, d) if isinstance(work, np.ndarray) else work.reshape(-1, d)
+            self.data_min_ = torch.as_tensor(flat.min(axis=0), dtype=torch.float32)
+            self.data_max_ = torch.as_tensor(flat.max(axis=0), dtype=torch.float32)
+        else:
+            self.data_min_ = torch.as_tensor(work.min(), dtype=torch.float32)
+            self.data_max_ = torch.as_tensor(work.max(), dtype=torch.float32)
+        print(f"MinMaxScaler(log1p={self.use_log1p}) min: {self.data_min_.tolist()}, "
+              f"max: {self.data_max_.tolist()}")
         return self
 
+    def _params_for(self, data):
+        """Return (dmin, dmax, span) as numpy or torch matching ``data``."""
+        if isinstance(data, torch.Tensor):
+            dmin = self.data_min_.to(data.device)
+            dmax = self.data_max_.to(data.device)
+        else:
+            dmin = self.data_min_.cpu().numpy()
+            dmax = self.data_max_.cpu().numpy()
+        span = dmax - dmin
+        return dmin, dmax, span
+
     def transform(self, data):
-        span = self.data_max_.item() - self.data_min_.item()
-        if span == 0:
-            return np.zeros_like(data)
-        return (data - self.data_min_.item()) / span
+        data = self._maybe_log1p(data)
+        dmin, _, span = self._params_for(data)
+        if isinstance(span, torch.Tensor):
+            safe = torch.where(span == 0, torch.ones_like(span), span)
+            out = (data - dmin) / safe
+            return torch.where((span == 0).expand_as(out), torch.zeros_like(out), out)
+        safe = np.where(span == 0, 1.0, span)
+        out = (data - dmin) / safe
+        return np.where(np.broadcast_to(span == 0, out.shape), 0.0, out)
 
     def inverse_transform(self, data, device=None):
         dev = _resolve_device(data, device)
-        span = (self.data_max_ - self.data_min_).to(dev)
-        dmin = self.data_min_.to(dev)
         if isinstance(data, torch.Tensor):
-            return data * span + dmin
-        return data * span.cpu().numpy() + dmin.cpu().numpy()
+            dmin = self.data_min_.to(dev)
+            span = (self.data_max_ - self.data_min_).to(dev)
+        else:
+            dmin = self.data_min_.cpu().numpy()
+            span = (self.data_max_ - self.data_min_).cpu().numpy()
+        out = data * span + dmin
+        return self._maybe_expm1(out)
 
 
 # ── Data splitting & saving ──────────────────────────────────────────────
 
 
-def _split_by_ratio(data, args, tra=0.8, val=0.1, test=0.1):
+def _split_by_ratio(data, args, val=0.1, test=0.1):
     """Compute train/val/test index splits for a time series."""
     seq_length_x, seq_length_y = args.seq_length_x, args.seq_length_y
     x_offsets = np.arange(-(seq_length_x - 1), 1, 1)
@@ -121,12 +174,7 @@ def _split_by_ratio(data, args, tra=0.8, val=0.1, test=0.1):
 def _save_dataset(base_dir, data, scaler, idx_train, idx_val, idx_test, idx_all):
     """Save processed data, indices, and metadata to *base_dir*."""
     _ensure_dir(base_dir)
-    np.savez_compressed(
-        base_dir / "his.npz",
-        data=data,
-        min=scaler.data_min_,
-        max=scaler.data_max_,
-    )
+    np.savez_compressed(base_dir / "his.npz", data=data)
     _save_indices(base_dir, idx_train, idx_val, idx_test, idx_all)
     _save_meta(base_dir, scaler, data.shape, {
         "train": len(idx_train), "val": len(idx_val), "test": len(idx_test),
@@ -234,10 +282,11 @@ def generate(args):
 
     idx_train, idx_val, idx_test, idx_all = _split_by_ratio(data, args)
 
-    scaler = MinMaxScaler()
-    scaler.fit(data)
+    scaler = MinMaxScaler(use_log1p=getattr(args, "log1p", False))
+    scaler.fit(data, per_channel=getattr(args, "per_channel", False))
     data = scaler.transform(data)
-    transformed_stats = _compute_stats(data, label="transformed (MinMaxScaler)")
+    label = f"transformed (MinMaxScaler, per_channel={getattr(args, 'per_channel', False)}, log1p={scaler.use_log1p})"
+    transformed_stats = _compute_stats(data, label=label)
     print(f"Normalized — max: {data.max():.4f}, min: {data.min():.4f}, mean: {data.mean():.4f}, std: {data.std():.4f}")
 
     base_dir = Path(get_data_path()) / args.dataset / args.years
@@ -252,6 +301,8 @@ def generate(args):
         "years": args.years,
         "seq_length_x": args.seq_length_x,
         "seq_length_y": args.seq_length_y,
+        "per_channel": getattr(args, "per_channel", False),
+        "log1p": scaler.use_log1p,
     }
     _save_info(base_dir, raw_stats, transformed_stats,
                _scaler_to_meta(scaler), split_sizes, args_dict)
@@ -264,13 +315,13 @@ if __name__ == "__main__":
                         help="dimension format, e.g. NDT, NTD, NNDT, NT (default: NDT)")
     parser.add_argument("--clip_neg", action="store_true", help="clip negative values to 0")
     parser.add_argument("--dataset", type=str, default="nyc_mobility", help="dataset name")
-    parser.add_argument("--years", type=str, default="2024")
+    parser.add_argument("--years", type=str, default="2025")
     parser.add_argument("--seq_length_x", type=int, default=12, help="input sequence length")
     parser.add_argument("--seq_length_y", type=int, default=1, help="prediction horizon")
+    parser.add_argument("--per_channel", action="store_true",
+                        help="fit one (min, max) per trailing D channel (recommended when D>1 and channels have very different magnitudes)")
+    parser.add_argument("--log1p", action="store_true",
+                        help="apply log1p before scaling; inverse_transform undoes both steps")
 
     args = parser.parse_args()
-    # args.data_path="/home/dy23a.fsu/st/datasets/nyc_mobility_dense/nyc_ta_bi_sub_2024_15min_arv_NDT.npy"
-    # args.data_path="/home/dy23a.fsu/st/datasets/chicago_mobility_dense/chi_ta_bi_2025_15min_arv_NDT.npy"
-
-    args.data_path="/blue/gtyson.fsu/dy23a.fsu/jupyter/mobility_datasets/nyc/processed/nyc_ta_bi_sub_2024_1hour_arv_NDT.npy"
     generate(args)

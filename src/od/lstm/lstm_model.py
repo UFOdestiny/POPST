@@ -1,9 +1,12 @@
 import torch.nn as nn
 import torch.nn.functional as F
-from base.model import BaseModel
+from base.model import BaseODModel
 
 
-class LSTM(BaseModel):
+class LSTM(BaseODModel):
+    """Per-origin LSTM over the input window; the N destinations are the feature
+    axis (input_dim = output_dim = node_num).  Channel-as-batch (BaseODModel)."""
+
     def __init__(self, init_dim, hid_dim, end_dim, layer, dropout, **args):
         super(LSTM, self).__init__(**args)
         self.start_linear = nn.Linear(self.input_dim, init_dim)
@@ -19,10 +22,10 @@ class LSTM(BaseModel):
         self.end_linear1 = nn.Linear(hid_dim, end_dim)
         self.end_linear2 = nn.Linear(end_dim, self.horizon * self.output_dim)
 
-    def forward(self, input, label=None):  # (b, t, n, f)
+    def forward_single(self, input, label=None):  # (B', T, N, N)
         b, t, n, f = input.shape
 
-        x = input.permute(0, 2, 1, 3).contiguous()  # (B, N, T, F)
+        x = input.permute(0, 2, 1, 3).contiguous()  # (B', N, T, N)
         x = x.view(b * n, t, f)                      # (B*N, T, F)
 
         x = self.start_linear(x)                      # (B*N, T, init_dim)

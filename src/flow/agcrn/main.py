@@ -11,9 +11,9 @@ def add_args(parser):
     parser.add_argument("--embed_dim", type=int, default=10)
     parser.add_argument("--rnn_unit", type=int, default=64)
     parser.add_argument("--num_layer", type=int, default=2)
-    parser.add_argument("--cheb_k", type=int, default=2)
-    parser.add_argument("--lrate", type=float, default=1e-3)
-    parser.add_argument("--wdecay", type=float, default=1e-4)
+    parser.add_argument("--cheb_k", type=int, default=3)
+    parser.add_argument("--lrate", type=float, default=3e-3)
+    parser.add_argument("--wdecay", type=float, default=0)
     parser.add_argument("--clip_grad_norm", type=float, default=5)
 
 

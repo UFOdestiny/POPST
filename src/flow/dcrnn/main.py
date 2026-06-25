@@ -11,7 +11,7 @@ from utils.dataloader import load_adj_from_numpy
 
 
 def add_args(parser):
-    parser.add_argument("--n_filters", type=int, default=16)
+    parser.add_argument("--n_filters", type=int, default=64)
     parser.add_argument("--max_diffusion_step", type=int, default=2)
     parser.add_argument("--filter_type", type=str, default="doubletransition")
     parser.add_argument("--num_rnn_layers", type=int, default=2)

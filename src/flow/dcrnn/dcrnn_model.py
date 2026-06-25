@@ -5,6 +5,13 @@ from base.model import BaseModel
 from utils.graph_algo import normalize_adj_mx
 
 class DCRNN(BaseModel):
+    # Autoregressive seq2seq: the decoder feeds its projected output (width
+    # output_dim) back as the next step's input (width input_dim).  Under CQR
+    # output_dim widens to 3*F while input_dim stays F, so the feedback width no
+    # longer matches the decoder input — and unlike STGCN it does not feed back
+    # only the median channel.  Reject --cqr rather than crash / mis-feed.
+    cqr_compatible = False
+
     def __init__(self, device, adj_mx, n_filters, max_diffusion_step,
                  filter_type, num_rnn_layers, cl_decay_steps,
                  use_curriculum_learning=True, **args):
@@ -35,11 +42,19 @@ class DCRNN(BaseModel):
         self.use_curriculum_learning = use_curriculum_learning
         self.cl_decay_steps = cl_decay_steps
 
+    # Graphs smaller than this use dense supports + dense matmul, which is far
+    # faster than cuSPARSE on small N (and avoids torch.sparse.mm re-coalescing
+    # the operand on every call). Larger graphs keep coalesced sparse supports.
+    _DENSE_SUPPORT_MAX_NODES = 2000
+
     def _calculate_supports(self, adj_mx, filter_type):
         supports = normalize_adj_mx(adj_mx, filter_type, 'coo')
         results = []
         for support in supports:
-            results.append(self._build_sparse_matrix(support).to(self.device))
+            sp = self._build_sparse_matrix(support).to(self.device).coalesce()
+            if self.node_num <= self._DENSE_SUPPORT_MAX_NODES:
+                sp = sp.to_dense()
+            results.append(sp)
         return results
 
     def _build_sparse_matrix(self, L):
@@ -192,10 +207,11 @@ class DiffusionGraphConv(nn.Module):
             pass
         else:
             for support in supports:
-                x1 = torch.sparse.mm(support, x0)
+                mm = torch.mm if not support.is_sparse else torch.sparse.mm
+                x1 = mm(support, x0)
                 x = self._concat(x, x1)
                 for k in range(2, self._max_diffusion_step + 1):
-                    x2 = 2 * torch.sparse.mm(support, x1) - x0
+                    x2 = 2 * mm(support, x1) - x0
                     x = self._concat(x, x2)
                     x1, x0 = x2, x1
 

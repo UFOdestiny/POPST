@@ -40,13 +40,17 @@ def build_model(args, node_num, **ctx):
         output_dim=args.output_dim,
         A_sp=ctx["A_sp"],
         A_se=ctx["A_se"],
+        seq_len=args.seq_len,
         horizon=args.horizon,
     )
 
 
 def _construct_se_matrix(data_path, args):
     ptr = np.load(os.path.join(data_path, args.years, "his.npz"))
-    data = ptr["data"][..., 0]
+    # OD data is (T, N, N, D); collapse destinations and mobility channels to a
+    # per-origin time series so the DTW-like semantic graph is built over the N
+    # nodes exactly as in the single-channel case.
+    data = ptr["data"].sum(axis=(2, 3))  # (T, N)
     sample_num, node_num = data.shape
 
     data_mean = np.mean(
@@ -93,6 +97,7 @@ if __name__ == "__main__":
         add_args=add_args,
         build_model=build_model,
         loss_fn="MSE",
+        od=True,
         setup=setup,
         make_optimizer=lambda m, a: torch.optim.AdamW(m.parameters(), lr=a.lrate, weight_decay=a.wdecay),
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=20, gamma=0.5),

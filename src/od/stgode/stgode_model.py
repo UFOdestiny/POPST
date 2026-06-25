@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchdiffeq import odeint
-from base.model import BaseModel
+from base.model import BaseODModel
 
 
-class STGODE(BaseModel):
+class STGODE(BaseODModel):
     """
     Reference code: https://github.com/square-coder/STGODE
     """
@@ -21,12 +21,14 @@ class STGODE(BaseModel):
                         out_channels=[64, 32, 64],
                         node_num=self.node_num,
                         A_hat=A_sp,
+                        seq_len=self.seq_len,
                     ),
                     STGCNBlock(
                         in_channels=64,
                         out_channels=[64, 32, 64],
                         node_num=self.node_num,
                         A_hat=A_sp,
+                        seq_len=self.seq_len,
                     ),
                 )
                 for _ in range(3)
@@ -42,12 +44,14 @@ class STGODE(BaseModel):
                         out_channels=[64, 32, 64],
                         node_num=self.node_num,
                         A_hat=A_se,
+                        seq_len=self.seq_len,
                     ),
                     STGCNBlock(
                         in_channels=64,
                         out_channels=[64, 32, 64],
                         node_num=self.node_num,
                         A_hat=A_se,
+                        seq_len=self.seq_len,
                     ),
                 )
                 for _ in range(3)
@@ -60,7 +64,7 @@ class STGODE(BaseModel):
             nn.Linear(self.horizon * 32, self.horizon * self.output_dim),
         )
 
-    def forward(self, x, label=None):  # (b, t, n, f)
+    def forward_single(self, x, label=None):  # (b, t, n, f)
         b = x.shape[0]
         x = x.transpose(1, 2)
         outs = []
@@ -82,13 +86,13 @@ class STGODE(BaseModel):
 
 
 class STGCNBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, node_num, A_hat):
+    def __init__(self, in_channels, out_channels, node_num, A_hat, seq_len):
         super(STGCNBlock, self).__init__()
         self.A_hat = A_hat
         self.temporal1 = TemporalConvNet(
             num_inputs=in_channels, num_channels=out_channels
         )
-        self.odeg = ODEG(out_channels[-1], 6, A_hat, time=6)
+        self.odeg = ODEG(out_channels[-1], seq_len, A_hat, time=6)
         self.temporal2 = TemporalConvNet(
             num_inputs=out_channels[-1], num_channels=out_channels
         )

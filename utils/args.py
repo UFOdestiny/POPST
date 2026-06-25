@@ -8,8 +8,6 @@ import torch
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-ENGINE_MODES = ("standard", "flow_matching")
-
 
 def get_public_config():
     """Create argument parser with common training arguments."""
@@ -32,7 +30,12 @@ def get_public_config():
     parser.add_argument("--normalize", action="store_true", default=True)
     parser.add_argument("--no_normalize", action="store_false", dest="normalize")
 
-    parser.add_argument("--quantile", action="store_true", default=False)
+    parser.add_argument(
+        "--cqr", type=str, default="no", choices=["no", "horizon", "global"],
+        help="Conformalized Quantile Regression: 'no' disables it (point model); "
+             "'horizon' calibrates one conformal correction Q per forecast step; "
+             "'global' uses a single shared Q.",
+    )
     parser.add_argument("--quantile_alpha", type=float, default=0.1)
 
     parser.add_argument("--device", type=str, default="cuda")
@@ -42,25 +45,6 @@ def get_public_config():
     parser.add_argument("--export", action="store_true", default=False)
     parser.add_argument("--not_print_args", action="store_true", default=False)
     parser.add_argument("--proj", type=str, default="")
-    parser.add_argument(
-        "--engine_mode",
-        type=str,
-        default="standard",
-        choices=ENGINE_MODES,
-    )
-    parser.add_argument("--fm_flow_weight", type=float, default=0.1)
-    parser.add_argument("--fm_ode_steps", type=int, default=20)
-    parser.add_argument("--fm_num_samples", type=int, default=10)
-    parser.add_argument("--fm_context_dim", type=int, default=32)
-    parser.add_argument("--fm_time_dim", type=int, default=32)
-    parser.add_argument("--fm_hidden_dim", type=int, default=64)
-    parser.add_argument("--fm_node_emb_dim", type=int, default=8)
-    parser.add_argument(
-        "--fm_output_activation",
-        type=str,
-        default="relu",
-        choices=["none", "relu"],
-    )
 
     return parser
 
@@ -112,27 +96,31 @@ def print_args(logger, args):
     if args.not_print_args:
         return
 
-    groups = {
-        "Data": ["dataset", "years", "seq_len", "horizon", "input_dim", "output_dim", "normalize"],
-        "Model": ["model_name"],
-        "Training": ["bs", "max_epochs", "patience", "lrate", "wdecay", "clip_grad_norm", "seed"],
-        "Engine": [
-            "engine_mode",
-            "fm_flow_weight",
-            "fm_ode_steps",
-            "fm_num_samples",
-            "fm_context_dim",
-            "fm_time_dim",
-            "fm_hidden_dim",
-            "fm_node_emb_dim",
-            "fm_output_activation",
-        ],
-        "Quantile": ["quantile", "quantile_alpha"],
-        "System": ["device", "mode", "model_path", "export", "proj", "comment"],
-    }
-
-    known = {k for keys in groups.values() for k in keys}
     all_vars = vars(args)
+
+    # Fixed groups.  Training also collects common scheduler / regularization
+    # knobs (step_size, gamma, dropout) that models declare in their own
+    # add_args, so they sit with the other training hyperparameters instead of
+    # in a catch-all.
+    data_keys = ["dataset", "years", "seq_len", "horizon", "input_dim", "output_dim", "normalize"]
+    training_keys = ["bs", "max_epochs", "patience", "lrate", "wdecay", "clip_grad_norm",
+                     "dropout", "step_size", "gamma", "seed"]
+    cqr_keys = ["cqr", "quantile_alpha"]
+    system_keys = ["device", "mode", "model_path", "export", "proj", "comment"]
+
+    # Everything else a model declares is a model hyperparameter: list it under
+    # "Model" right after model_name, in declaration order.
+    fixed = set(data_keys + training_keys + cqr_keys + system_keys)
+    fixed.update({"model_name", "not_print_args"})
+    model_keys = ["model_name"] + [k for k in all_vars if k not in fixed]
+
+    groups = {
+        "Data": data_keys,
+        "Model": model_keys,
+        "Training": training_keys,
+        "CQR": cqr_keys,
+        "System": system_keys,
+    }
 
     for group_name, keys in groups.items():
         present = [(k, all_vars[k]) for k in keys if k in all_vars]
@@ -142,46 +130,11 @@ def print_args(logger, args):
         for k, v in present:
             logger.info(f"  {k:20s}: {_fmt_value(v)}")
 
-    extra = {k: v for k, v in all_vars.items() if k not in known and k != "not_print_args"}
-    if extra:
-        logger.info("--- Model-specific ---")
-        for k, v in extra.items():
-            logger.info(f"  {k:20s}: {_fmt_value(v)}")
 
-
-def validate_shared_args(args):
-    if args.quantile and args.engine_mode != "standard":
-        raise ValueError("Quantile mode only supports --engine_mode standard right now.")
-    if args.fm_ode_steps < 1:
-        raise ValueError("--fm_ode_steps must be >= 1.")
-    if args.fm_num_samples < 1:
-        raise ValueError("--fm_num_samples must be >= 1.")
-    if args.fm_context_dim < 1:
-        raise ValueError("--fm_context_dim must be >= 1.")
-    if args.fm_time_dim < 1:
-        raise ValueError("--fm_time_dim must be >= 1.")
-    if args.fm_hidden_dim < 1:
-        raise ValueError("--fm_hidden_dim must be >= 1.")
-    if args.fm_node_emb_dim < 0:
-        raise ValueError("--fm_node_emb_dim must be >= 0.")
-    return args
-
-
-def resolve_engine_template(args, standard_engine, quantile_engine, flow_matching_engine):
-    if args.quantile:
+def resolve_engine_template(args, standard_engine, quantile_engine):
+    if args.cqr != "no":
         return quantile_engine
-    if args.engine_mode == "flow_matching":
-        return flow_matching_engine
     return standard_engine
-
-
-def get_fm_wrapper_kwargs(args):
-    return {
-        "context_dim": args.fm_context_dim,
-        "time_dim": args.fm_time_dim,
-        "flow_hidden_dim": args.fm_hidden_dim,
-        "node_emb_dim": args.fm_node_emb_dim,
-    }
 
 
 def set_seed(seed):

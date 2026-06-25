@@ -104,7 +104,9 @@ class TemporalTransformer(nn.Module):
                             heads=heads,
                             window_size=window_size,
                             dropout=dropout,
-                            causal=True,
+                            # Official STTN is a bidirectional encoder over the
+                            # fixed input window (no causal mask).
+                            causal=False,
                             stage=i,
                             device=device,
                         ),
@@ -172,9 +174,9 @@ class TemporalAttention(nn.Module):
         attn = (q @ k.transpose(-2, -1)) * self.scale
 
         if self.causal:
-            attn = attn.masked_fill_(self.mask == 0, float("-inf")).softmax(dim=-1)
-
+            attn = attn.masked_fill(self.mask == 0, float("-inf"))
         attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, T, C)
 
@@ -200,6 +202,10 @@ class SpatialTransformer(nn.Module):
                         ),
                         PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout)),
                         GCN(dim, dim, dropout, support_len=2),
+                        # learned gate between the transformer branch (U_S) and
+                        # the GCN branch (X_G), as in the official STTN spatial
+                        # block: out = g*U_S + (1-g)*X_G.
+                        nn.ModuleList([nn.Linear(dim, dim), nn.Linear(dim, dim)]),
                     ]
                 )
             )
@@ -208,17 +214,20 @@ class SpatialTransformer(nn.Module):
         b, c, n, t = x.shape
         x = x.permute(0, 3, 2, 1).reshape(b * t, n, c)
         x = x + self.pos_embedding
-        for attn, ff, gcn in self.layers:
+        for attn, ff, gcn, (fs, fg) in self.layers:
             residual = x.reshape(b, t, n, c)
-            x = attn(x, adj) + x
-            x = ff(x) + x
-
-            x = (
+            # transformer (self-attention + feed-forward) branch
+            u_s = attn(x, adj) + x
+            u_s = ff(u_s) + u_s
+            # graph-convolution branch
+            x_g = (
                 gcn(residual.permute(0, 3, 2, 1), adj)
                 .permute(0, 3, 2, 1)
                 .reshape(b * t, n, c)
-                + x
             )
+            # gated fusion (STTN's defining spatial mechanism)
+            g = torch.sigmoid(fs(u_s) + fg(x_g))
+            x = g * u_s + (1 - g) * x_g
         x = x.reshape(b, t, n, c).permute(0, 3, 2, 1)
         return x
 

@@ -65,8 +65,8 @@ class myMamba(BaseModel):
         # project sequence length T → H
         self.time_proj = nn.Linear(self.seq_len, self.horizon)
 
-        # project d_model → F
-        self.output_proj = nn.Linear(self.d_model, self.feature)
+        # project d_model → output_dim (defaults to F; widened to 3F under CQR)
+        self.output_proj = nn.Linear(self.d_model, self.output_dim)
 
     def _build_stage(self):
         return nn.Sequential(
@@ -136,10 +136,10 @@ class myMamba(BaseModel):
         x = x.permute(0, 2, 1)  # (B*N, H, d_model)
 
         # project feature back
-        x = self.output_proj(x)  # (B*N, H, F)
+        x = self.output_proj(x)  # (B*N, H, output_dim)
 
-        # reshape back to (B, H, N, F)
-        x = x.reshape(B, N, self.horizon, F)
+        # reshape back to (B, H, N, output_dim)
+        x = x.reshape(B, N, self.horizon, self.output_dim)
         x = x.permute(0, 2, 1, 3)
 
         return x

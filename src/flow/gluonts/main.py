@@ -9,13 +9,13 @@ from gluonts_model import GluonTSModel
 
 
 def add_args(parser):
-    parser.add_argument("--init_dim", type=int, default=32, help="初始投影维度")
-    parser.add_argument("--hid_dim", type=int, default=32, help="隐藏层维度")
-    parser.add_argument("--end_dim", type=int, default=64, help="输出层维度")
-    parser.add_argument("--num_layers", type=int, default=3, help="TCN层数")
-    parser.add_argument("--kernel_size", type=int, default=3, help="卷积核大小")
-    parser.add_argument("--num_heads", type=int, default=4, help="注意力头数")
-    parser.add_argument("--use_attention", type=bool, default=True, help="是否使用注意力")
+    parser.add_argument("--init_dim", type=int, default=32, help="initial projection dimension")
+    parser.add_argument("--hid_dim", type=int, default=32, help="hidden layer dimension")
+    parser.add_argument("--end_dim", type=int, default=64, help="output layer dimension")
+    parser.add_argument("--num_layers", type=int, default=3, help="number of TCN layers")
+    parser.add_argument("--kernel_size", type=int, default=3, help="convolution kernel size")
+    parser.add_argument("--num_heads", type=int, default=4, help="number of attention heads")
+    parser.add_argument("--use_attention", type=bool, default=True, help="whether to use attention")
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lrate", type=float, default=1e-3)

@@ -50,7 +50,7 @@ def get_logger(log_dir: str, name: str, log_filename: str = None, level: int = L
     file_handler = RotatingFileHandler(
         log_path,
         maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=50,  # Keep 5 backups
+        backupCount=50,  # Keep 50 backups
         encoding='utf-8'
     )
     file_handler.setFormatter(formatter)

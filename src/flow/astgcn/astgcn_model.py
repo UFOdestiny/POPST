@@ -23,9 +23,16 @@ class ASTGCN(BaseModel):
         for block in self.BlockList:
             x = block(x)
 
-        output = self.final_conv(x.permute(0, 3, 1, 2))#[:, :, :, -1]  # (b, t, n)
-
-        return output.view(output.shape[0], self.horizon, output.shape[2], self.output_dim)
+        # final_conv maps the time axis to (horizon*output_dim) channels, then we
+        # drop the trailing singleton (matching the official squeeze) BEFORE
+        # splitting the channel axis, so node and feature axes are never
+        # interleaved.  (b, horizon*output_dim, n, 1) -> (b, horizon*output_dim, n)
+        output = self.final_conv(x.permute(0, 3, 1, 2))[:, :, :, -1]
+        output = output.permute(0, 2, 1)  # (b, n, horizon*output_dim)
+        output = output.reshape(
+            output.shape[0], self.node_num, self.horizon, self.output_dim
+        )
+        return output.permute(0, 2, 1, 3)  # (b, horizon, n, output_dim)
 
 
 class ASTGCN_block(nn.Module):

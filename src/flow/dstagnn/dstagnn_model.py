@@ -125,8 +125,6 @@ class DSTAGNN_block(nn.Module):
             nn.Dropout(0.05),
         )
 
-        self.fcmy_2 = nn.Conv2d(in_channels=nb_time_filter, out_channels=in_channels, kernel_size=(1, 3 * seq_len - 12-seq_len+1), stride=(1, 1))
-
         self.ln = nn.LayerNorm(nb_time_filter)
 
 
@@ -242,7 +240,7 @@ class SMultiHeadAttention(nn.Module):
 
 
     def forward(self, input_Q, input_K, attn_mask):
-        residual, bs = input_Q, input_Q.size(0)
+        bs = input_Q.size(0)
 
         Q = self.W_Q(input_Q).view(bs, -1, self.n_head, self.d_k).transpose(1, 2)
         K = self.W_K(input_K).view(bs, -1, self.n_head, self.d_k).transpose(1, 2)
@@ -274,22 +272,21 @@ class cheb_conv_withSAt(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.device = cheb_polynomials[0].device
-        self.mask_rank = mask_rank
         self.relu = nn.ReLU(inplace=True)
         self.Theta = nn.ParameterList(
             [nn.Parameter(torch.FloatTensor(in_channels, out_channels).to(self.device)) for _ in range(K)])
-        self.mask_left = nn.ParameterList(
-            [nn.Parameter(torch.FloatTensor(node_num, mask_rank).to(self.device)) for _ in range(K)]
-        )
-        self.mask_right = nn.ParameterList(
-            [nn.Parameter(torch.FloatTensor(node_num, mask_rank).to(self.device)) for _ in range(K)]
+        # Full-rank learnable spatial mask per Chebyshev order, matching the
+        # official DSTAGNN (nn.Parameter(N, N)).  (mask_rank is retained in the
+        # signature for backward compatibility but no longer used.)
+        self.mask = nn.ParameterList(
+            [nn.Parameter(torch.FloatTensor(node_num, node_num).to(self.device)) for _ in range(K)]
         )
         self.reset_parameters()
 
     def reset_parameters(self):
         for theta in self.Theta:
             nn.init.xavier_uniform_(theta)
-        for mat in list(self.mask_left) + list(self.mask_right):
+        for mat in self.mask:
             nn.init.xavier_uniform_(mat)
 
 
@@ -303,7 +300,7 @@ class cheb_conv_withSAt(nn.Module):
             output = torch.zeros(bs, node_num, self.out_channels).to(self.device)
             for k in range(self.K):
                 T_k = self.cheb_polynomials[k]
-                mask = torch.matmul(self.mask_left[k], self.mask_right[k].transpose(0, 1))
+                mask = self.mask[k]
 
                 myspatial_attention = spatial_attention[:, k, :, :] + adj_pa.mul(mask)
                 myspatial_attention = F.softmax(myspatial_attention, dim=1)

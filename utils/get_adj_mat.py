@@ -1,7 +1,5 @@
 import geopandas as gpd
-import pandas as pd
 import numpy as np
-from shapely import wkb
 
 
 # source: https://github.com/liyaguang/DCRNN/blob/master/scripts/gen_adj_mx.py
@@ -37,14 +35,6 @@ def get_adjacency_matrix(distance_df, sensor_ids, normalized_k=0.1):
     # Sets entries that lower than a threshold, i.e., k, to zero for sparsity.
     adj_mx[adj_mx < normalized_k] = 0
     return adj_mx
-
-
-def read_map(dataset, year):
-    df = gpd.read_file(
-        f"/home/dy23a.fsu/jupyuter/safegraph/file/tl_{year}_us_county.zip"
-    )
-    state_code = {"fl": "12", "tx": "48", "ny": "36", "ca": "06"}
-    return df[df["STATEFP"] == state_code[dataset]].sort_values(by="GEOID").reset_index(drop=True)
 
 
 if __name__ == "__main__":

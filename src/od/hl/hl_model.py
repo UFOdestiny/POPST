@@ -1,13 +1,17 @@
 import torch.nn as nn
-from base.model import BaseModel
+from base.model import BaseODModel
 
-class HL(BaseModel):
+
+class HL(BaseODModel):
+    """Historical Linear: a learnable linear map over the input window, applied
+    per origin-destination pair.  Channel-as-batch (see BaseODModel)."""
+
     def __init__(self, **args):
         super(HL, self).__init__(**args)
         self.L = nn.Linear(self.seq_len, self.horizon)
 
-    def forward(self, input, label=None):  # (b, t, n, f)
-        x = input.permute(0, 2, 3, 1)
-        x = self.L(x)
-        x = x.permute(0, 3, 1, 2)
+    def forward_single(self, x, label=None):  # (B', T, N, N)
+        x = x.permute(0, 2, 3, 1)  # (B', N, N, T)
+        x = self.L(x)              # (B', N, N, H)
+        x = x.permute(0, 3, 1, 2)  # (B', H, N, N)
         return x

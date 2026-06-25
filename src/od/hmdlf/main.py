@@ -27,6 +27,7 @@ def build_model(args, node_num, **ctx):
         input_dim=args.input_dim,
         output_dim=args.output_dim,
         seq_len=args.seq_len,
+        horizon=args.horizon,
         cnn_out=args.cnn_out,
         gru_hidden=args.gru_hidden,
         predictor_hidden=args.predictor_hidden,
@@ -38,6 +39,7 @@ def build_model(args, node_num, **ctx):
 if __name__ == "__main__":
     run_experiment(
         model_name="HMDLF",
+        od=True,
         add_args=add_args,
         build_model=build_model,
         loss_fn="MSE",

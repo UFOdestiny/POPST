@@ -1,18 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from base.model import BaseModel
+from base.model import BaseODModel
 
-class GWNET_OD(BaseModel):
+class GWNET_OD(BaseODModel):
     '''
     Reference code: https://github.com/nnzhan/Graph-WaveNet
     '''
 
     def __init__(self, supports, adp_adj, dropout, residual_channels, dilation_channels,
-                 skip_channels, end_channels, horizon=1,
+                 skip_channels, end_channels, seq_len=12, horizon=1,
                  kernel_size=2, blocks=4, layers=2, **args):
 
-        super(GWNET_OD, self).__init__(**args)
+        super(GWNET_OD, self).__init__(seq_len=seq_len, horizon=horizon, **args)
         self.supports = supports
         self.supports_len = len(supports)
         self.adp_adj = adp_adj
@@ -72,7 +72,7 @@ class GWNET_OD(BaseModel):
                                     kernel_size=(1, 1),
                                     bias=True)
 
-    def forward(self, input, label=None):  # (b, t, n, f)
+    def forward_single(self, input, label=None):  # (b, t, n, f)
         input = input.transpose(1, 3)
         in_len = input.size(3)
         if in_len < self.receptive_field:

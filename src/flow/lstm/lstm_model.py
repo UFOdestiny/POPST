@@ -6,9 +6,9 @@ from base.model import BaseModel
 class LSTM(BaseModel):
     def __init__(self, init_dim, hid_dim, end_dim, layer, dropout, **args):
         super(LSTM, self).__init__(**args)
-        # 不需要 start_conv，因为 LSTM 直接吃 (Seq, Input_Dim)
-        # 如果你想把特征先映射一下，可以用 Linear
-        self.start_linear = nn.Linear(args['input_dim'], init_dim) # 假设 input_dim 是 F
+        # no start_conv needed: LSTM directly consumes (Seq, Input_Dim)
+        # if you want to map the features first, you can use Linear
+        self.start_linear = nn.Linear(args['input_dim'], init_dim)  # assume input_dim is F
 
         self.lstm = nn.LSTM(
             input_size=init_dim,

@@ -83,6 +83,20 @@ class BaseEngine:
     def _predict(self, x, label, iter, *args):
         return self.model(x)
 
+    def _collect(self, t):
+        """Post-process a prediction/label tensor before stacking over the test
+        set.  Flow models drop the trailing singleton feature axis so tensors
+        are ``(B, T, N)``; OD engines override this to keep the OD-matrix axes.
+        """
+        return t.squeeze(-1)
+
+    def _horizon_slice(self, t, i):
+        """Slice horizon step *i* from a stacked tensor, keeping a length-1 time
+        axis at position 1 so the metric sees ``(B, 1, ...)``.  Default assumes
+        the flow layout ``(B, T, N)``; OD engines override for ``(B, T, N, N, D)``.
+        """
+        return t[:, i, :].unsqueeze(1)
+
     def _to_device(self, tensors):
         if isinstance(tensors, list):
             return [t.to(self._device) for t in tensors]
@@ -277,10 +291,10 @@ class BaseEngine:
                         scale=scale,
                     )
                 else:
-                    preds.append(pred.squeeze(-1).cpu())
-                    labels.append(label.squeeze(-1).cpu())
+                    preds.append(self._collect(pred).cpu())
+                    labels.append(self._collect(label).cpu())
                     if scale is not None:
-                        scales.append(scale.squeeze(-1).cpu())
+                        scales.append(self._collect(scale).cpu())
 
         if mode == "val":
             return
@@ -292,10 +306,10 @@ class BaseEngine:
         if mode in {"test", "export"}:
             mask_value = torch.tensor(float("nan"))
             for i in range(self.model.horizon):
-                s = scales[:, i, :].unsqueeze(1) if scales is not None else None
+                s = self._horizon_slice(scales, i) if scales is not None else None
                 self.metric.compute_one_batch(
-                    preds[:, i, :].unsqueeze(1),
-                    labels[:, i, :].unsqueeze(1),
+                    self._horizon_slice(preds, i),
+                    self._horizon_slice(labels, i),
                     mask_value,
                     "test",
                     scale=s,
@@ -363,3 +377,68 @@ class BaseEngine:
         self._logger.info(
             f"Test Shape: {test_np.shape} (total test size, seq_len, region, feature)\n\n"
         )
+
+
+class BaseEngine_OD(BaseEngine):
+    """Engine for origin-destination models (see :class:`base.model.BaseODModel`).
+
+    OD predictions and labels are 5-D ``(B, horizon, N, N, D)`` — an ``N×N``
+    matrix with ``D`` mobility channels per forecast step — whereas the flow
+    pipeline assumes ``(B, T, N, feature=1)`` and drops the trailing axis.
+    ``BaseEngine`` already routes the two shape-dependent steps through
+    :meth:`_collect` and :meth:`_horizon_slice`; this subclass overrides only
+    those, so all of the training loop, checkpointing, logging, metric tracking
+    and export are inherited unchanged.
+    """
+
+    def _collect(self, t):
+        # Keep the full OD-matrix layout (B, H, N, N, D); do not squeeze.
+        return t
+
+    def _horizon_slice(self, t, i):
+        # (B, H, N, N, D) -> (B, 1, N, N, D) for horizon step i.
+        return t[:, i : i + 1]
+
+
+class BaseEngine_OD_Stat(BaseEngine_OD):
+    """Base engine for non-neural *statistical* OD models (ARIMA, SARIMA, VAR,
+    HA).
+
+    These models are not trained by gradient descent: they are fit and forecast
+    in a single call over plain numpy arrays.  The dataloader (``load_dataset_plain``)
+    hands back ``(train, valid, test)``, each ``(T, N, N, D)``.  A subclass
+    implements :meth:`_forecast` returning a prediction array shaped like
+    ``test``; this base handles inverse-transform, metric reporting, and export.
+
+    Masking uses ``NaN`` (i.e. *every* OD cell counts, including the many true
+    zeros) — identical to the neural OD engine, so statistical and neural
+    baselines are measured on the same footing.
+    """
+
+    def _forecast(self, train, valid, test):
+        """Fit on *train* and forecast ``len(test)`` steps ahead.  Override for
+        a different protocol (HA forecasts from the validation tail)."""
+        return self.model(train, test.shape[0])
+
+    def train(self, export=False):
+        train, valid, test = self._dataloader
+
+        pred = np.asarray(self._forecast(train, valid, test), dtype=np.float32)
+        pred = torch.from_numpy(pred)
+        test_t = torch.from_numpy(np.asarray(test, dtype=np.float32))
+
+        if self._normalize:
+            pred, test_t = self._inverse_transform([pred, test_t], device="cpu")
+
+        # Whole test set scored as one batch (no sliding window for these
+        # baselines); NaN mask => all cells counted, matching the neural engine.
+        mask_value = torch.tensor(float("nan"))
+        self.metric.compute_one_batch(pred, test_t, mask_value, "test")
+
+        with self._logger.no_time():
+            self._logger.info("\n" + "=" * 25 + "     Test     " + "=" * 25)
+        for msg in self.metric.get_test_msg():
+            self._logger.info(msg)
+
+        if export:
+            self.save_result(pred, test_t)

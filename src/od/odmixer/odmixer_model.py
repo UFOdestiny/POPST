@@ -1,7 +1,6 @@
 import torch
 from torch import nn
-from torch.nn import functional as F
-from base.model import BaseModel
+from base.model import BaseODModel
 
 
 class SingleInteractModule(nn.Module):
@@ -133,11 +132,11 @@ class ODIM(nn.Module):
         return output
 
 
-class ODMixer(BaseModel):
+class ODMixer(BaseODModel):
     def __init__(
         self, seq_len, input_dim, hid_dim, node_num, layer_nums, dropout, feature, horizon,output_dim, **args
     ):
-        super(ODMixer, self).__init__(node_num,input_dim,output_dim)
+        super(ODMixer, self).__init__(node_num, input_dim, output_dim, seq_len, horizon)
 
         self.seq_len = seq_len
         self.input_dim = input_dim
@@ -168,7 +167,7 @@ class ODMixer(BaseModel):
             nn.Linear(self.hid_dim // 2, 1),
         )
 
-    def forward(self, X):
+    def forward_single(self, X, label=None):
         od = X
         # prev_od = X
 

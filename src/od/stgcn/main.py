@@ -25,9 +25,6 @@ def add_args(parser):
 
 
 def setup(args, data_path, adj_path, node_num, device, logger):
-    args.input_dim = node_num
-    args.output_dim = node_num
-
     adj_mx = load_adj_from_numpy(adj_path)
     adj_mx = adj_mx - np.eye(node_num)
 
@@ -60,6 +57,7 @@ def build_model(args, node_num, **ctx):
         dropout=args.dropout,
         feature=args.input_dim,
         horizon=args.horizon,
+        seq_len=args.seq_len,
     )
 
 
@@ -72,4 +70,5 @@ if __name__ == "__main__":
         setup=setup,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
         device_override="cuda:0",
+        od=True,
     )

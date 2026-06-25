@@ -39,4 +39,5 @@ if __name__ == "__main__":
         build_model=build_model,
         loss_fn="MSE",
         init_weights=True,
+        od=True,
     )

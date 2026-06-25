@@ -88,7 +88,7 @@ class PartiallyFrozenGraphAttention(nn.Module):
         return_dict: Optional[bool] = None,
         adjacency_matrix: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple, dict]:
-        del token_type_ids, encoder_hidden_states, encoder_attention_mask, adjacency_matrix
+        del token_type_ids, encoder_hidden_states, encoder_attention_mask
 
         output_attentions = output_attentions if output_attentions is not None else self.gpt2.config.output_attentions
         output_hidden_states = output_hidden_states if output_hidden_states is not None else self.gpt2.config.output_hidden_states
@@ -123,11 +123,19 @@ class PartiallyFrozenGraphAttention(nn.Module):
         all_self_attentions = () if output_attentions else None
         presents = () if use_cache else None
 
+        # Partially Frozen Graph Attention: inject the adjacency-derived mask
+        # ONLY into the last `unfreeze_layers` (U) blocks; the frozen body keeps
+        # the pretrained global attention (matching the official ST-LLM-Plus).
+        total_layers = len(self.gpt2.h)
         for i, (block, layer_past) in enumerate(zip(self.gpt2.h, past_key_values)):
+            if adjacency_matrix is not None and i >= total_layers - self.unfreeze_layers:
+                layer_mask = adjacency_matrix
+            else:
+                layer_mask = attention_mask
             outputs = block(
                 hidden_states,
                 layer_past=layer_past,
-                attention_mask=attention_mask.to(hidden_states.device) if attention_mask is not None else None,
+                attention_mask=layer_mask.to(hidden_states.device) if layer_mask is not None else None,
                 head_mask=head_mask[i] if head_mask is not None else None,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
@@ -155,9 +163,13 @@ class PartiallyFrozenGraphAttention(nn.Module):
     def forward(self, x, adjacency_matrix):
         batch_size = x.shape[0]
         num_heads = self.gpt2.config.n_head
-        attention_mask = adjacency_matrix.unsqueeze(0).repeat(batch_size, 1, 1)
-        attention_mask = attention_mask.unsqueeze(1).repeat(1, num_heads, 1, 1)
-        output = self.custom_forward(inputs_embeds=x, attention_mask=attention_mask).last_hidden_state
+        graph_mask = adjacency_matrix.unsqueeze(0).repeat(batch_size, 1, 1)
+        graph_mask = graph_mask.unsqueeze(1).repeat(1, num_heads, 1, 1)
+        # Pass the graph mask via adjacency_matrix so custom_forward applies it
+        # only to the last U layers; the rest run with standard (None) attention.
+        output = self.custom_forward(
+            inputs_embeds=x, adjacency_matrix=graph_mask
+        ).last_hidden_state
         return self.dropout(output)
 
 

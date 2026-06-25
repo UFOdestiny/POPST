@@ -1,136 +1,121 @@
 import torch
-import numpy as np
-from base.engine import BaseEngine
-import time
 
-class STTN_Engine(BaseEngine):
-    def __init__(self, **args):
-        super(STTN_Engine, self).__init__(**args)
-    
-    def train(self):
-        wait = 0
-        min_loss_val = np.inf
-        min_loss_test = np.inf
-        for epoch in range(self._max_epochs):
-            t1 = time.time()
-            self.train_batch()
-            t2 = time.time()
+from base.engine import BaseEngine_OD
+from base.metrics import mnormal_loss
 
-            v1 = time.time()
-            self.evaluate("val")
-            v2 = time.time()
 
-            te1 = time.time()
-            # self.evaluate("test", export=None, train_test=True)
-            te2 = time.time()
+class STTN_Engine(BaseEngine_OD):
+    """Engine for STTN (multivariate-Gaussian OD demand).
 
-            valid_loss = self.metric.get_valid_loss()
-            test_loss = self.metric.get_test_loss()
+    The model returns ``(loc, Sigma)`` where, per (batch, horizon, origin),
+    ``loc`` is a mean over the ``N`` destinations and ``Sigma`` is the
+    ``N×N`` destination covariance.  This engine trains on the multivariate
+    normal NLL (``MGAU``) and reports point metrics on ``loc``.  The OD shape
+    handling (``_collect`` / ``_horizon_slice``), epoch loop, checkpointing and
+    export are inherited from :class:`base.engine.BaseEngine_OD`.
+    """
 
-            if self._lr_scheduler is None:
-                cur_lr = self._lrate
-            else:
-                cur_lr = self._lr_scheduler.get_last_lr()[0]
-                self._lr_scheduler.step()
+    @staticmethod
+    def _to_event_last(loc, sigma):
+        """Reorder so the destination axis is the multivariate-normal event dim.
 
-            msg = self.metric.get_epoch_msg(
-                epoch + 1, cur_lr, t2 - t1, v2 - v1, te2 - te1
-            )
-            self._logger.info(msg)
+        ``loc (B,H,No,Nd,Dc)``      -> ``(B,H,No,Dc,Nd)``
+        ``sigma (B,H,No,Nd,Nd,Dc)`` -> ``(B,H,No,Dc,Nd,Nd)``
+        """
+        loc_e = loc.permute(0, 1, 2, 4, 3)
+        sig_e = sigma.permute(0, 1, 2, 5, 3, 4)
+        return loc_e, sig_e
 
-            if test_loss < min_loss_test:
+    def _nll(self, loc, sigma, label, mask_value):
+        loc_e, sig_e = self._to_event_last(loc, sigma)
+        label_e = label.permute(0, 1, 2, 4, 3)
+        return mnormal_loss(loc_e, label_e, mask_value, sig_e)
+
+    # -- training -----------------------------------------------------------
+
+    def train_batch(self):
+        self.model.train()
+        self._dataloader["train_loader"].shuffle()
+        mask_value = self._mask_value.to(self._device)
+
+        for X, label in self._dataloader["train_loader"].get_iterator():
+            if self._iter_cnt == 0:
                 self._logger.info(
-                    "Test loss: {:.3f} -> {:.3f}".format(
-                        min_loss_test, test_loss
-                    )
+                    f"Mask Value: {mask_value}\n\n"
+                    + "=" * 25 + "   Training   " + "=" * 25
                 )
-                min_loss_test = test_loss
+            self._optimizer.zero_grad()
+            X, label = self._prepare_batch([X, label])
 
-            if valid_loss < min_loss_val:
-                if valid_loss == 0:
-                    self._logger.info("Something went WRONG!")
-                    exit()
-                    break
-
-                self.save_model(self._save_path)
-                self._logger.info(
-                    "Val  loss: {:.3f} -> {:.3f}".format(
-                        min_loss_val, valid_loss
-                    )
+            loc, sigma = self.model(X)
+            if self._normalize:
+                loc, label = self._inverse_transform(
+                    [loc, label], device=self._device.type
                 )
-                min_loss_val = valid_loss
-                wait = 0
-            else:
-                wait += 1
-                if wait == self._patience:
-                    self._logger.info(
-                        "Early stop at epoch {}, loss = {:.6f}".format(
-                            epoch + 1, min_loss_val
-                        )
-                    )
-                    break
+            loss = self._nll(loc, sigma, label, mask_value)
 
-        self.evaluate("test", export=self.args.export)
+            with torch.no_grad():
+                self.metric.compute_one_batch(loc, label, mask_value, "train")
 
+            loss.backward()
+            if self._clip_grad_norm != 0:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), self._clip_grad_norm
+                )
+            self._optimizer.step()
+            self._iter_cnt += 1
 
+    # -- evaluation ---------------------------------------------------------
 
     def evaluate(self, mode, model_path=None, export=None, train_test=False):
-        if mode == "test" and train_test == False:
+        if mode == "test" and not train_test:
             if model_path:
                 self.load_exact_model(model_path)
             else:
                 self.load_model(self._save_path)
 
         self.model.eval()
-
-        preds = []
-        labels = []
-        scales = []
+        preds, labels = [], []
 
         with torch.no_grad():
             for X, label in self._dataloader[mode + "_loader"].get_iterator():
-                # X (b, t, n, f), label (b, t, n, 1)
-                X, label = self._to_device(self._to_tensor([X, label]))
-                pred = self.model(X)
-                scale = None
-                if isinstance(pred, tuple):
-                    pred, scale = pred  # mean scale
+                X, label = self._prepare_batch([X, label])
+                loc, _ = self.model(X)
 
                 if self._normalize:
-                    pred, label = self._inverse_transform([pred, label])
+                    loc, label = self._inverse_transform(
+                        [loc, label], device=self._device.type
+                    )
 
-                preds.append(pred.squeeze(-1).cpu())
-                labels.append(label.squeeze(-1).cpu())
-                if scale is not None:
-                    scales.append(scale.squeeze(-1).cpu())
-        if scales:
-            scales = torch.cat(scales, dim=0)
+                if mode == "val":
+                    self.metric.compute_one_batch(
+                        loc, label, self._mask_value.to(loc.device), "valid"
+                    )
+                else:
+                    preds.append(self._collect(loc).cpu())
+                    labels.append(self._collect(label).cpu())
+
+        if mode == "val":
+            return
 
         preds = torch.cat(preds, dim=0)
         labels = torch.cat(labels, dim=0)
 
-        # handle the precision issue when performing inverse transform to label
-        mask_value = torch.tensor(torch.nan)
-
-
-        if mode == "val":
-            self.metric.compute_one_batch(pred, label, mask_value, "valid", scale=scale)
-
-        elif mode == "test":
-            n = preds.shape[0]//self.args.bs+1
-            for i in range(n):
-                N=self.args.bs*(i+1)
-                N_=self.args.bs*i
-                self.metric.compute_one_batch(preds[N_:N,...], labels[N_:N,...], mask_value, "test", scale=scales[N_:N,...])
+        if mode in {"test", "export"}:
+            mask_value = torch.tensor(float("nan"))
+            for i in range(self.model.horizon):
+                self.metric.compute_one_batch(
+                    self._horizon_slice(preds, i),
+                    self._horizon_slice(labels, i),
+                    mask_value,
+                    "test",
+                )
 
             if not train_test:
-                for i in self.metric.get_test_msg():
-                    self._logger.info(i)
+                with self._logger.no_time():
+                    self._logger.info("\n" + "=" * 25 + "     Test     " + "=" * 25)
+                for msg in self.metric.get_test_msg():
+                    self._logger.info(msg)
 
             if export:
                 self.save_result(preds, labels)
-
-                # # metrics
-                # metrics = np.vstack(self.metric.export())
-                # np.save(f"{self._save_path}/metrics.npy", metrics)
-                # self._logger.info(f'metrics results shape: {metrics.shape} {self.metric.metric_lst})')

@@ -8,8 +8,7 @@
 #SBATCH --partition=hpg-turin
 #SBATCH --gpus=0
 #SBATCH --output=/home/dy23a.fsu/st/data/Chicago/download.log
-#SBATCH --account=fsu-compsci-dept
-#SBATCH --qos=fsu-compsci-dept
+##SBATCH --account=fsu-compsci-dept
 
 # sbatch /home/dy23a.fsu/st/data/Chicago/run.sh
 

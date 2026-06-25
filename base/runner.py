@@ -27,19 +27,15 @@ import torch
 
 sys.path.append(os.path.abspath(__file__ + "/../../../"))
 
-from base.engine import BaseEngine
+from base.engine import BaseEngine, BaseEngine_OD
 from base.CQR_engine import CQR_Engine
-from base.fm_engine import FlowMatchingEngine
-from base.fm_model import FlowMatchingWrapper
 from base.efficiency import profile_efficiency
 from utils.args import (
-    get_fm_wrapper_kwargs,
     get_public_config,
     get_log_path,
     print_args,
     resolve_engine_template,
     set_seed,
-    validate_shared_args,
 )
 from utils.dataloader import load_dataset, get_dataset_info
 from utils.log import get_logger
@@ -51,14 +47,6 @@ def _default_optimizer(model, args):
 
 _FALLBACK_SEQ_LEN = 12
 _FALLBACK_HORIZON = 1
-
-
-def _wrap_flow_matching_model(model, args):
-    return FlowMatchingWrapper(
-        base_model=model,
-        dropout=getattr(args, "dropout", 0.1),
-        **get_fm_wrapper_kwargs(args),
-    )
 
 
 def _auto_fill_from_info(args, data_path, logger):
@@ -111,6 +99,7 @@ def run_experiment(
     engine_extras=None,
     device_override=None,
     train_with_export=False,
+    od=False,
 ):
     """Run a full training / evaluation experiment.
 
@@ -156,9 +145,18 @@ def run_experiment(
     train_with_export : bool
         If *True*, call ``engine.train(args.export)`` instead of
         ``engine.train()``.  Used by statistical model engines.
+    od : bool
+        If *True*, this is an origin-destination model.  The runner then
+        (a) forces ``args.input_dim = args.output_dim = node_num`` after
+        auto-fill — OD data is ``(T, N, N, D)`` so the auto-filled
+        ``input_dim`` (= ``D`` mobility channels) is *not* what the
+        single-channel backbone expects (it treats the ``N`` destinations as
+        features), and (b) defaults ``engine_cls`` to
+        :class:`base.engine.BaseEngine_OD`.  Centralising this removes the
+        per-model ``setup()`` overrides that used to duplicate it.
     """
     if engine_cls is None:
-        engine_cls = BaseEngine
+        engine_cls = BaseEngine_OD if od else BaseEngine
     if engine_quantile_cls is None:
         engine_quantile_cls = CQR_Engine
     if metric_list is None:
@@ -170,9 +168,8 @@ def run_experiment(
     parser = get_public_config()
     add_args(parser)
     args = parser.parse_args()
-    validate_shared_args(args)
     args.model_name = model_name
-    if args.quantile:
+    if args.cqr != "no":
         args.model_name += "_CQR"
 
     log_dir = get_log_path(args)
@@ -193,6 +190,23 @@ def run_experiment(
     # Auto-fill seq_len / horizon from info.json when not specified via CLI
     _auto_fill_from_info(args, data_path, logger)
 
+    # OD models treat the N×N matrix as N features (destinations) with the D
+    # mobility channels folded into the batch (see base.model.BaseODModel), so
+    # input_dim/output_dim must be node_num — not the auto-filled D channels.
+    if od:
+        args.input_dim = node_num
+        args.output_dim = node_num
+        logger.info(f"OD model: input_dim = output_dim = node_num = {node_num}")
+        # OD models emit a plain (B,H,N,N,D) tensor and are not CQR quantile
+        # regressors; reject --cqr up front (before the output_dim widening) so
+        # the error is clear rather than surfacing as a shape mismatch later.
+        if args.cqr != "no":
+            raise ValueError(
+                f"{model_name} is an OD model and does not support --cqr "
+                f"(its output is an OD matrix, not output_dim-driven quantiles). "
+                f"Run it without --cqr."
+            )
+
     dataloader, scaler = load_data(data_path, args, logger)
 
     # --- Optional pre-model setup ---
@@ -200,18 +214,41 @@ def run_experiment(
     if setup is not None:
         ctx = setup(args, data_path, adj_path, node_num, device, logger) or {}
 
+    # --- CQR multi-head output ---
+    # In CQR mode the model itself becomes the quantile regressor: its final
+    # projection emits 3 channels per feature (q_lo, q_mid, q_hi).  Widen
+    # output_dim *before* build_model so the model is sized accordingly; the
+    # engine reads args.cqr_channels to recover the true feature count F.
+    if args.cqr != "no":
+        args.cqr_channels = args.output_dim
+        args.output_dim = args.output_dim * 3
+        logger.info(
+            f"CQR multi-head: output_dim {args.cqr_channels} -> {args.output_dim} "
+            f"(q_lo / q_mid / q_hi per feature)"
+        )
+
     # Print args after auto-fill and setup so all values are final
     print_args(logger, args)
 
     # --- Select engine class ---
     engine_template = resolve_engine_template(
-        args, engine_cls, engine_quantile_cls, FlowMatchingEngine
+        args, engine_cls, engine_quantile_cls
     )
 
     # --- Build model ---
     model = build_model(args, node_num, **ctx)
-    if args.engine_mode == "flow_matching" and not args.quantile:
-        model = _wrap_flow_matching_model(model, args)
+
+    # CQR widens output_dim to 3*F and reads (q_lo, q_mid, q_hi) from the
+    # model's own output.  Models whose output width is locked to input_dim
+    # (autoregressive) or that emit their own distribution (e.g. UQGNN) cannot
+    # act as the quantile regressor.
+    if args.cqr != "no" and not getattr(model, "cqr_compatible", True):
+        raise ValueError(
+            f"{model_name} does not support --cqr: its output width is not "
+            f"driven by output_dim (it is autoregressive or emits its own "
+            f"distribution). Run it without --cqr, or use --cqr on a "
+            f"point-prediction model whose final layer is sized by output_dim."
+        )
 
     # --- Optimizer ---
     if make_optimizer is NO_OPTIMIZER:

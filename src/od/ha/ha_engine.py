@@ -1,42 +1,10 @@
-import torch
-import numpy as np
-from base.engine import BaseEngine
-import time
+from base.engine import BaseEngine_OD_Stat
 
 
-class HA_Engine(BaseEngine):
-    def __init__(self, **args):
-        super(HA_Engine, self).__init__(**args)
+class HA_Engine(BaseEngine_OD_Stat):
+    """Historical Average engine: forecasts each test step from the rolling mean
+    of preceding observations (seeded with the validation tail), rather than the
+    fit-on-train protocol of ARIMA/VAR."""
 
-    def train(self, export):
-        train, valid, test = self._dataloader
-
-        # train=test
-        # train = train[:, :10, :10]
-        # test = test[:, :10, :10]
-
-        # print(test)
-
-        pred = self.model(valid, test)
-
-        pred = torch.from_numpy(pred)
-        test = torch.from_numpy(test)
-
-
-        if self._normalize:
-            pred, test = self._inverse_transform([pred, test],device="cpu")
-
-        self.metric.compute_one_batch(
-            pred,
-            test,
-            torch.tensor(1),
-            "test",
-        )
-
-        # print("MSE", ((pred - test) ** 2).mean())
-
-        for i in self.metric.get_test_msg():
-            self._logger.info(i)
-
-        if export:
-            self.save_result(pred, test)
+    def _forecast(self, train, valid, test):
+        return self.model(valid, test)

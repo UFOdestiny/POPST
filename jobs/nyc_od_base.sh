@@ -1,39 +1,36 @@
 #!/bin/bash
-#SBATCH --job-name=chi
+#SBATCH --job-name=nyc_o_b
 #SBATCH --account=fsu-compsci-dept
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=dy23a@fsu.edu
 #SBATCH --nodes=1
 #SBATCH --tasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64gb
+#SBATCH --mem=128gb
 #SBATCH --time=6-23:00:00
 #SBATCH --output=NONE
 #SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
 
-# sbatch jobs/base_chi.sh
-# c; jobs/base_chi.sh
+# sbatch /home/dy23a.fsu/st/jobs/nyc_od_base.sh
+# c; /home/dy23a.fsu/st/jobs/nyc_od_base.sh
 
 date
 module load cuda conda
 conda activate st
 
 BASE=/home/dy23a.fsu/st
-SRC=$BASE/src/flow
-PORJ=Chi_Mobi
+SRC=$BASE/src/od
+PORJ=NYC_OD
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 512 --dataset chicago_mobility_dense --proj $PORJ --years 2025" # --engine_mode flow_matching
+ARGS="--bs 8 --dataset nyc_manhattan_od_15min --proj $PORJ --years 2025"
 
 # MODELS=(
 #     stgcn
 # )
 MODELS=(
-    agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
-    hl lstm #mamba2 mamba3 mamba4 mamba5 mamba6 mamba7
-    patchtst stgcn stgode stllm stllm2 stllm3 stllm4 stllm5 ST-LLM-plus sttn uqgnn 
-    mamba dcrnn
+    agcrn astgcn gmel gwnet ha hl hmdlf lstm odmixer stgcn stgode sttn stzinb
 )
 
 for m in "${MODELS[@]}"; do

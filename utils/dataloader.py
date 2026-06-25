@@ -13,7 +13,7 @@ import yaml
 sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
 from utils.args import get_data_path
-from utils.generate import MinMaxScaler
+from utils.generate import reconstruct_scaler
 
 
 # ── PyTorch Dataset + Adapter ────────────────────────────────────────────
@@ -106,17 +106,13 @@ def _load_indices(data_dir, split):
 
 
 def _load_scaler(data_dir, ptr):
-    """Reconstruct scaler from meta.json (preferred) or fall back to npz min/max."""
+    """Reconstruct scaler from meta.json."""
     meta_path = data_dir / "meta.json"
-    if meta_path.exists():
-        with open(meta_path) as f:
-            meta = json.load(f)
-        from utils.generate import reconstruct_scaler
-        return reconstruct_scaler(meta)
-    # Legacy fallback: reconstruct MinMaxScaler from npz keys
-    if "min" in ptr:
-        return MinMaxScaler(data_min=float(ptr["min"]), data_max=float(ptr["max"]))
-    raise ValueError(f"No meta.json or min/max keys found in {data_dir}")
+    if not meta_path.exists():
+        raise FileNotFoundError(f"meta.json not found in {data_dir}; regenerate the dataset with utils/generate.py")
+    with open(meta_path) as f:
+        meta = json.load(f)
+    return reconstruct_scaler(meta)
 
 
 def load_dataset_plain(data_path, args, logger, drop=False):

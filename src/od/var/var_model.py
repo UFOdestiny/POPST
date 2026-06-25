@@ -1,36 +1,44 @@
 import numpy as np
 from sklearn.decomposition import TruncatedSVD
 from statsmodels.tsa.api import VAR as Var
-from statsmodels.tsa.statespace.sarimax import SARIMAX as SARIMA
 from base.model import BaseModel
 
 
 class VAR(BaseModel):
+    """Vector AutoRegression on a low-rank (TruncatedSVD) factorisation of the
+    flattened OD matrix.  Channel-aware: each mobility channel is decomposed and
+    forecast independently, then stacked back into ``(T, N, N, D)``.
+    """
+
     def __init__(self, node_num, input_dim, output_dim, k=6, **args):
         super().__init__(node_num, input_dim, output_dim, **args)
         self.k = k
 
-    def forward(self, X_train, Y_test_len):
-        """
-        :param X_train: numpy array, shape (T_train, N, N)
-        :param Y_test_len: int, 测试集长度
-        :return: Y_pred, shape (Y_test_len, N, N)
-        """
+    def _forecast_one(self, X_train, steps):
+        """Forecast a single channel.  ``X_train`` is ``(T_train, N, N)`` ->
+        returns ``(steps, N, N)``."""
         T_train, N, _ = X_train.shape
         X = X_train.reshape(T_train, N * N)
 
-        # 做低秩分解（SVD / PCA）
         svd = TruncatedSVD(n_components=self.k)
-        F = svd.fit_transform(X)  # (T, k) 时间因子
+        F = svd.fit_transform(X)  # (T, k) temporal factors
 
-        # 用 VAR 对因子做预测
         model = Var(F)
         res = model.fit(maxlags=self.k)
-        # 预测未来 h 步因子
-        fc = res.forecast(F[-res.k_ar :], steps=Y_test_len)  # shape (h, k)
+        fc = res.forecast(F[-res.k_ar :], steps=steps)  # (steps, k)
 
-        # 重构 OD 矩阵: X_hat = fc @ V^T
         V = svd.components_  # (k, N*N)
-        Xhat = fc.dot(V)  # (h, N*N)
-        Xhat = Xhat.reshape(Y_test_len, N, N)
+        Xhat = fc.dot(V).reshape(steps, N, N)
         return Xhat
+
+    def forward(self, X_train, Y_test_len):
+        """X_train ``(T_train, N, N, D)`` -> Y_pred ``(Y_test_len, N, N, D)``."""
+        X_train = np.asarray(X_train)
+        if X_train.ndim == 3:  # (T, N, N) single channel
+            return self._forecast_one(X_train, Y_test_len)
+
+        T_train, N, _, D = X_train.shape
+        Y_pred = np.zeros((Y_test_len, N, N, D), dtype=np.float32)
+        for c in range(D):
+            Y_pred[..., c] = self._forecast_one(X_train[..., c], Y_test_len)
+        return Y_pred
