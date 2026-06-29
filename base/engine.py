@@ -187,12 +187,31 @@ class BaseEngine:
             res = self.metric.compute_one_batch(
                 pred, label, mask_value, "train", scale=scale
             )
+
+            # A single non-finite loss (e.g. an SSM gradient blow-up late in
+            # training) would otherwise poison every weight: clip_grad_norm_
+            # turns a NaN gradient into a NaN scale, so clipping cannot save it
+            # and optimizer.step() spreads the NaN, after which all subsequent
+            # predictions are NaN — the masked metrics report 0.000 and the
+            # train loop aborts with "Something went WRONG!".  Skip the step.
+            if not torch.isfinite(res):
+                self._optimizer.zero_grad()
+                self._iter_cnt += 1
+                continue
+
             res.backward()
 
             if self._clip_grad_norm != 0:
-                torch.nn.utils.clip_grad_norm_(
+                total_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), self._clip_grad_norm
                 )
+                # Non-finite gradients can arise even from a finite loss; a NaN
+                # norm makes clipping a no-op, so skip the step rather than
+                # corrupt the weights (see the loss guard above).
+                if not torch.isfinite(total_norm):
+                    self._optimizer.zero_grad()
+                    self._iter_cnt += 1
+                    continue
             self._optimizer.step()
             self._iter_cnt += 1
 

@@ -407,6 +407,8 @@ if __name__ == "__main__":
 
     args.path="/home/dy23a.fsu/st/result/NYC_Flow"
     # args.path="/home/dy23a.fsu/st/result/Chi_Flow"
+    # args.path="/home/dy23a.fsu/st/result/NYC_OD"
+    # args.path="/home/dy23a.fsu/st/result/Chi_OD"
 
     if args.log:
         summarize_log(args.log)

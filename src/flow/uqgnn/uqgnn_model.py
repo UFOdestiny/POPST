@@ -169,6 +169,27 @@ class ITCN(nn.Module):
 # Covariance assembly (Algorithm 1)
 # ---------------------------------------------------------------------------
 
+def _symeig(z):
+    """Symmetric eigendecomposition that dodges the cuSOLVER batched-``eigh``
+    bug.
+
+    ``torch.linalg.eigh`` dispatches to ``cusolverDnXsyevBatched`` on CUDA,
+    whose ``*_bufferSize`` query raises ``CUSOLVER_STATUS_INVALID_VALUE`` once
+    the batch holds many (tens of thousands of) small matrices — exactly our
+    case ``(B, H, N, M, M)`` flattens to ~35k 3x3 blocks.  The MAGMA backend
+    has no such limit and stays on-GPU (differentiable), so we select it just
+    for this call and restore the previous preference afterwards.
+    """
+    if not z.is_cuda:
+        return torch.linalg.eigh(z)
+    prev = torch.backends.cuda.preferred_linalg_library()
+    torch.backends.cuda.preferred_linalg_library("magma")
+    try:
+        return torch.linalg.eigh(z)
+    finally:
+        torch.backends.cuda.preferred_linalg_library(prev)
+
+
 def build_covariance(vec, feature, index, min_vec):
     """Assemble a positive-definite covariance from its lower-triangular vector.
 
@@ -183,7 +204,7 @@ def build_covariance(vec, feature, index, min_vec):
     z[..., index[0], index[1]] = vec
     z[..., index[1], index[0]] = vec
 
-    eigval, eigvec = torch.linalg.eigh(z)
+    eigval, eigvec = _symeig(z)
     eigval = torch.clamp(eigval, min=min_vec)
     cov = torch.matmul(eigvec, torch.diag_embed(eigval))
     cov = torch.matmul(cov, eigvec.transpose(-2, -1))

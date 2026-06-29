@@ -299,4 +299,4 @@ def run_experiment(
         engine.evaluate(args.mode, args.model_path, args.export)
 
     # --- Efficiency profiling (after test) ---
-    profile_efficiency(model, dataloader, device, logger, args)
+    profile_efficiency(engine, dataloader, device, logger, args)

@@ -26,14 +26,14 @@ LOG=$BASE/output/$PORJ
 mkdir -p $LOG
 ARGS="--bs 512 --dataset nyc_manhattan_15min --proj $PORJ --years 2025"
 
-# MODELS=(
-#     stgcn
-# )
 MODELS=(
-    agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
-    hl lstm transformer patchtst stgcn stgode ST-LLM-plus sttn 
-    mamba uqgnn trustenergy healthmamba energymamba dcrnn
+    healthmamba uqgnn
 )
+# MODELS=(
+#     agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
+#     hl lstm transformer patchtst stgcn stgode ST-LLM-plus sttn 
+#     mamba uqgnn trustenergy healthmamba energymamba dcrnn
+# )
 
 for m in "${MODELS[@]}"; do
     echo "=== Running $m ==="
