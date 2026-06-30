@@ -24,21 +24,34 @@ SRC=$BASE/src/flow
 PORJ=NYC_Flow
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 512 --dataset nyc_manhattan_15min --proj $PORJ --years 2025"
 
-MODELS=(
-    healthmamba uqgnn
+BASE_ARGS="--bs 512 --dataset nyc_manhattan_15min"
+
+YEARS=(
+    "2025_12to1"
+    "2025_12to3"
+    "2025_12to6"
+    "2025_12to9"
+    "2025_12to12"
 )
+
 # MODELS=(
-#     agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
-#     hl lstm transformer patchtst stgcn stgode ST-LLM-plus sttn 
-#     mamba uqgnn trustenergy healthmamba energymamba dcrnn
+#     healthmamba uqgnn
 # )
 
+MODELS=(
+    agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
+    hl lstm transformer patchtst stgcn stgode ST-LLM-plus sttn 
+    mamba uqgnn dcrnn # trustenergy healthmamba energymamba
+)
+
 for m in "${MODELS[@]}"; do
-    echo "=== Running $m ==="
-    python3 $SRC/$m/main.py $ARGS 2>&1 | tee $LOG/${m}.log
-    echo "$m finished with exit code $?"
+    for y in "${YEARS[@]}"; do
+        echo "=== Running $m for year $y ==="
+        CURRENT_ARGS="$BASE_ARGS --years $y --proj $y"
+        python3 $SRC/$m/main.py $CURRENT_ARGS 2>&1 | tee $LOG/${m}_${y}.log
+        echo "$m for year $y finished with exit code $?"
+    done
 done
 
 date

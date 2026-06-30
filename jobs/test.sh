@@ -45,4 +45,15 @@ done
 
 date
 
-#sbatch /home/dy23a.fsu/st/jobs/chi_flow_base.sh;sbatch /home/dy23a.fsu/st/jobs/chi_flow_stllm.sh;sbatch /home/dy23a.fsu/st/jobs/nyc_flow_base.sh;sbatch /home/dy23a.fsu/st/jobs/nyc_flow_stllm.sh;sbatch /home/dy23a.fsu/st/jobs/chi_od_base.sh;sbatch /home/dy23a.fsu/st/jobs/nyc_od_base.sh
+#
+sbatch /home/dy23a.fsu/st/jobs/chi_flow_base.sh;
+sbatch /home/dy23a.fsu/st/jobs/chi_flow_stllm.sh;
+
+sbatch /home/dy23a.fsu/st/jobs/nyc_flow_base.sh;
+sbatch /home/dy23a.fsu/st/jobs/nyc_flow_stllm.sh;
+
+sbatch /home/dy23a.fsu/st/jobs/sf_flow_base.sh;
+sbatch /home/dy23a.fsu/st/jobs/sf_flow_stllm.sh;
+
+sbatch /home/dy23a.fsu/st/jobs/dc_flow_base.sh;
+sbatch /home/dy23a.fsu/st/jobs/dc_flow_stllm.sh;

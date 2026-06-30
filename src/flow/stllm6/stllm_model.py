@@ -186,23 +186,39 @@ class PerModeHead(nn.Module):
 
 
 class CrossModeAttention(nn.Module):
-    """Multi-head self-attention across modes; modes are tokens of dim d_pm."""
+    """Context-conditional multi-head self-attention across modes.
 
-    def __init__(self, d_pm, num_heads=2, dropout=0.1):
+    Modes are tokens of dim d_pm. Content-based attention alone applies the
+    same cross-mode coupling everywhere, but the data analysis
+    (data/Analysis/cross_mode_coupling.ipynb) shows coupling is strongly
+    place-dependent (hubs couple ~2-6x more than the periphery). We therefore
+    add a *node-conditional coupling bias* to the attention logits, derived
+    from the node embedding: the same content yields different cross-mode
+    coupling at a hub vs. the periphery. The bias is zero-initialised so the
+    layer starts as plain content attention and learns the spatial structure.
+    """
+
+    def __init__(self, d_pm, d_node, num_modes, num_heads=2, dropout=0.1):
         super().__init__()
         if d_pm % num_heads != 0:
             num_heads = 1
         self.num_heads = num_heads
         self.head_dim = d_pm // num_heads
         self.scale = self.head_dim ** -0.5
+        self.num_modes = num_modes
         self.norm = RMSNorm(d_pm)
         self.qkv = nn.Linear(d_pm, 3 * d_pm)
         self.out_proj = nn.Linear(d_pm, d_pm)
         self.dropout = nn.Dropout(dropout)
         self.gate = nn.Parameter(torch.zeros(d_pm))
+        # Node identity -> per-node, per-head (M, M) additive coupling bias.
+        # Zero-init so the layer starts as plain content attention.
+        self.node_bias_proj = nn.Linear(d_node, num_heads * num_modes * num_modes)
+        nn.init.zeros_(self.node_bias_proj.weight)
+        nn.init.zeros_(self.node_bias_proj.bias)
 
-    def forward(self, x):
-        # x: (..., M, d_pm)
+    def forward(self, x, node_emb):
+        # x: (..., N, M, d_pm); node_emb: (N, d_node). The last lead axis is N.
         residual = x
         x_n = self.norm(x)
         lead = x_n.shape[:-2]
@@ -213,7 +229,12 @@ class CrossModeAttention(nn.Module):
         q = q.transpose(-2, -3)  # (..., heads, M, head_dim)
         k = k.transpose(-2, -3)
         v = v.transpose(-2, -3)
-        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = (q @ k.transpose(-2, -1)) * self.scale  # (..., N, heads, M, M)
+        # Node-conditional coupling bias broadcasts over any leading B/T axes:
+        # rightmost 4 dims of attn are (N, heads, M, M), matching node_bias.
+        N = node_emb.shape[0]
+        node_bias = self.node_bias_proj(node_emb).reshape(N, self.num_heads, M, M)
+        attn = attn + node_bias
         attn = F.softmax(attn, dim=-1)
         attn = self.dropout(attn)
         out = attn @ v  # (..., heads, M, head_dim)
@@ -282,12 +303,16 @@ class STLLM(BaseModel):
         self.d_pm = d_pm
         self.num_modes = self.input_dim
 
-        self.mode_embed = PerModeEmbedding(self.num_modes, d_pm)
-        self.encoder_mixer = CrossModeAttention(d_pm, num_heads=mode_attn_heads, dropout=dropout)
-        self.decoder_mixer = CrossModeAttention(d_pm, num_heads=mode_attn_heads, dropout=dropout)
-        self.mode_fuser = ModeFuser(self.num_modes, d_pm, d_model)
-
         self.node_embedding = nn.Embedding(self.node_num, d_model)
+
+        self.mode_embed = PerModeEmbedding(self.num_modes, d_pm)
+        self.encoder_mixer = CrossModeAttention(
+            d_pm, d_node=d_model, num_modes=self.num_modes, num_heads=mode_attn_heads, dropout=dropout
+        )
+        self.decoder_mixer = CrossModeAttention(
+            d_pm, d_node=d_model, num_modes=self.num_modes, num_heads=mode_attn_heads, dropout=dropout
+        )
+        self.mode_fuser = ModeFuser(self.num_modes, d_pm, d_model)
         self.blocks = nn.ModuleList(
             [STLLM6Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
@@ -314,13 +339,15 @@ class STLLM(BaseModel):
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
 
-        # Per-mode encoding with cross-mode attention.
+        node_ids = torch.arange(node_num, device=x.device)
+        node_emb = self.node_embedding(node_ids)  # (N, d_model)
+
+        # Per-mode encoding with node-conditional cross-mode attention.
         x = self.mode_embed(x)               # (B, T, N, M, d_pm)
-        x = self.encoder_mixer(x)
+        x = self.encoder_mixer(x, node_emb)
         x = self.mode_fuser(x)               # (B, T, N, d_model)
 
-        node_ids = torch.arange(node_num, device=x.device)
-        x = x + self.node_embedding(node_ids).unsqueeze(0).unsqueeze(0)
+        x = x + node_emb.unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
@@ -328,6 +355,6 @@ class STLLM(BaseModel):
         # Decode the last step in per-mode subspace with another cross-mode mixer.
         token = x[:, -1, :, :]               # (B, N, d_model)
         modes = self.mode_unfuser(token)     # (B, N, M, d_pm)
-        modes = self.decoder_mixer(modes)
+        modes = self.decoder_mixer(modes, node_emb)
         out = self.head(modes)               # (B, N, M, H)
         return out.permute(0, 3, 1, 2).contiguous()  # (B, H, N, M)

@@ -387,39 +387,63 @@ def _discover_models(path):
     return models
 
 
+def _discover_projs(result_root):
+    """Auto-discover project names from a result root directory."""
+    if not os.path.isdir(result_root):
+        return []
+    return sorted(
+        name for name in os.listdir(result_root)
+        if os.path.isdir(os.path.join(result_root, name))
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="POPST result analysis")
+    parser.add_argument("--result", type=str, default=None,
+                        help="Result root directory (e.g., result/ or /home/.../result)")
+    parser.add_argument("--proj", type=str, nargs="+", default=None,
+                        help="Project name(s) under the result root (e.g., NYC_Flow Chi_Flow)")
     parser.add_argument("--path", type=str, default=None,
-                        help="Result path (e.g., result/Test)")
+                        help="Direct result path for a single project (e.g., result/NYC_Flow)")
     parser.add_argument("--datasets", type=str, nargs="+", default=None,
-                        help="Dataset names to include")
+                        help="Dataset names to include (default: auto-discover)")
     parser.add_argument("--models", type=str, nargs="+", default=None,
-                        help="Model names to include")
+                        help="Model names to include (default: auto-discover)")
     parser.add_argument("--log", type=str, default=None,
                         help="Summarize a single log file")
     parser.add_argument("--select", type=str, default="MAE",
                         help="Metric for selecting best log (default: MAE)")
     args = parser.parse_args()
 
-    args.path="/home/dy23a.fsu/st/result/NYC_Flow"
-    # args.path="/home/dy23a.fsu/st/result/Chi_Flow"
-    # args.path="/home/dy23a.fsu/st/result/NYC_OD"
-    # args.path="/home/dy23a.fsu/st/result/Chi_OD"
+    metrics = ["MAE", "RMSE", "MAPE"]
+
+    args.result="/home/dy23a.fsu/st/result"
+    args.proj=["2025_12to1","2025_12to3","2025_12to6","2025_12to9","2025_12to12"]
 
     if args.log:
         summarize_log(args.log)
-    elif args.path:
-        datasets = args.datasets or _discover_datasets(args.path)
-        models = args.models or _discover_models(args.path)
-        metrics = ["MAE", "RMSE", "MAPE"]
-        if models and datasets:
-            print_df(models, datasets, metrics, args.path, args.select,
-                     title=f"Results: {args.path}")
-        else:
-            print(f"No results found in {args.path}")
     else:
-        parser.print_help()
+        # Build list of (proj_label, proj_path) to process
+        targets = []
+        if args.result:
+            projs = args.proj or _discover_projs(args.result)
+            for proj in projs:
+                targets.append((proj, os.path.join(args.result, proj)))
+        elif args.path:
+            targets.append((os.path.basename(args.path.rstrip("/\\")), args.path))
+        else:
+            parser.print_help()
+            raise SystemExit(0)
+
+        for label, proj_path in targets:
+            datasets = args.datasets or _discover_datasets(proj_path)
+            models = args.models or _discover_models(proj_path)
+            if models and datasets:
+                print_df(models, datasets, metrics, proj_path, args.select,
+                         title=f"Results: {proj_path}")
+            else:
+                print(f"No results found in {proj_path}")

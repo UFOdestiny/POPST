@@ -11,6 +11,15 @@ chicago_15min:
   data: chicago_15min
   adj: chicago_15min/chicago.npy
 
+dc_60min:
+  data: dc_60min
+  adj: dc_60min/dc.npy
+
+sf_15min:
+  data: sf_15min
+  adj: sf_15min/sf.npy
+
+
 # ── OD Prediction: N*N → N*N ────────────────────────────────────────────
 nyc_manhattan_od_15min:
   data: nyc_manhattan_od_15min
@@ -19,4 +28,11 @@ nyc_manhattan_od_15min:
 chicago_od_15min:
   data: chicago_od_15min
   adj: chicago_od_15min/chicago.npy
-  
+
+dc_od_60min:
+  data: dc_od_60min
+  adj: dc_od_60min/dc.npy
+
+sf_od_15min:
+  data: sf_od_15min
+  adj: sf_od_15min/sf.npy

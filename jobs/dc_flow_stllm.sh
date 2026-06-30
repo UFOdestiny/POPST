@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=chi_f_b
+#SBATCH --job-name=dc_f_stllm
 #SBATCH --account=fsu-compsci-dept
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=dy23a@fsu.edu
@@ -12,8 +12,8 @@
 #SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
 
-# sbatch /home/dy23a.fsu/st/jobs/chi_flow_base.sh
-# c; /home/dy23a.fsu/st/jobs/chi_flow_base.sh
+# sbatch /home/dy23a.fsu/st/jobs/dc_flow_stllm.sh
+# c; /home/dy23a.fsu/st/jobs/dc_flow_stllm.sh
 
 date
 module load cuda conda
@@ -21,11 +21,11 @@ conda activate st
 
 BASE=/home/dy23a.fsu/st
 SRC=$BASE/src/flow
-PORJ=Chi_Flow
+PORJ=DC_Flow
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
 
-BASE_ARGS="--bs 512 --dataset chicago_15min"
+BASE_ARGS="--bs 512 --dataset dc_60min"
 
 YEARS=(
     "2025_12to1"
@@ -35,10 +35,13 @@ YEARS=(
     "2025_12to12"
 )
 
+# MODELS=(
+#     stllm6 stllm7
+# )
+
 MODELS=(
-    agcrn astgcn d2stgnn dgcrn dstagnn gluonts gwnet
-    hl lstm transformer patchtst stgcn stgode ST-LLM-plus sttn 
-    mamba uqgnn dcrnn # trustenergy healthmamba energymamba
+    stllm stllm2 stllm3 stllm4 stllm5 
+    stllm6 stllm7 stllm8 stllm9
 )
 
 for m in "${MODELS[@]}"; do

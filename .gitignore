@@ -3,6 +3,7 @@ output
 outputs/
 result
 datasets
+data/Analysis
 checkpoints/
 wandb/
 logs/

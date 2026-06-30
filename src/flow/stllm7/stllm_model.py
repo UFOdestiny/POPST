@@ -176,75 +176,101 @@ class PerModeHead(nn.Module):
         return torch.einsum("bnmd,mdh->bnmh", x, self.weight) + self.bias
 
 
-def pearson_corr(x, eps=1e-5):
-    """Per-sample Pearson correlation across the M modes, computed over (T, N).
+def pearson_corr_per_node(x, eps=1e-5):
+    """Per-sample, *per-node* Pearson correlation across the M modes, over the T window.
 
     Args:
         x: (B, T, N, M)
     Returns:
-        (B, M, M) correlation matrix.
+        (B, N, M, M) correlation matrix for every (sample, node).
     """
     B, T, N, M = x.shape
-    flat = x.permute(0, 3, 1, 2).reshape(B, M, T * N)
+    flat = x.permute(0, 2, 3, 1)                       # (B, N, M, T)
     flat = flat - flat.mean(dim=-1, keepdim=True)
     std = flat.std(dim=-1, keepdim=True).clamp_min(eps)
     flat = flat / std
-    corr = (flat @ flat.transpose(-1, -2)) / max(T * N - 1, 1)
-    return corr
+    corr = (flat @ flat.transpose(-1, -2)) / max(T - 1, 1)
+    return corr                                        # (B, N, M, M)
 
 
-class CorrelationGraphMixer(nn.Module):
-    """Blend of static prior, empirical Pearson, and content-derived dynamic adjacency."""
+class ContextConditionalGraphMixer(nn.Module):
+    """Cross-mode propagation on a *context-conditional* coupling graph.
 
-    def __init__(self, num_modes, d_pm, hidden_dim=16, dropout=0.1, use_pearson=True):
+    The data analysis (data/Analysis/cross_mode_coupling.ipynb) shows that
+    cross-mode coupling is strong globally but highly heterogeneous across
+    space (hubs couple ~2-6x more than the periphery) and time. A single
+    global coupling matrix is therefore mis-specified. This mixer builds a
+    *per-node* adjacency `A[b, n] (M, M)` as an interpretable blend of four
+    sources, so the model can learn where and when modes couple:
+
+      (1) static    — a global learned prior shared by all nodes;
+      (2) pearson    — the per-node empirical Pearson correlation of the
+                       raw input window (data-driven, sample- & node-conditional);
+      (3) node       — a node-identity coupling bias from the node embedding
+                       (captures persistent place structure: hub vs periphery);
+      (4) dynamic    — a per-node, content-derived adjacency from the local
+                       pooled signal (captures the current context, e.g. rush).
+
+    The four are combined on the simplex via learned `mix_logits` (logged for
+    interpretation), and message passing uses the resulting per-node graph.
+    """
+
+    def __init__(self, num_modes, d_pm, d_node, hidden_dim=16, dropout=0.1, use_pearson=True):
         super().__init__()
         self.num_modes = num_modes
         self.use_pearson = use_pearson
         self.norm = RMSNorm(d_pm)
         self.static_logits = nn.Parameter(torch.zeros(num_modes, num_modes))
+        # Node-identity coupling: node embedding -> per-node (M, M) logits.
+        self.node_proj = nn.Linear(d_node, num_modes * num_modes)
+        # Content dynamic: per-node pooled features -> per-node (M, M) logits.
         self.dynamic_proj = nn.Sequential(
             nn.Linear(num_modes * d_pm, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, num_modes * num_modes),
         )
-        # Three log-mix weights. softmax keeps them on the simplex; init prefers Pearson.
-        init = torch.tensor([0.0, 1.0 if use_pearson else -1e9, 0.0])
+        # Four log-mix weights [static, pearson, node, dynamic] on the simplex.
+        # Init prefers pearson (encoder) or node-identity (decoder, no pearson).
+        init = torch.tensor([0.0, 1.0 if use_pearson else -1e9, 0.5, 0.0])
         self.mix_logits = nn.Parameter(init)
         self.value_proj = nn.Linear(d_pm, d_pm)
         self.out_proj = nn.Linear(d_pm, d_pm)
         self.dropout = nn.Dropout(dropout)
         self.gate = nn.Parameter(torch.zeros(d_pm))
-        # raw-input pearson computed once per forward; cached.
+        # per-node raw-input pearson computed once per forward; cached.
         self._pearson = None
 
     def set_pearson(self, x_raw):
-        """Cache the Pearson correlation of the *raw* mobility input (B, T, N, M)."""
-        self._pearson = pearson_corr(x_raw)
+        """Cache the per-node Pearson correlation of the *raw* input (B, T, N, M)."""
+        self._pearson = pearson_corr_per_node(x_raw)   # (B, N, M, M)
 
-    def forward(self, x):
-        # x: (B, T, N, M, d_pm); _pearson: (B, M, M).
+    def forward(self, x, node_emb):
+        # x: (B, T, N, M, d_pm); node_emb: (N, d_node); _pearson: (B, N, M, M).
         residual = x
         x_n = self.norm(x)
-        B = x_n.shape[0]
-        M = self.num_modes
+        B, T, N, M, _ = x_n.shape
 
-        static_adj = F.softmax(self.static_logits, dim=-1)              # (M, M)
-        static_adj = static_adj.unsqueeze(0).expand(B, -1, -1)          # (B, M, M)
+        static_adj = F.softmax(self.static_logits, dim=-1)             # (M, M)
+        static_adj = static_adj.view(1, 1, M, M)                       # broadcast over (B, N)
+
+        # Node-identity coupling (B-broadcast, per-node).
+        node_logits = self.node_proj(node_emb).view(1, N, M, M)
+        node_adj = F.softmax(node_logits, dim=-1)
 
         if self._pearson is not None:
-            pearson_adj = F.softmax(self._pearson, dim=-1)              # (B, M, M)
+            pearson_adj = F.softmax(self._pearson, dim=-1)             # (B, N, M, M)
         else:
             pearson_adj = static_adj
 
-        pooled = x_n.mean(dim=(1, 2)).reshape(B, M * x_n.shape[-1])     # (B, M * d_pm)
-        dyn_logits = self.dynamic_proj(pooled).reshape(B, M, M)
-        dyn_adj = F.softmax(dyn_logits, dim=-1)
+        # Per-node content pooling over the T window keeps node identity.
+        pooled = x_n.mean(dim=1).reshape(B, N, M * x_n.shape[-1])      # (B, N, M*d_pm)
+        dyn_adj = F.softmax(self.dynamic_proj(pooled).view(B, N, M, M), dim=-1)
 
-        weights = F.softmax(self.mix_logits, dim=0)
-        adj = weights[0] * static_adj + weights[1] * pearson_adj + weights[2] * dyn_adj
+        w = F.softmax(self.mix_logits, dim=0)
+        adj = w[0] * static_adj + w[1] * pearson_adj + w[2] * node_adj + w[3] * dyn_adj  # (B,N,M,M)
 
         v = self.value_proj(x_n)                                       # (B, T, N, M, d_pm)
-        message = torch.einsum("bij,btnjd->btnid", adj, v)
+        message = torch.einsum("bnij,btnjd->btnid", adj, v)
         message = self.dropout(self.out_proj(message))
         return residual + self.gate * message
 
@@ -289,9 +315,14 @@ class STLLM7Block(nn.Module):
 
 
 class STLLM(BaseModel):
-    """STLLM7: per-mode embedding + correlation-graph mixer (static + Pearson + dynamic)."""
+    """STLLM7: per-mode embedding + context-conditional cross-mode coupling graph.
 
-    intro = "STLLM7: per-mode embedding with a static/Pearson/dynamic correlation graph bracketing the ST backbone."
+    The cross-mode coupling graph is conditioned on node identity and local
+    content (see ContextConditionalGraphMixer), so coupling adapts across space
+    and time instead of being a single global rule.
+    """
+
+    intro = "STLLM7: per-mode embedding with a context-conditional (static/Pearson/node/dynamic) coupling graph bracketing the ST backbone."
 
     def __init__(
         self,
@@ -309,17 +340,20 @@ class STLLM(BaseModel):
         self.d_pm = d_pm
         self.num_modes = self.input_dim
 
+        self.node_embedding = nn.Embedding(self.node_num, d_model)
+
         self.mode_embed = PerModeEmbedding(self.num_modes, d_pm)
-        self.encoder_mixer = CorrelationGraphMixer(
-            self.num_modes, d_pm, hidden_dim=mode_hidden_dim, dropout=dropout, use_pearson=True
+        self.encoder_mixer = ContextConditionalGraphMixer(
+            self.num_modes, d_pm, d_node=d_model, hidden_dim=mode_hidden_dim,
+            dropout=dropout, use_pearson=True,
         )
         # Decoder mixer cannot reuse the input Pearson because its tokens have d_pm features only.
-        self.decoder_mixer_pre = CorrelationGraphMixer(
-            self.num_modes, d_pm, hidden_dim=mode_hidden_dim, dropout=dropout, use_pearson=False
+        self.decoder_mixer_pre = ContextConditionalGraphMixer(
+            self.num_modes, d_pm, d_node=d_model, hidden_dim=mode_hidden_dim,
+            dropout=dropout, use_pearson=False,
         )
         self.mode_fuser = ModeFuser(self.num_modes, d_pm, d_model)
 
-        self.node_embedding = nn.Embedding(self.node_num, d_model)
         self.blocks = nn.ModuleList(
             [STLLM7Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
@@ -346,16 +380,18 @@ class STLLM(BaseModel):
     def forward(self, x, label=None):
         batch_size, _, node_num, _ = x.shape
 
+        node_ids = torch.arange(node_num, device=x.device)
+        node_emb = self.node_embedding(node_ids)     # (N, d_model)
+
         # Pearson is computed on the raw mode signal so it stays unbiased by learned scales.
         with torch.no_grad():
             self.encoder_mixer.set_pearson(x)
 
         x = self.mode_embed(x)
-        x = self.encoder_mixer(x)
+        x = self.encoder_mixer(x, node_emb)          # node-conditional coupling graph
         x = self.mode_fuser(x)
 
-        node_ids = torch.arange(node_num, device=x.device)
-        x = x + self.node_embedding(node_ids).unsqueeze(0).unsqueeze(0)
+        x = x + node_emb.unsqueeze(0).unsqueeze(0)
 
         for block in self.blocks:
             x = block(x)
@@ -363,6 +399,6 @@ class STLLM(BaseModel):
         token = x[:, -1, :, :]                       # (B, N, d_model)
         modes = self.mode_unfuser(token)             # (B, N, M, d_pm)
         # Decoder graph mixer expects a (B, T, N, M, d_pm) shape — unsqueeze a length-1 T axis.
-        modes = self.decoder_mixer_pre(modes.unsqueeze(1)).squeeze(1)
+        modes = self.decoder_mixer_pre(modes.unsqueeze(1), node_emb).squeeze(1)
         out = self.head(modes)                       # (B, N, M, H)
         return out.permute(0, 3, 1, 2).contiguous()  # (B, H, N, M)

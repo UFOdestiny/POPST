@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=chi_f_b
+#SBATCH --job-name=dc_f_b
 #SBATCH --account=fsu-compsci-dept
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=dy23a@fsu.edu
@@ -12,8 +12,8 @@
 #SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
 
-# sbatch /home/dy23a.fsu/st/jobs/chi_flow_base.sh
-# c; /home/dy23a.fsu/st/jobs/chi_flow_base.sh
+# sbatch /home/dy23a.fsu/st/jobs/dc_flow_base.sh
+# c; /home/dy23a.fsu/st/jobs/dc_flow_base.sh
 
 date
 module load cuda conda
@@ -21,11 +21,11 @@ conda activate st
 
 BASE=/home/dy23a.fsu/st
 SRC=$BASE/src/flow
-PORJ=Chi_Flow
+PORJ=DC_Flow
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
 
-BASE_ARGS="--bs 512 --dataset chicago_15min"
+BASE_ARGS="--bs 512 --dataset dc_60min"
 
 YEARS=(
     "2025_12to1"
