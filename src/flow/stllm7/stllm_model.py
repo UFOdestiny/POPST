@@ -165,15 +165,85 @@ class ModeUnfuser(nn.Module):
         return out.reshape(*out.shape[:-1], self.num_modes, self.d_pm)
 
 
-class PerModeHead(nn.Module):
-    def __init__(self, num_modes, d_pm, horizon):
+class PerModeReadout(nn.Module):
+    """Per-mode scalar readout for a single (already horizon-specific) token.
+
+    Input  (B, H, N, M, d_pm) -> output (B, H, N, M): one linear map per mode,
+    shared across horizon steps (the horizon information now lives in the token
+    produced by the HorizonQueryDecoder, not in the head weights).
+    """
+
+    def __init__(self, num_modes, d_pm):
         super().__init__()
-        self.weight = nn.Parameter(torch.empty(num_modes, d_pm, horizon))
-        self.bias = nn.Parameter(torch.zeros(num_modes, horizon))
+        self.weight = nn.Parameter(torch.empty(num_modes, d_pm))
+        self.bias = nn.Parameter(torch.zeros(num_modes))
         nn.init.normal_(self.weight, std=0.02)
 
     def forward(self, x):
-        return torch.einsum("bnmd,mdh->bnmh", x, self.weight) + self.bias
+        return torch.einsum("bhnmd,md->bhnm", x, self.weight) + self.bias
+
+
+class HorizonQueryDecoder(nn.Module):
+    """Query-based multi-horizon decoder.
+
+    Motivation (data/Analysis/crossmode_availability.ipynb): cross-modal signal
+    availability is highest at *long* horizons, but the old decoder read only the
+    last encoder step (``x[:, -1]``) and shared that single static token across all
+    forecast steps, so the long-horizon availability was never realized (the "NYC
+    realization gap"). Here each forecast step owns a learned query that
+    cross-attends over the *entire* encoded sequence, so every horizon step gets its
+    own representation and cross-modal information propagates to all steps.
+
+    The last-step token is added as a residual and ``out_proj`` uses a small init, so
+    at initialisation the residual dominates (every step ~= the original ``x[:, -1]``
+    token, preserving h=1) while the per-horizon attention path is immediately
+    trainable and quickly differentiates the forecast steps.
+    """
+
+    def __init__(self, d_model, horizon, num_heads, dropout=0.1):
+        super().__init__()
+        self.horizon = horizon
+        self.d_model = d_model
+        if d_model % num_heads != 0:
+            num_heads = 1
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        # Per-horizon step embedding: a strong, direct identity for each forecast step,
+        # added to both the attention query and the output token. This guarantees the H
+        # steps differentiate (attention weighting alone is too indirect and collapses).
+        self.step_emb = nn.Parameter(torch.empty(horizon, d_model))
+        nn.init.normal_(self.step_emb, std=0.02)
+        self.norm = RMSNorm(d_model)
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x: (B, T, N, d_model) -> per-horizon tokens (B, H, N, d_model).
+        B, T, N, D = x.shape
+        H, hd, nh = self.horizon, self.head_dim, self.num_heads
+        seq = x.permute(0, 2, 1, 3).reshape(B * N, T, D)          # (BN, T, D)
+        seq_n = self.norm(seq)
+        # Query = last encoder step (per node) modulated by the horizon step embedding,
+        # so each step queries the sequence from its own vantage point.
+        base = seq_n[:, -1:, :]                                   # (BN, 1, D)
+        q_in = base + self.step_emb.unsqueeze(0)                  # (BN, H, D)
+        q = self.q_proj(q_in)
+        k = self.k_proj(seq_n)
+        v = self.v_proj(seq_n)
+        q = q.view(B * N, H, nh, hd).transpose(1, 2)             # (BN, nh, H, hd)
+        k = k.view(B * N, T, nh, hd).transpose(1, 2)
+        v = v.view(B * N, T, nh, hd).transpose(1, 2)
+        attn = F.softmax((q @ k.transpose(-2, -1)) * self.scale, dim=-1)
+        attn = self.dropout(attn)
+        ctx = (attn @ v).transpose(1, 2).reshape(B * N, H, D)    # (BN, H, D)
+        # Token = attended context + last-step residual + explicit step identity.
+        tokens = self.out_proj(ctx) + seq[:, -1:, :] + self.step_emb.unsqueeze(0)
+        return tokens.view(B, N, H, D).permute(0, 2, 1, 3).contiguous()  # (B, H, N, D)
 
 
 def pearson_corr_per_node(x, eps=1e-5):
@@ -358,8 +428,9 @@ class STLLM(BaseModel):
             [STLLM7Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
 
+        self.horizon_decoder = HorizonQueryDecoder(d_model, self.horizon, num_heads, dropout)
         self.mode_unfuser = ModeUnfuser(self.num_modes, d_pm, d_model)
-        self.head = PerModeHead(self.num_modes, d_pm, self.horizon)
+        self.head = PerModeReadout(self.num_modes, d_pm)
         self._init_weights()
 
     def _init_weights(self):
@@ -396,9 +467,11 @@ class STLLM(BaseModel):
         for block in self.blocks:
             x = block(x)
 
-        token = x[:, -1, :, :]                       # (B, N, d_model)
-        modes = self.mode_unfuser(token)             # (B, N, M, d_pm)
-        # Decoder graph mixer expects a (B, T, N, M, d_pm) shape — unsqueeze a length-1 T axis.
-        modes = self.decoder_mixer_pre(modes.unsqueeze(1), node_emb).squeeze(1)
-        out = self.head(modes)                       # (B, N, M, H)
-        return out.permute(0, 3, 1, 2).contiguous()  # (B, H, N, M)
+        # Query-based multi-horizon decode: one token per forecast step (B, H, N, d_model),
+        # so cross-modal signal is realized at every horizon (not shared from x[:, -1]).
+        tokens = self.horizon_decoder(x)             # (B, H, N, d_model)
+        modes = self.mode_unfuser(tokens)            # (B, H, N, M, d_pm)
+        # Decoder graph mixer treats the H axis like the T axis of a (B, T, N, M, d_pm) input.
+        modes = self.decoder_mixer_pre(modes, node_emb)
+        out = self.head(modes)                       # (B, H, N, M)
+        return out.contiguous()                      # (B, H, N, M)

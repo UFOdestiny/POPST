@@ -191,6 +191,11 @@ def masked_quantile(y_lower, y_middle, y_upper, y_true,
 # Metric registry  (function, call-kind)
 # ---------------------------------------------------------------------------
 
+def _passthrough_scalar(preds, labels, null, value):
+    """Identity metric: records a scalar the caller already computed."""
+    return value
+
+
 _REGISTRY = {
     "MAE":      (masked_mae,      "basic"),
     "MSE":      (masked_mse,      "basic"),
@@ -204,7 +209,25 @@ _REGISTRY = {
     "COV":      (masked_coverage, "interval_target"),
     "IS":       (masked_IS,       "interval_target"),
     "Quantile": (masked_quantile, "quantile"),
+    # Generic escape hatch: an engine with its own loss formula (e.g. a
+    # model-specific NLL) computes the scalar itself and reports it via
+    # ``compute_one_batch(..., value=loss_tensor)``.  Registering it under a
+    # fixed name lets ``loss_fn="NLL"`` drive early-stopping / best-checkpoint
+    # selection off that custom loss through the same Metrics machinery as any
+    # built-in metric, without every custom-loss model needing its own
+    # early-stop plumbing.
+    "NLL":      (_passthrough_scalar, "scalar"),
 }
+
+
+def register_metric(name, fn, kind):
+    """Register an additional custom metric under its own name (rather than
+    reusing the generic ``"NLL"`` passthrough above) — e.g. if two custom-loss
+    models need their values tracked side by side under distinct labels. Call
+    once at import time in the engine module, before any :class:`Metrics`
+    instance is constructed with that name.
+    """
+    _REGISTRY[name] = (fn, kind)
 
 
 def _dispatch(fn, kind, preds, labels, null, kw):
@@ -223,6 +246,8 @@ def _dispatch(fn, kind, preds, labels, null, kw):
             q_lower=kw.get("q_lower", 0.05),
             q_upper=kw.get("q_upper", 0.95),
         )
+    if kind == "scalar":
+        return fn(preds, labels, null, kw["value"])
     raise ValueError(f"Unknown metric kind: {kind}")
 
 

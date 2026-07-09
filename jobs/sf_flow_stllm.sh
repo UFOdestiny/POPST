@@ -36,7 +36,7 @@ YEARS=(
 )
 
 MODELS=(
-    stllm stllm2 stllm3 stllm4 stllm5 
+    # stllm stllm2 stllm3 stllm4 stllm5 
     stllm6 stllm7 stllm8 stllm9
 )
 

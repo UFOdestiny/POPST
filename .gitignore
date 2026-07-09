@@ -68,5 +68,5 @@ slurm-*.out
 .env.*
 
 # Claude
-.claude
+.claude*
 CLAUDE*

@@ -185,6 +185,69 @@ class PerModeHead(nn.Module):
         return torch.einsum("bnmd,mdh->bnmh", x, self.weight) + self.bias
 
 
+class PerModeReadout(nn.Module):
+    """Per-mode scalar readout for already horizon-specific tokens.
+
+    Input (B, H, N, M, d_pm) -> (B, H, N, M): one linear map per mode, shared over
+    horizon steps (the per-step info lives in the token from HorizonQueryDecoder).
+    """
+
+    def __init__(self, num_modes, d_pm):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(num_modes, d_pm))
+        self.bias = nn.Parameter(torch.zeros(num_modes))
+        nn.init.normal_(self.weight, std=0.02)
+
+    def forward(self, x):
+        return torch.einsum("bhnmd,md->bhnm", x, self.weight) + self.bias
+
+
+class HorizonQueryDecoder(nn.Module):
+    """Query-based multi-horizon decoder (see crossmode_availability.ipynb).
+
+    The old decoder read only the last encoder step (``x[:, -1]``) and shared that
+    single token across all forecast steps, so long-horizon cross-modal availability
+    was never realized. Here each forecast step owns a learned step embedding that (a)
+    modulates a query cross-attending over the *entire* encoded sequence and (b) is
+    added directly to the output token, so every horizon step gets its own
+    representation and cross-modal signal propagates to all steps. A last-step residual
+    keeps h=1 close to the original behaviour.
+    """
+
+    def __init__(self, d_model, horizon, num_heads, dropout=0.1):
+        super().__init__()
+        self.horizon = horizon
+        if d_model % num_heads != 0:
+            num_heads = 1
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.step_emb = nn.Parameter(torch.empty(horizon, d_model))
+        nn.init.normal_(self.step_emb, std=0.02)
+        self.norm = RMSNorm(d_model)
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x: (B, T, N, d_model) -> (B, H, N, d_model).
+        B, T, N, D = x.shape
+        H, hd, nh = self.horizon, self.head_dim, self.num_heads
+        seq = x.permute(0, 2, 1, 3).reshape(B * N, T, D)
+        seq_n = self.norm(seq)
+        q_in = seq_n[:, -1:, :] + self.step_emb.unsqueeze(0)     # (BN, H, D)
+        q = self.q_proj(q_in).view(B * N, H, nh, hd).transpose(1, 2)
+        k = self.k_proj(seq_n).view(B * N, T, nh, hd).transpose(1, 2)
+        v = self.v_proj(seq_n).view(B * N, T, nh, hd).transpose(1, 2)
+        attn = F.softmax((q @ k.transpose(-2, -1)) * self.scale, dim=-1)
+        attn = self.dropout(attn)
+        ctx = (attn @ v).transpose(1, 2).reshape(B * N, H, D)
+        tokens = self.out_proj(ctx) + seq[:, -1:, :] + self.step_emb.unsqueeze(0)
+        return tokens.view(B, N, H, D).permute(0, 2, 1, 3).contiguous()
+
+
 class CrossModeAttention(nn.Module):
     """Context-conditional multi-head self-attention across modes.
 
@@ -317,8 +380,9 @@ class STLLM(BaseModel):
             [STLLM6Block(d_model, num_heads, d_ff, self.seq_len, dropout) for _ in range(num_layers)]
         )
 
+        self.horizon_decoder = HorizonQueryDecoder(d_model, self.horizon, num_heads, dropout)
         self.mode_unfuser = ModeUnfuser(self.num_modes, d_pm, d_model)
-        self.head = PerModeHead(self.num_modes, d_pm, self.horizon)
+        self.head = PerModeReadout(self.num_modes, d_pm)
         self._init_weights()
 
     def _init_weights(self):
@@ -352,9 +416,10 @@ class STLLM(BaseModel):
         for block in self.blocks:
             x = block(x)
 
-        # Decode the last step in per-mode subspace with another cross-mode mixer.
-        token = x[:, -1, :, :]               # (B, N, d_model)
-        modes = self.mode_unfuser(token)     # (B, N, M, d_pm)
+        # Query-based multi-horizon decode: one token per forecast step, so cross-mode
+        # signal is realized at every horizon rather than shared from x[:, -1].
+        tokens = self.horizon_decoder(x)     # (B, H, N, d_model)
+        modes = self.mode_unfuser(tokens)    # (B, H, N, M, d_pm)
         modes = self.decoder_mixer(modes, node_emb)
-        out = self.head(modes)               # (B, N, M, H)
-        return out.permute(0, 3, 1, 2).contiguous()  # (B, H, N, M)
+        out = self.head(modes)               # (B, H, N, M)
+        return out.contiguous()              # (B, H, N, M)

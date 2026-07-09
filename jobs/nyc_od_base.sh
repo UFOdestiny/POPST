@@ -24,15 +24,30 @@ SRC=$BASE/src/od
 PORJ=NYC_OD
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 8 --dataset nyc_manhattan_od_15min --proj $PORJ --years 2025"
+ARGS="--bs 64 --dataset nyc_manhattan_od_15min_fhv --proj $PORJ --years 2025_12to1"
 
 # MODELS=(
 #     stgcn
 # )
 MODELS=(
-    agcrn astgcn gmel gwnet ha hl hmdlf lstm odmixer stgcn stgode sttn stzinb
+    pdr stzinb agcrn astgcn gmel gwnet ha hl hmdlf lstm odmixer stgcn stgode sttn
 )
 
+for m in "${MODELS[@]}"; do
+    echo "=== Running $m ==="
+    python3 $SRC/$m/main.py $ARGS 2>&1 | tee $LOG/${m}.log
+    echo "$m finished with exit code $?"
+done
+
+
+ARGS="--bs 64 --dataset nyc_manhattan_od_15min_taxi --proj $PORJ --years 2025_12to1"
+for m in "${MODELS[@]}"; do
+    echo "=== Running $m ==="
+    python3 $SRC/$m/main.py $ARGS 2>&1 | tee $LOG/${m}.log
+    echo "$m finished with exit code $?"
+done
+
+ARGS="--bs 64 --dataset nyc_manhattan_od_15min_bike --proj $PORJ --years 2025_12to1"
 for m in "${MODELS[@]}"; do
     echo "=== Running $m ==="
     python3 $SRC/$m/main.py $ARGS 2>&1 | tee $LOG/${m}.log

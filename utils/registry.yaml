@@ -36,3 +36,43 @@ dc_od_60min:
 sf_od_15min:
   data: sf_od_15min
   adj: sf_od_15min/sf.npy
+
+nyc_manhattan_od_15min_fhv:
+  data: nyc_manhattan_od_15min_fhv
+  adj: nyc_manhattan_od_15min_fhv/manhattan.npy
+
+nyc_manhattan_od_15min_taxi:
+  data: nyc_manhattan_od_15min_taxi
+  adj: nyc_manhattan_od_15min_taxi/manhattan.npy
+
+nyc_manhattan_od_15min_bike:
+  data: nyc_manhattan_od_15min_bike
+  adj: nyc_manhattan_od_15min_bike/manhattan.npy
+
+chicago_od_15min_taxi:
+  data: chicago_od_15min_taxi
+  adj: chicago_od_15min_taxi/chicago.npy
+
+chicago_od_15min_tnp:
+  data: chicago_od_15min_tnp
+  adj: chicago_od_15min_tnp/chicago.npy
+
+chicago_od_15min_bike:
+  data: chicago_od_15min_bike
+  adj: chicago_od_15min_bike/chicago.npy
+
+dc_od_60min_taxi:
+  data: dc_od_60min_taxi
+  adj: dc_od_60min_taxi/dc.npy
+
+dc_od_60min_bike:
+  data: dc_od_60min_bike
+  adj: dc_od_60min_bike/dc.npy
+
+sf_od_15min_taxi:
+  data: sf_od_15min_taxi
+  adj: sf_od_15min_taxi/sf.npy
+
+sf_od_15min_bike:
+  data: sf_od_15min_bike
+  adj: sf_od_15min_bike/sf.npy

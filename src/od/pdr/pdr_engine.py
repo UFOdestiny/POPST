@@ -1,39 +1,77 @@
 import torch
 
 from base.engine import BaseEngine_OD
-from base.metrics import zinb_mean, zinb_nll
+from base.metrics import get_mask
 
 
-class STZINB_Engine(BaseEngine_OD):
-    """Engine for STZINB (zero-inflated negative binomial OD demand;
-    Zhuang et al., KDD'21 — https://github.com/ZhuangDingyi/STZINB).
+def zinb_mean(n, p, pi):
+    """Point prediction (expected value) of the zero-inflated NB, verbatim
+    from ``ZINB/od_experiment_utils.py``."""
+    p = p.clamp(1e-6, 1.0 - 1e-6)
+    pi = pi.clamp(1e-6, 1.0 - 1e-6)
+    return (1.0 - pi) * n * (1.0 - p) / p
+
+
+def zinb_nll(y, n, p, pi, null_val=float("nan")):
+    """Zero-Inflated Negative Binomial negative log-likelihood, ported verbatim
+    from ``ZINB/od_experiment_utils.py`` (the PDR-ZINB prototype's own loss),
+    with NaN-masking added so it plugs into this framework's OD data (which
+    may mark invalid cells with NaN, unlike the standalone prototype).
+
+    Uses ``torch.logaddexp`` for the zero-count term
+    ``log(pi + (1-pi)*p**n) = logaddexp(log(pi), log1p(-pi) + n*log(p))``
+    rather than ``log(pi + (1-pi)*exp(...) + eps)`` — numerically more stable
+    for very negative ``n*log(p)``.
+    """
+    mask = get_mask(y, null_val)
+    p = p.clamp(1e-6, 1.0 - 1e-6)
+    pi = pi.clamp(1e-6, 1.0 - 1e-6)
+    n = n.clamp_min(1e-6)
+    y = torch.clamp(y, min=0.0)
+
+    nb_log_prob = (
+        torch.lgamma(n + y)
+        - torch.lgamma(y + 1.0)
+        - torch.lgamma(n)
+        + n * torch.log(p)
+        + y * torch.log1p(-p)
+    )
+    zero_log_prob = torch.logaddexp(torch.log(pi), torch.log1p(-pi) + nb_log_prob)
+    nonzero_log_prob = torch.log1p(-pi) + nb_log_prob
+    log_prob = torch.where(y == 0.0, zero_log_prob, nonzero_log_prob)
+
+    nll = -log_prob
+    count = mask.sum()
+    if count == 0:
+        return torch.tensor(0.0, device=nll.device)
+    out = nll * mask
+    out = torch.where(torch.isnan(out), torch.zeros_like(out), out)
+    return out.sum() / count
+
+
+class PDR_Engine(BaseEngine_OD):
+    """Engine for PDR (PDR-ZINB: zero-inflated negative binomial OD demand),
+    ported from the standalone ``ZINB/main_pdr_zinb_od.py`` /
+    ``test_pdr_zinb_od.py`` prototype.
 
     The model returns the distribution parameters ``(n, p, pi)`` rather than a
     point tensor.  This engine:
 
-      * trains on the ZINB negative log-likelihood (:func:`base.metrics.zinb_nll`),
-        computed in the original count space, so labels are inverse-transformed
-        first — the ``n``/``p``/``pi`` *parameters themselves are never
-        inverse-transformed*, only the count labels are (the official repo's
-        ``nb_zeroinflated_nll_loss`` likewise takes the raw model outputs
-        as-is);
-      * reports the standard point metrics (MAE / RMSE / MAPE) against the ZINB
-        mean ``E[y] = (1-pi)·n·(1-p)/p`` (:func:`base.metrics.zinb_mean`),
-        computed in count space and then inverse-transformed back only once
-        for the reported metric — matching how the official repo derives its
-        expectation from the raw ``n, p, pi``;
+      * trains on the ZINB negative log-likelihood defined in this module
+        (ported verbatim from ``ZINB/od_experiment_utils.py``), computed in
+        the original count space — only the count labels are
+        inverse-transformed, never the ``n``/``p``/``pi`` model outputs;
+      * reports point metrics (MAE / RMSE / MAPE) against the ZINB mean
+        ``E[y] = (1-pi)·n·(1-p)/p``, likewise ported verbatim;
       * drives early-stopping / best-checkpoint selection off the validation
-        NLL itself (``loss_fn="NLL"``, see :func:`base.metrics.register_metric`'s
-        generic passthrough), exactly as the official training script picks
-        its best checkpoint by validation NLL, not a point metric.
+        NLL itself (``loss_fn="NLL"``), matching the prototype's own
+        best-checkpoint-by-val-loss behaviour.
 
     Everything else (checkpointing, per-horizon test aggregation, export) is
-    inherited from :class:`BaseEngine_OD`.
+    inherited from :class:`base.engine.BaseEngine_OD`.
     """
 
     def _to_counts(self, tensor):
-        """Inverse-transform a tensor to the original count space when the data
-        was normalised; the ZINB likelihood is defined over raw counts."""
         if self._normalize:
             tensor = self._inverse_transform(tensor, device=self._device.type)
         return tensor
@@ -55,15 +93,9 @@ class STZINB_Engine(BaseEngine_OD):
             X, label = self._prepare_batch([X, label])
 
             n, p, pi = self.model(X)
-            # ZINB likelihood lives in the original count space; only the
-            # label is inverse-transformed (n/p/pi are model outputs fit
-            # directly against count-space labels, so zinb_mean(n,p,pi) is
-            # already in count space and must not be inverse-transformed
-            # again).
             label_c = self._to_counts(label)
-            loss = zinb_nll(n, p, pi, label_c, null_val=mask_value)
+            loss = zinb_nll(label_c, n, p, pi, null_val=mask_value)
 
-            # Track point metrics against the ZINB mean for monitoring.
             with torch.no_grad():
                 pred = zinb_mean(n, p, pi)
                 self.metric.compute_one_batch(pred, label_c, mask_value, "train", value=loss)
@@ -92,15 +124,12 @@ class STZINB_Engine(BaseEngine_OD):
             for X, label in self._dataloader[mode + "_loader"].get_iterator():
                 X, label = self._prepare_batch([X, label])
                 n, p, pi = self.model(X)
-                # zinb_mean(n, p, pi) is already in count space (n/p/pi are
-                # model outputs, not normalised data) — only the label needs
-                # inverse-transforming back to count space to match it.
                 pred = zinb_mean(n, p, pi)
                 label = self._to_counts(label)
 
                 if mode == "val":
                     mask_value = self._mask_value.to(pred.device)
-                    nll = zinb_nll(n, p, pi, label, null_val=mask_value)
+                    nll = zinb_nll(label, n, p, pi, null_val=mask_value)
                     self.metric.compute_one_batch(
                         pred, label, mask_value, "valid", value=nll
                     )
@@ -124,10 +153,10 @@ class STZINB_Engine(BaseEngine_OD):
             mask_value = torch.tensor(float("nan"))
             for i in range(self.model.horizon):
                 nll = zinb_nll(
+                    self._horizon_slice(labels, i),
                     self._horizon_slice(ns, i),
                     self._horizon_slice(ps, i),
                     self._horizon_slice(pis, i),
-                    self._horizon_slice(labels, i),
                     null_val=mask_value,
                 )
                 self.metric.compute_one_batch(
