@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=nyc_o_b
-#SBATCH --account=fsu-compsci-dept
+##SBATCH --account=fsu-compsci-dept
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=dy23a@fsu.edu
 #SBATCH --nodes=1
@@ -30,7 +30,8 @@ ARGS="--bs 64 --dataset nyc_manhattan_od_15min_fhv --proj $PORJ --years 2025_12t
 #     stgcn
 # )
 MODELS=(
-    pdr stzinb agcrn astgcn gmel gwnet ha hl hmdlf lstm odmixer stgcn stgode sttn
+    pdr pdr_v2 pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe
+    # stzinb agcrn astgcn gmel gwnet ha hl hmdlf lstm odmixer stgcn stgode sttn
 )
 
 for m in "${MODELS[@]}"; do

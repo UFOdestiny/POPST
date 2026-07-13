@@ -423,6 +423,7 @@ if __name__ == "__main__":
 
     args.result="/home/dy23a.fsu/st/result"
     args.proj=["2025_12to1","2025_12to3","2025_12to6","2025_12to9","2025_12to12"]
+    args.proj=["Chi_OD","NYC_OD"]
 
     if args.log:
         summarize_log(args.log)
