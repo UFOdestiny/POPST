@@ -1,450 +1,352 @@
 #!/usr/bin/env python3
-"""Result collection and analysis for POPST experiments.
+"""Print one model-by-metric result table for each configured dataset.
 
-Reads log files from result directories, extracts metrics, efficiency data,
-and training statistics, then formats them into comparison tables.
+Edit only the configuration block below, then run::
 
-Usage:
-    python utils/res.py --path result/Test
-    python utils/res.py --log result/Test/STGCN/nyc_mobility/2026-04-16.log
+    python utils/res.py
+
+Expected result layout::
+
+    RESULT_ROOT / project / model / dataset / *.log
 """
 
-import os
-import glob
+from pathlib import Path
 import re
-import argparse
+
 import pandas as pd
-from pandas.api.types import CategoricalDtype
-from datetime import datetime
 
 
-# ---------------------------------------------------------------------------
-# Log file selection
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Configuration
+# =============================================================================
 
-def get_log(folder_path, select_metric=None):
-    """Get the best or most recent log file from a folder.
+RESULT_ROOT = Path("/home/dy23a.fsu/st/result")
 
-    Args:
-        folder_path: Path to the log folder
-        select_metric: If specified, return the log file with the lowest value
-                       for this metric; otherwise return the most recent log file
-    """
-    log_files = glob.glob(os.path.join(folder_path, "*.log"))
-    if not log_files:
-        return None
+# Projects are searched from left to right for every model/dataset pair.
+PROJECTS = ["Chi_OD", "NYC_OD", "DC_OD", "SF_OD"]
 
-    if select_metric is None:
-        return max(log_files, key=os.path.getmtime)
+DATASETS = [
+    "chicago_od_15min_taxi",
+    "chicago_od_15min_tnp",
+    "chicago_od_15min_bike",
+    "nyc_manhattan_od_15min_taxi",
+    "nyc_manhattan_od_15min_fhv",
+    "nyc_manhattan_od_15min_bike",
+    "dc_od_60min_taxi",
+    "dc_od_60min_bike",
+    "sf_od_15min_taxi",
+    "sf_od_15min_bike",
+]
 
-    best_log, best_value = None, float("inf")
-    for log_file in log_files:
-        res = read_log(log_file)
-        if res is None:
-            continue
-        m = dict(re.findall(r"(\w+): ([\-\d\.]+)", res))
-        if select_metric in m:
-            try:
-                value = float(m[select_metric])
-                if value < best_value:
-                    best_value = value
-                    best_log = log_file
-            except ValueError:
-                continue
+# Names must match model directories under result/<project>/.
+MODELS = [
+    "PDR",
+    "PDR_v2",
+    "PDR_no_context",
+    "PDR_no_zone_embed",
+    "PDR_no_spatial",
+    "PDR_no_moe",
+    "STZINB",
+    "AGCRN_OD",
+    "ASTGCN_OD",
+    "GMEL",
+    "GWNET_OD",
+    "HA_OD",
+    "HL_OD",
+    "HMDLF",
+    "LSTM_OD",
+    "ODMixer",
+    "STGCN_OD",
+    "STGODE_OD",
+    "STTN",
+]
 
-    return best_log if best_log else max(log_files, key=os.path.getmtime)
+# Complete result metric set registered by base/metrics.py.
+RESULT_METRICS = [
+    # "NLL",
+    # "MGAU",
+    # "Quantile",
+    "MSE",
+    "MAE",
+    "MAPE",
+    "RMSE",
+    # "KL",
+    # "CRPS",
+    # "MPIW",
+    # "WINK",
+    # "COV",
+    # "IS",
+]
+
+# Numeric fields written by base/efficiency.py. Units are encoded in names;
+# FLOPs is normalized to an absolute operation count regardless of log unit.
+EFFICIENCY_METRICS = [
+    "Params",
+    # "Trainable_params",
+    "CPU_memory_MB",
+    "Inference_ms",
+    # "Inference_std_ms",
+    # "Full_test_s",
+    # "Test_batches",
+    "GPU_peak_MB",
+    # "GPU_reserved_MB",
+    # "GPU_current_MB",
+    "FLOPs",
+    # "GPU_total_GB",
+    # "System_RAM_GB",
+]
+
+# Used both as the complete selectable list and as the preferred order for
+# automatically discovered result + efficiency columns.
+ALL_METRICS = RESULT_METRICS + EFFICIENCY_METRICS
+
+# None: include every metric found in the selected result logs.
+# A list: include only those columns, e.g. ["MAE", "MAPE", "RMSE"].
+# ALL_METRICS: show the complete framework metric set, including empty columns.
+METRICS = ALL_METRICS # None
+
+# How to choose when one model/dataset directory contains multiple logs:
+#   "best"   -> lowest BEST_METRIC (default)
+#   "latest" -> most recently modified log
+LOG_SELECTION = "best"
+BEST_METRIC = "MAE"
+
+# Set to a metric name (for example "MAE") to rank table rows, or None to
+# preserve MODELS order. Missing models are always placed last.
+SORT_BY = None
+
+DECIMALS = 3
+OUTPUT_FILE = RESULT_ROOT / "res.txt"  # Set to None to disable file output.
 
 
-# ---------------------------------------------------------------------------
-# Log parsing
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Parsing and table generation
+# =============================================================================
 
-def read_log(log_path):
-    """Read the Average line metrics from a log file."""
-    with open(log_path) as f:
-        for line in reversed(f.readlines()):
-            if " - Average:" in line:
-                return line[line.index(" - Average:") + 3:]
-    return None
+AVERAGE_RE = re.compile(r"Average:\s*(.*)")
+METRIC_RE = re.compile(
+    r"([A-Za-z][A-Za-z0-9_]*)\s*:\s*"
+    r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
+)
+
+NUMBER = r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
 
 
-def _parse_efficiency(log_path):
-    """Parse the Efficiency section from a log file.
+def parse_average(log_path):
+    """Return metrics from the last ``Average:`` line in a log."""
+    average = None
+    with log_path.open(errors="ignore") as log_file:
+        for line in log_file:
+            match = AVERAGE_RE.search(line)
+            if match:
+                average = {
+                    name: float(value)
+                    for name, value in METRIC_RE.findall(match.group(1))
+                }
+    return average
 
-    Returns a dict with keys like 'gpu_peak_mb', 'cpu_rss_mb',
-    'inference_ms', 'full_test_s', 'flops', 'total_params', etc.
-    """
-    result = {}
+
+def parse_efficiency(log_path):
+    """Return all numeric fields from the log's Efficiency section."""
+    values = {}
     in_efficiency = False
 
-    with open(log_path) as f:
-        for line in f:
+    with log_path.open(errors="ignore") as log_file:
+        for line in log_file:
             if "Efficiency" in line and "===" in line:
                 in_efficiency = True
                 continue
-            if in_efficiency and "===" in line and "Efficiency" not in line:
+            if in_efficiency and "===" in line:
                 break
             if not in_efficiency:
                 continue
 
-            line = line.strip()
-            # Remove timestamp prefix if present
-            if " - " in line:
-                line = line[line.index(" - ") + 3:].strip()
-
-            if "GPU Peak Allocated" in line:
-                result["gpu_peak_mb"] = _extract_float(line)
-            elif "GPU Peak Reserved" in line:
-                result["gpu_reserved_mb"] = _extract_float(line)
-            elif "GPU Current Allocated" in line:
-                result["gpu_current_mb"] = _extract_float(line)
-            elif "CPU Memory (RSS)" in line:
-                result["cpu_rss_mb"] = _extract_float(line)
-            elif "Total Parameters" in line:
-                result["total_params"] = _extract_int(line)
+            if "Total Parameters" in line:
+                match = re.search(r"Total Parameters\s*:\s*([\d,]+)", line)
+                if match:
+                    values["Params"] = float(match.group(1).replace(",", ""))
             elif "Trainable Parameters" in line:
-                result["trainable_params"] = _extract_int(line)
-            elif "Inference (1 batch)" in line:
-                m = re.search(r"([\d.]+)\s*±\s*([\d.]+)\s*ms", line)
-                if m:
-                    result["inference_ms"] = float(m.group(1))
-                    result["inference_std_ms"] = float(m.group(2))
-            elif "Full Test Inference" in line:
-                m = re.search(r"([\d.]+)\s*s\s*\((\d+)\s*batches\)", line)
-                if m:
-                    result["full_test_s"] = float(m.group(1))
-                    result["test_batches"] = int(m.group(2))
+                match = re.search(r"Trainable Parameters\s*:\s*([\d,]+)", line)
+                if match:
+                    values["Trainable_params"] = float(
+                        match.group(1).replace(",", "")
+                    )
+            elif "CPU Memory (RSS)" in line:
+                match = re.search(rf"CPU Memory \(RSS\)\s*:\s*{NUMBER}\s*MB", line)
+                if match:
+                    values["CPU_memory_MB"] = float(match.group(1))
+            elif "Inference (1 batch)" in line and "N/A" not in line:
+                match = re.search(rf":\s*{NUMBER}\s*±\s*{NUMBER}\s*ms", line)
+                if match:
+                    values["Inference_ms"] = float(match.group(1))
+                    values["Inference_std_ms"] = float(match.group(2))
+            elif "Full Test Inference" in line and "N/A" not in line:
+                match = re.search(rf":\s*{NUMBER}\s*s\s*\((\d+)\s*batches\)", line)
+                if match:
+                    values["Full_test_s"] = float(match.group(1))
+                    values["Test_batches"] = float(match.group(2))
+            elif "GPU Peak Allocated" in line:
+                match = re.search(rf":\s*{NUMBER}\s*MB", line)
+                if match:
+                    values["GPU_peak_MB"] = float(match.group(1))
+            elif "GPU Peak Reserved" in line:
+                match = re.search(rf":\s*{NUMBER}\s*MB", line)
+                if match:
+                    values["GPU_reserved_MB"] = float(match.group(1))
+            elif "GPU Current Allocated" in line:
+                match = re.search(rf":\s*{NUMBER}\s*MB", line)
+                if match:
+                    values["GPU_current_MB"] = float(match.group(1))
             elif "FLOPs" in line and "N/A" not in line:
-                m = re.search(r"([\d.]+)\s*(T|G|M|)FLOPs", line)
-                if m:
-                    val = float(m.group(1))
-                    unit = m.group(2)
-                    multiplier = {"T": 1e12, "G": 1e9, "M": 1e6, "": 1}
-                    result["flops"] = val * multiplier[unit]
-                    result["flops_str"] = f"{m.group(1)} {unit}FLOPs"
-            elif "GPU Memory" in line and "GB" in line:
-                result["gpu_total_gb"] = _extract_float(line)
-            elif re.search(r"^\s*GPU\s*:", line) and "Peak" not in line and "Current" not in line and "Reserved" not in line:
-                name = line.split(":")[-1].strip()
-                if name and "MB" not in name and "GB" not in name:
-                    result["gpu_name"] = name
-            elif "CUDA Version" in line:
-                result["cuda_version"] = line.split(":")[-1].strip()
+                match = re.search(rf":\s*{NUMBER}\s*([TGMK]?)FLOPs", line)
+                if match:
+                    scale = {"": 1, "K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}
+                    values["FLOPs"] = float(match.group(1)) * scale[match.group(2)]
+            elif "GPU Memory" in line:
+                match = re.search(rf":\s*{NUMBER}\s*GB", line)
+                if match:
+                    values["GPU_total_GB"] = float(match.group(1))
+            elif "System RAM" in line:
+                match = re.search(rf":\s*{NUMBER}\s*GB", line)
+                if match:
+                    values["System_RAM_GB"] = float(match.group(1))
 
-    return result
+    return values
 
 
-def _extract_float(line):
-    """Extract the last float from a line."""
-    m = re.findall(r"[\d.]+", line)
-    return float(m[-1]) if m else 0.0
-
-
-def _extract_int(line):
-    """Extract integer from a line (handles comma-separated numbers)."""
-    m = re.search(r"[\d,]+", line.split(":")[-1])
-    return int(m.group().replace(",", "")) if m else 0
-
-
-def _parse_training_epochs(log_path):
-    """Parse all training epoch lines and return a list of dicts.
-
-    Each dict has keys like 'epoch', 'tr_mae', 'v_mae', 'te_mae',
-    'tr_time', 'v_time', 'te_time', 'lr', etc.
-    """
-    epochs = []
-    with open(log_path) as f:
-        for line in f:
-            if " - Epoch: " not in line:
-                continue
-            # Strip timestamp prefix
-            content = line[line.index(" - Epoch:") + 3:]
-            m = re.search(r"Epoch:\s*(\d+)", content)
-            if not m:
-                continue
-            epoch_data = {"epoch": int(m.group(1))}
-
-            # Parse all "Key: Value" pairs from content after timestamp
-            for key, val in re.findall(r"(\w[\w ]*?):\s*([\d.eE+-]+)", content):
-                key_clean = key.strip().lower().replace(" ", "_")
-                try:
-                    epoch_data[key_clean] = float(val)
-                except ValueError:
-                    pass
-
-            # Parse timing
-            for prefix, skey in [("Tr Time", "tr_time_s"), ("V Time", "v_time_s"), ("Te Time", "te_time_s")]:
-                tm = re.search(rf"{prefix}:\s*([\d.]+)\s*s", content)
-                if tm:
-                    epoch_data[skey] = float(tm.group(1))
-
-            # Parse LR
-            lr_m = re.search(r"LR:\s*([\d.eE+-]+)", content)
-            if lr_m:
-                epoch_data["lr"] = float(lr_m.group(1))
-
-            epochs.append(epoch_data)
-    return epochs
-
-
-def get_time(log_path):
-    """Get total training time (seconds from Log File Path to Average)."""
-    with open(log_path) as f:
-        t1 = None
-        for line in f:
-            if " - Log File Path:" in line:
-                t1 = line[:19]
-            elif " - Average:" in line and t1:
-                return seconds_between(t1, line[:19])
-    return None
-
-
-def get_avg_time(log_path):
-    """Get average training time per epoch (seconds)."""
-    epochs = _parse_training_epochs(log_path)
-    if not epochs:
+def parse_result(log_path):
+    """Combine predictive metrics and efficiency metrics from one log."""
+    values = parse_average(log_path)
+    if values is None:
         return None
-    total_time = sum(e.get("tr_time_s", 0) for e in epochs)
-    return total_time / len(epochs)
+    values.update(parse_efficiency(log_path))
+    return values
 
 
-def get_parameter(log_path):
-    """Get the number of model parameters (in thousands)."""
-    eff = _parse_efficiency(log_path)
-    if eff.get("total_params"):
-        return f"{eff['total_params'] / 1000:.1f}"
-    return "0"
+def select_log(folder):
+    """Select one log according to LOG_SELECTION."""
+    logs = list(folder.glob("*.log"))
+    if not logs:
+        return None, None
+
+    if LOG_SELECTION == "latest":
+        log = max(logs, key=lambda path: path.stat().st_mtime)
+        return log, parse_result(log)
+
+    if LOG_SELECTION != "best":
+        raise ValueError(
+            f"LOG_SELECTION must be 'best' or 'latest', got {LOG_SELECTION!r}"
+        )
+
+    candidates = []
+    for log in logs:
+        values = parse_result(log)
+        if values is not None and BEST_METRIC in values:
+            candidates.append((values[BEST_METRIC], log, values))
+
+    if candidates:
+        _, log, values = min(candidates, key=lambda item: item[0])
+        return log, values
+
+    log = max(logs, key=lambda path: path.stat().st_mtime)
+    return log, parse_result(log)
 
 
-def get_memory_stats(log_path):
-    """Get GPU and CPU memory usage in MB.
-
-    Returns (gpu_peak_mb, cpu_rss_mb).
-    """
-    eff = _parse_efficiency(log_path)
-    return int(eff.get("gpu_peak_mb", 0)), int(eff.get("cpu_rss_mb", 0))
-
-
-def seconds_between(t1: str, t2: str) -> int:
-    """Calculate the number of seconds between two time strings."""
-    fmt = "%Y-%m-%d %H:%M:%S"
-    return int(
-        abs((datetime.strptime(t2, fmt) - datetime.strptime(t1, fmt)).total_seconds())
-    )
+def find_result(model, dataset):
+    """Find one configured result, respecting PROJECTS search order."""
+    for project in PROJECTS:
+        folder = RESULT_ROOT / project / model / dataset
+        log, values = select_log(folder)
+        if log is not None and values is not None:
+            return project, log, values
+    return None, None, None
 
 
-# ---------------------------------------------------------------------------
-# Result collection
-# ---------------------------------------------------------------------------
+def discover_metrics():
+    """Return the union of metrics in all selected configured result logs."""
+    discovered = []
+    for dataset in DATASETS:
+        for model in MODELS:
+            _, _, values = find_result(model, dataset)
+            if values:
+                for metric in values:
+                    if metric not in discovered:
+                        discovered.append(metric)
 
-def collect_results(names, datasets, metrics, path, select_metric=None):
-    """Collect results for all models across all datasets.
+    known = [metric for metric in ALL_METRICS if metric in discovered]
+    custom = [metric for metric in discovered if metric not in ALL_METRICS]
+    return known + custom
 
-    Returns a list of row dicts with model name, dataset, metrics, and
-    efficiency data.
-    """
+
+def dataset_table(dataset, metrics):
+    """Build a table whose rows are models and columns are metrics."""
     rows = []
-    for name in names:
-        for dataset in datasets:
-            log = get_log(f"{path}/{name}/{dataset}", select_metric)
-            if not log:
-                continue
-            res = read_log(log)
-            if res is None:
-                continue
+    projects_found = []
 
-            row = {"Dataset": dataset, "Model": name}
+    for order, model in enumerate(MODELS):
+        project, _, values = find_result(model, dataset)
+        row = {"Model": model, "_order": order}
+        for metric in metrics:
+            row[metric] = values.get(metric) if values else None
+        rows.append(row)
+        if project and project not in projects_found:
+            projects_found.append(project)
 
-            # Test metrics
-            m = {
-                k: v for k, v in re.findall(r"(\w+): ([\-\d\.]+)", res) if k in metrics
-            }
-            row.update(m)
+    table = pd.DataFrame(rows)
+    if SORT_BY:
+        if SORT_BY not in metrics:
+            raise ValueError(f"SORT_BY={SORT_BY!r} is not included in table metrics")
+        table = table.sort_values(
+            [SORT_BY, "_order"], na_position="last", kind="stable"
+        )
+    else:
+        table = table.sort_values("_order")
 
-            # Efficiency
-            eff = _parse_efficiency(log)
-            gpu_mem, cpu_mem = get_memory_stats(log)
-            row.update({
-                "time": get_time(log),
-                "avg_time": get_avg_time(log),
-                "param_K": get_parameter(log),
-                "GPU_MB": gpu_mem,
-                "CPU_MB": cpu_mem,
-                "inference_ms": eff.get("inference_ms", ""),
-                "flops": eff.get("flops_str", ""),
-            })
-            rows.append(row)
-    return rows
+    table = table.drop(columns="_order").set_index("Model")
+    return table, projects_found
 
 
-def print_df(names, datasets, metrics, path, select_metric=None, title=None):
-    """Print a results DataFrame.
-
-    Args:
-        names: List of model names
-        datasets: List of datasets
-        metrics: List of metrics to collect
-        path: Results path
-        select_metric: Metric for selecting the best log
-        title: Optional title for the table
-    """
-    if title:
-        print(f"\n{'='*60}")
-        print(f"  {title}")
-        print(f"{'='*60}")
-
-    cat_type = CategoricalDtype(categories=names, ordered=True)
-    rows = collect_results(names, datasets, metrics, path, select_metric)
-    if not rows:
-        print(f"  No results found in {path}")
-        return
-
-    df = pd.DataFrame(rows)
-    df["Model"] = df["Model"].astype(cat_type)
-    df_sorted = df.sort_values(by=["Dataset", "Model"])
-    print(df_sorted.to_string(index=False))
-    print()
-
-
-# ---------------------------------------------------------------------------
-# Standalone log summary
-# ---------------------------------------------------------------------------
-
-def summarize_log(log_path):
-    """Print a detailed summary of a single log file."""
-    print(f"\n{'='*60}")
-    print(f"  Log: {os.path.basename(log_path)}")
-    print(f"{'='*60}")
-
-    # Test results
-    res = read_log(log_path)
-    if res:
-        print(f"\n  Test Results: {res.strip()}")
-
-    # Efficiency
-    eff = _parse_efficiency(log_path)
-    if eff:
-        print("\n  Efficiency:")
-        if "gpu_name" in eff:
-            print(f"    GPU              : {eff['gpu_name']}")
-        if "total_params" in eff:
-            print(f"    Parameters       : {eff['total_params']:,}")
-        if "gpu_peak_mb" in eff:
-            print(f"    GPU Peak Memory  : {eff['gpu_peak_mb']:.0f} MB")
-        if "cpu_rss_mb" in eff:
-            print(f"    CPU Memory (RSS) : {eff['cpu_rss_mb']:.0f} MB")
-        if "inference_ms" in eff:
-            print(f"    Inference (batch): {eff['inference_ms']:.2f} ms")
-        if "full_test_s" in eff:
-            print(f"    Full Test Time   : {eff['full_test_s']:.3f} s")
-        if "flops_str" in eff:
-            print(f"    FLOPs            : {eff['flops_str']}")
-
-    # Training summary
-    epochs = _parse_training_epochs(log_path)
-    if epochs:
-        n = len(epochs)
-        total = get_time(log_path)
-        print(f"\n  Training:")
-        print(f"    Epochs           : {n}")
-        if total:
-            print(f"    Total Time       : {total}s ({total/60:.1f} min)")
-        if "tr_mae" in epochs[-1]:
-            print(f"    Final Tr MAE     : {epochs[-1]['tr_mae']:.4f}")
-        if "v_mae" in epochs[-1]:
-            print(f"    Final V MAE      : {epochs[-1]['v_mae']:.4f}")
-
-    print()
-
-
-# ---------------------------------------------------------------------------
-# Auto-discovery helpers
-# ---------------------------------------------------------------------------
-
-def _discover_datasets(path):
-    """Auto-discover dataset names from a result directory."""
-    datasets = set()
-    if not os.path.isdir(path):
-        return []
-    for model_dir in os.listdir(path):
-        model_path = os.path.join(path, model_dir)
-        if os.path.isdir(model_path):
-            for ds in os.listdir(model_path):
-                ds_path = os.path.join(model_path, ds)
-                if os.path.isdir(ds_path) and glob.glob(os.path.join(ds_path, "*.log")):
-                    datasets.add(ds)
-    return sorted(datasets)
-
-
-def _discover_models(path):
-    """Auto-discover model names from a result directory."""
-    models = []
-    if not os.path.isdir(path):
-        return []
-    for name in sorted(os.listdir(path)):
-        if os.path.isdir(os.path.join(path, name)):
-            models.append(name)
-    return models
-
-
-def _discover_projs(result_root):
-    """Auto-discover project names from a result root directory."""
-    if not os.path.isdir(result_root):
-        return []
-    return sorted(
-        name for name in os.listdir(result_root)
-        if os.path.isdir(os.path.join(result_root, name))
+def format_table(dataset, table, projects):
+    project_text = ", ".join(projects) if projects else "no matching project"
+    title = f"Dataset: {dataset}  |  Project: {project_text}"
+    formatters = {
+        metric: (lambda value: f"{value:.0f}")
+        for metric in ("Params", "Trainable_params", "Test_batches")
+        if metric in table.columns
+    }
+    if "FLOPs" in table.columns:
+        formatters["FLOPs"] = lambda value: f"{value:.3e}"
+    body = table.to_string(
+        na_rep="-",
+        formatters=formatters,
+        float_format=lambda value: f"{value:.{DECIMALS}f}",
     )
+    return f"{title}\n{'=' * len(title)}\n{body}"
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+def main():
+    if not RESULT_ROOT.is_dir():
+        raise FileNotFoundError(f"Result root does not exist: {RESULT_ROOT}")
+    if not PROJECTS or not DATASETS or not MODELS:
+        raise ValueError("PROJECTS, DATASETS, and MODELS cannot be empty")
+
+    metrics = discover_metrics() if METRICS is None else list(METRICS)
+    if not metrics:
+        raise ValueError("No metrics were configured or found in result logs")
+
+    rendered = []
+    for dataset in DATASETS:
+        table, projects = dataset_table(dataset, metrics)
+        rendered.append(format_table(dataset, table, projects))
+
+    text = "\n\n".join(rendered) + "\n"
+    print(text, end="")
+
+    if OUTPUT_FILE is not None:
+        OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        OUTPUT_FILE.write_text(text)
+        print(f"\nWritten to: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="POPST result analysis")
-    parser.add_argument("--result", type=str, default=None,
-                        help="Result root directory (e.g., result/ or /home/.../result)")
-    parser.add_argument("--proj", type=str, nargs="+", default=None,
-                        help="Project name(s) under the result root (e.g., NYC_Flow Chi_Flow)")
-    parser.add_argument("--path", type=str, default=None,
-                        help="Direct result path for a single project (e.g., result/NYC_Flow)")
-    parser.add_argument("--datasets", type=str, nargs="+", default=None,
-                        help="Dataset names to include (default: auto-discover)")
-    parser.add_argument("--models", type=str, nargs="+", default=None,
-                        help="Model names to include (default: auto-discover)")
-    parser.add_argument("--log", type=str, default=None,
-                        help="Summarize a single log file")
-    parser.add_argument("--select", type=str, default="MAE",
-                        help="Metric for selecting best log (default: MAE)")
-    args = parser.parse_args()
-
-    metrics = ["MAE", "RMSE", "MAPE"]
-
-    args.result="/home/dy23a.fsu/st/result"
-    args.proj=["2025_12to1","2025_12to3","2025_12to6","2025_12to9","2025_12to12"]
-    args.proj=["Chi_OD","NYC_OD"]
-
-    if args.log:
-        summarize_log(args.log)
-    else:
-        # Build list of (proj_label, proj_path) to process
-        targets = []
-        if args.result:
-            projs = args.proj or _discover_projs(args.result)
-            for proj in projs:
-                targets.append((proj, os.path.join(args.result, proj)))
-        elif args.path:
-            targets.append((os.path.basename(args.path.rstrip("/\\")), args.path))
-        else:
-            parser.print_help()
-            raise SystemExit(0)
-
-        for label, proj_path in targets:
-            datasets = args.datasets or _discover_datasets(proj_path)
-            models = args.models or _discover_models(proj_path)
-            if models and datasets:
-                print_df(models, datasets, metrics, proj_path, args.select,
-                         title=f"Results: {proj_path}")
-            else:
-                print(f"No results found in {proj_path}")
+    main()
