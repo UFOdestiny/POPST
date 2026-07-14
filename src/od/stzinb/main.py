@@ -57,7 +57,7 @@ if __name__ == "__main__":
         add_args=add_args,
         build_model=build_model,
         loss_fn="NLL",
-        metric_list=["NLL", "MAE", "MAPE", "RMSE"],
+        metric_list=["NLL", "MAE", "MAPE", "RMSE", "MSE"],
         od=True,
         engine_cls=STZINB_Engine,
         setup=setup,

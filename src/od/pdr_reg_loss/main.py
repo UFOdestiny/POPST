@@ -1,13 +1,14 @@
 import os
 import sys
 
-sys.path.append(os.path.abspath(__file__ + '/../../../../'))
+sys.path.append(os.path.abspath(__file__ + "/../../../../"))
 
 import numpy as np
 import torch
+
 from base.runner import run_experiment
-from pdr_model import PDR
-from pdr_engine import PDR_Engine
+from pdr_reg_loss_engine import PDRRegLossEngine
+from pdr_reg_loss_model import PDRRegLoss
 from utils.dataloader import load_adj_from_numpy
 from utils.graph_algo import normalize_adj_mx
 
@@ -18,6 +19,12 @@ def add_args(parser):
     parser.add_argument("--pdr_num_spatial_layers", type=int, default=2)
     parser.add_argument("--num_experts", type=int, default=3)
     parser.add_argument("--head_hidden_dim", type=int, default=128)
+    parser.add_argument(
+        "--lambda_pa",
+        type=float,
+        default=5,
+        help="Weight of the production-attraction consistency loss.",
+    )
 
     parser.add_argument("--step_size", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.95)
@@ -31,11 +38,11 @@ def setup(args, data_path, adj_path, node_num, device, logger):
     adj_mx = load_adj_from_numpy(adj_path)
     adj_mx = adj_mx - np.eye(node_num)
     gso = normalize_adj_mx(adj_mx, "uqgnn")[0]
-    return dict(gso=gso, device=device)
+    return {"gso": gso}
 
 
 def build_model(args, node_num, **ctx):
-    return PDR(
+    return PDRRegLoss(
         A=ctx["gso"],
         node_num=node_num,
         input_dim=args.input_dim,
@@ -53,13 +60,16 @@ def build_model(args, node_num, **ctx):
 
 if __name__ == "__main__":
     run_experiment(
-        model_name="PDR",
+        model_name="PDR_REG_LOSS",
         add_args=add_args,
         build_model=build_model,
-        loss_fn="NLL",
-        metric_list=["NLL", "MAE", "MAPE", "RMSE", "MSE"],
+        loss_fn="MSE_OD",
+        metric_list=["MSE_OD", "MAE_OD", "MSE", "MAE", "MAPE", "RMSE"],
         od=True,
-        engine_cls=PDR_Engine,
+        engine_cls=PDRRegLossEngine,
+        engine_extras=lambda args: {"lambda_pa": args.lambda_pa},
         setup=setup,
-        make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
+        make_scheduler=lambda optimizer, args: torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=args.step_size, gamma=args.gamma
+        ),
     )

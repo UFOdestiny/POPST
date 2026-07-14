@@ -30,7 +30,7 @@ ARGS="--bs 64 --dataset nyc_manhattan_od_15min_fhv --proj $PORJ --years 2025_12t
 #     stgcn
 # )
 MODELS=(
-    pdr pdr_v2 pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe
+    pdr_reg pdr_reg_loss # pdr_v2 pdr pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe
     # stzinb agcrn astgcn gmel gwnet ha hl hmdlf lstm odmixer stgcn stgode sttn
 )
 

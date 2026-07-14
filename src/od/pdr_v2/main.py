@@ -21,7 +21,7 @@ def add_args(parser):
     parser.add_argument(
         "--lambda_pa",
         type=float,
-        default=0.01,
+        default=1,
         help="Weight of the production-attraction consistency loss.",
     )
 
@@ -63,7 +63,7 @@ if __name__ == "__main__":
         add_args=add_args,
         build_model=build_model,
         loss_fn="NLL",
-        metric_list=["NLL", "MAE", "MAPE", "RMSE"],
+        metric_list=["NLL", "MAE", "MAPE", "RMSE", "MSE"],
         od=True,
         engine_cls=PDR_v2_Engine,
         engine_extras=lambda args: {"lambda_pa": args.lambda_pa},

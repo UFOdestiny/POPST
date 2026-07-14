@@ -30,7 +30,7 @@ ARGS="--bs 64 --dataset dc_od_60min_taxi --proj $PORJ --years 2025_12to1"
 #     stgcn
 # )
 MODELS=(
-    pdr pdr_v2 pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe
+    pdr_v2 # pdr pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe
     # agcrn astgcn gmel gwnet ha hl hmdlf lstm odmixer stgcn stgode sttn stzinb
 )
 
