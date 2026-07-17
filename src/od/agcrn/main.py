@@ -37,7 +37,8 @@ if __name__ == "__main__":
         model_name="AGCRN_OD",
         add_args=add_args,
         build_model=build_model,
-        loss_fn="MSE",
+        loss_fn="MAE",
         init_weights=True,
         od=True,
+        od_cqr=True,
     )

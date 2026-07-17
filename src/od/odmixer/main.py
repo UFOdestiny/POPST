@@ -39,7 +39,7 @@ if __name__ == "__main__":
         model_name="ODMixer",
         add_args=add_args,
         build_model=build_model,
-        loss_fn="MSE",
+        loss_fn="MAE",
         od=True,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
         device_override="cuda:0",

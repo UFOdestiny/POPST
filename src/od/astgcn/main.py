@@ -62,7 +62,7 @@ if __name__ == "__main__":
         model_name="ASTGCN_OD",
         add_args=add_args,
         build_model=build_model,
-        loss_fn="MSE",
+        loss_fn="MAE",
         od=True,
         init_weights=True,
         setup=setup,

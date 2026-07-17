@@ -55,7 +55,7 @@ def run_pdr_ablation(model_name, model_cls, engine_cls):
         add_args=add_args,
         build_model=build_model,
         loss_fn="NLL",
-        metric_list=["NLL", "MAE", "MAPE", "RMSE", "MSE"],
+        metric_list=["NLL", "MAE", "MAPE", "MSE", "RMSE"],
         od=True,
         engine_cls=engine_cls,
         setup=setup,

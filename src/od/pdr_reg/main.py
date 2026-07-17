@@ -56,8 +56,10 @@ if __name__ == "__main__":
         model_name="PDR_REG",
         add_args=add_args,
         build_model=build_model,
-        loss_fn="MSE",
+        loss_fn="MAE",
+        metric_list=["MAE", "MAPE", "MSE", "RMSE"],
         od=True,
+        od_cqr=True,
         setup=setup,
         make_scheduler=lambda optimizer, args: torch.optim.lr_scheduler.StepLR(
             optimizer, step_size=args.step_size, gamma=args.gamma

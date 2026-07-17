@@ -24,34 +24,27 @@ SRC=$BASE/src/od
 PORJ=Chi_OD
 LOG=$BASE/output/$PORJ
 mkdir -p $LOG
-ARGS="--bs 64 --dataset chicago_od_15min_taxi --proj $PORJ --years 2025_12to1"
+DATASETS=(
+    chicago_od_15min_taxi
+    chicago_od_15min_tnp
+    chicago_od_15min_bike
+)
+BASE_ARGS="--bs 64 --proj $PORJ --years 2025_12to1 --export"
 
 # MODELS=(
 #     stgcn
 # )
 MODELS=(
-    pdr_v2 # pdr pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe
-    # agcrn astgcn gmel gwnet ha hl hmdlf lstm odmixer stgcn stgode sttn stzinb
+    pdr_reg_post pdr_reg pdr pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe
+    stzinb agcrn astgcn gmel gwnet ha hl hmdlf lstm stgcn stgode
 )
 
-for m in "${MODELS[@]}"; do
-    echo "=== Running $m ==="
-    python3 $SRC/$m/main.py $ARGS 2>&1 | tee $LOG/${m}.log
-    echo "$m finished with exit code $?"
-done
-
-ARGS="--bs 64 --dataset chicago_od_15min_tnp --proj $PORJ --years 2025_12to1"
-for m in "${MODELS[@]}"; do
-    echo "=== Running $m ==="
-    python3 $SRC/$m/main.py $ARGS 2>&1 | tee $LOG/${m}.log
-    echo "$m finished with exit code $?"
-done
-
-ARGS="--bs 64 --dataset chicago_od_15min_bike --proj $PORJ --years 2025_12to1"
-for m in "${MODELS[@]}"; do
-    echo "=== Running $m ==="
-    python3 $SRC/$m/main.py $ARGS 2>&1 | tee $LOG/${m}.log
-    echo "$m finished with exit code $?"
+for dataset in "${DATASETS[@]}"; do
+    for m in "${MODELS[@]}"; do
+        echo "=== Running $m on $dataset ==="
+        python3 $SRC/$m/main.py $BASE_ARGS --dataset "$dataset" 2>&1 | tee "$LOG/${m}_${dataset}.log"
+        echo "$m on $dataset finished with exit code ${PIPESTATUS[0]}"
+    done
 done
 
 date

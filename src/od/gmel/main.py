@@ -49,7 +49,7 @@ if __name__ == "__main__":
         model_name="GMEL",
         add_args=add_args,
         build_model=build_model,
-        loss_fn="MSE",
+        loss_fn="MAE",
         od=True,
         setup=setup,
         make_optimizer=lambda m, a: torch.optim.Adam(m.parameters()),

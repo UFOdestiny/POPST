@@ -31,7 +31,7 @@ if __name__ == "__main__":
         model_name="HL_OD",
         add_args=add_args,
         build_model=build_model,
-        loss_fn="MSE",
+        loss_fn="MAE",
         od=True,
         make_optimizer=lambda m, a: torch.optim.Adam(m.parameters()),
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),

@@ -29,6 +29,7 @@ sys.path.append(os.path.abspath(__file__ + "/../../../"))
 
 from base.engine import BaseEngine, BaseEngine_OD
 from base.CQR_engine import CQR_Engine
+from base.OD_CQR_engine import OD_CQR_Engine
 from base.efficiency import profile_efficiency
 from utils.args import (
     get_public_config,
@@ -100,6 +101,7 @@ def run_experiment(
     device_override=None,
     train_with_export=False,
     od=False,
+    od_cqr=False,
 ):
     """Run a full training / evaluation experiment.
 
@@ -160,7 +162,7 @@ def run_experiment(
     if engine_quantile_cls is None:
         engine_quantile_cls = CQR_Engine
     if metric_list is None:
-        metric_list = ["MAE", "MAPE", "RMSE"]
+        metric_list = ["MAE", "MAPE", "MSE", "RMSE"]
     if load_data is None:
         load_data = load_dataset
 
@@ -197,15 +199,16 @@ def run_experiment(
         args.input_dim = node_num
         args.output_dim = node_num
         logger.info(f"OD model: input_dim = output_dim = node_num = {node_num}")
-        # OD models emit a plain (B,H,N,N,D) tensor and are not CQR quantile
-        # regressors; reject --cqr up front (before the output_dim widening) so
-        # the error is clear rather than surfacing as a shape mismatch later.
+        # OD-CQR is post-hoc split conformal around an existing OD point/ZINB
+        # prediction.  It keeps the output width unchanged; all other OD
+        # models retain the previous explicit rejection.
         if args.cqr != "no":
-            raise ValueError(
-                f"{model_name} is an OD model and does not support --cqr "
-                f"(its output is an OD matrix, not output_dim-driven quantiles). "
-                f"Run it without --cqr."
-            )
+            if not od_cqr:
+                raise ValueError(
+                    f"{model_name} is an OD model and does not support --cqr "
+                    f"(its output is an OD matrix, not output_dim-driven quantiles)."
+                )
+            engine_quantile_cls = OD_CQR_Engine
 
     dataloader, scaler = load_data(data_path, args, logger)
 
@@ -219,7 +222,7 @@ def run_experiment(
     # projection emits 3 channels per feature (q_lo, q_mid, q_hi).  Widen
     # output_dim *before* build_model so the model is sized accordingly; the
     # engine reads args.cqr_channels to recover the true feature count F.
-    if args.cqr != "no":
+    if args.cqr != "no" and not od:
         args.cqr_channels = args.output_dim
         args.output_dim = args.output_dim * 3
         logger.info(
@@ -242,7 +245,7 @@ def run_experiment(
     # model's own output.  Models whose output width is locked to input_dim
     # (autoregressive) or that emit their own distribution (e.g. UQGNN) cannot
     # act as the quantile regressor.
-    if args.cqr != "no" and not getattr(model, "cqr_compatible", True):
+    if args.cqr != "no" and not od and not getattr(model, "cqr_compatible", True):
         raise ValueError(
             f"{model_name} does not support --cqr: its output width is not "
             f"driven by output_dim (it is autoregressive or emits its own "

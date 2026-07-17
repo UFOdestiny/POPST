@@ -58,7 +58,7 @@ class BaseEngine:
 
         # Metrics
         if metric_list is None:
-            metric_list = ["MAE", "MAPE", "RMSE", "KL", "CRPS"]
+            metric_list = ["MAE", "MAPE", "MSE", "RMSE", "KL", "CRPS"]
         self.metric = Metrics(self._loss_fn, metric_list, self.model.horizon)
 
         self._logger.info(f"{'Loss Function':20s}: {self._loss_fn}")

@@ -13,6 +13,10 @@ def get_public_config():
     """Create argument parser with common training arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--comment", type=str, default="")
+    parser.add_argument(
+        "--calibration_tag", type=str, default="",
+        help="Optional method tag used to distinguish exported calibration results.",
+    )
 
     parser.add_argument("--dataset", type=str, default="CAISO")
     parser.add_argument("--years", type=str, default="2018")
