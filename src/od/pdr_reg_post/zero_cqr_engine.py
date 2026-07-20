@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 
 from base.engine import BaseEngine_OD
-from base.metrics import Metrics
+from base.metrics import Metrics, zinb_mean
 
 
 class ZeroCQREngine(BaseEngine_OD):
@@ -46,6 +46,7 @@ class ZeroCQREngine(BaseEngine_OD):
         zero_cqr_aux_epochs=4,
         zero_cqr_aux_samples=400000,
         zero_cqr_period=96,
+        zero_cqr_enable_online=True,
         zero_cqr_zero_floor=1e-3,
         zero_cqr_active_bins=8,
         **kwargs,
@@ -63,7 +64,10 @@ class ZeroCQREngine(BaseEngine_OD):
         self.mse_weight = max(float(zero_cqr_mse_weight), 0.0)
         self.aux_epochs = max(int(zero_cqr_aux_epochs), 0)
         self.aux_samples = max(int(zero_cqr_aux_samples), 1)
-        self.period = max(int(zero_cqr_period), 1)
+        # A non-positive period disables the expensive calendar residual
+        # experiment while retaining the core sparse ZeroCQR calibration.
+        self.period = int(zero_cqr_period)
+        self.enable_online = bool(zero_cqr_enable_online)
         self.zero_floor = max(float(zero_cqr_zero_floor), 0.0)
         self.active_bins = max(int(zero_cqr_active_bins), 1)
         self._zero_cqr_gate = None       # (H,)
@@ -95,8 +99,16 @@ class ZeroCQREngine(BaseEngine_OD):
                 X, label = self._prepare_batch([X, label])
                 pred = self._predict(X, label=label, iter=self._iter_cnt)
                 if isinstance(pred, tuple):
-                    pred = pred[0]
-                if self._normalize:
+                    if len(pred) != 3:
+                        raise RuntimeError("ZeroCQR supports point output or ZINB (n, p, pi) output")
+                    # ZINB parameters are already in count space.  Only the
+                    # label/history needs inverse scaling, as in PDR_Engine.
+                    pred = zinb_mean(*pred)
+                    if self._normalize:
+                        label = self._inverse_transform(label, device=self._device.type)
+                        if with_aux:
+                            X = self._inverse_transform(X, device=self._device.type)
+                elif self._normalize:
                     pred, label = self._inverse_transform(
                         [pred, label], device=self._device.type
                     )
@@ -368,10 +380,12 @@ class ZeroCQREngine(BaseEngine_OD):
         tune, fit, cal = slice(0, None, 3), slice(1, None, 3), slice(2, None, 3)
         self._fit_aux(raw, label, aux, tune, fit)
         raw = self._apply_aux(raw, aux)
-        self._fit_periodic(raw, label, indices, tune, fit)
-        raw = self._apply_periodic(raw, indices)
-        self._fit_online(raw, label)
-        raw = self._online_correct(raw, label, self._online_alpha)
+        if self.period > 0:
+            self._fit_periodic(raw, label, indices, tune, fit)
+            raw = self._apply_periodic(raw, indices)
+        if self.enable_online:
+            self._fit_online(raw, label)
+            raw = self._online_correct(raw, label, self._online_alpha)
         gates, shifts, radii, edges_all = [], [], [], []
         for h in range(raw.shape[1]):
             r_t, y_t = raw[tune, h], label[tune, h]
@@ -535,6 +549,11 @@ class ZeroCQREngine(BaseEngine_OD):
             else:
                 self.load_model(self._save_path)
             self.calibrate()
+            # The full prediction/interval tensor is intentionally controlled
+            # by --export (it is large for OD).  Always persist this small
+            # artifact, however, so a normal test run leaves unambiguous
+            # evidence of the fitted post-hoc calibration.
+            self.save_calibration_state()
 
         if not final_test:
             return self._evaluate_raw(mode, export, train_test)
@@ -548,11 +567,17 @@ class ZeroCQREngine(BaseEngine_OD):
             raw, self._zero_cqr_gate, self._zero_cqr_active_shift, self.zero_floor
         )
         lower, upper = self._interval(raw, point)
+        # Keep collected OD tensors on CPU while fitting/applying calibration,
+        # but avoid CPU-only metric passes over tens of millions of cells.
+        metric_point, metric_lower, metric_upper, metric_labels = (
+            point.to(self._device), lower.to(self._device),
+            upper.to(self._device), labels.to(self._device),
+        )
         mask_value = torch.tensor(float("nan"))
         for h in range(self.model.horizon):
             self.metric.compute_one_batch(
-                self._horizon_slice(point, h), self._horizon_slice(labels, h), mask_value,
-                "test", lower=self._horizon_slice(lower, h), upper=self._horizon_slice(upper, h), alpha=self.alpha,
+                self._horizon_slice(metric_point, h), self._horizon_slice(metric_labels, h), mask_value,
+                "test", lower=self._horizon_slice(metric_lower, h), upper=self._horizon_slice(metric_upper, h), alpha=self.alpha,
             )
         with self._logger.no_time():
             self._logger.info("\n" + "=" * 25 + "     Test (ZeroCQR)     " + "=" * 25)
@@ -560,6 +585,31 @@ class ZeroCQREngine(BaseEngine_OD):
             self._logger.info(msg)
         if export:
             self.save_result(point, lower, upper, labels)
+
+    def save_calibration_state(self):
+        """Persist the fitted ZeroCQR parameters without exporting all OD cells."""
+        tag = getattr(self.args, "calibration_tag", "").strip()
+        suffix = f"zero_cqr_{tag}_calibration" if tag else "zero_cqr_calibration"
+        base_name = f"{self.args.model_name}-{self.args.dataset}-{suffix}"
+        path = os.path.join(self._save_path, f"{base_name}.pt")
+        index = 1
+        while os.path.exists(path):
+            path = os.path.join(self._save_path, f"{base_name}_{index}.pt")
+            index += 1
+        torch.save(
+            {
+                "method": "ZeroCQR",
+                "alpha": self.alpha,
+                "zero_floor": self.zero_floor,
+                "active_bins": self.active_bins,
+                "gate": self._zero_cqr_gate.cpu(),
+                "active_shift": self._zero_cqr_active_shift.cpu(),
+                "radius": self._zero_cqr_radius.cpu(),
+                "active_bin_edges": self._zero_cqr_edges.cpu(),
+            },
+            path,
+        )
+        self._logger.info(f"ZeroCQR calibration state saved: {path}")
 
     def save_result(self, point, lower, upper, labels):
         result = torch.stack([point, lower, upper, labels], dim=0).numpy()

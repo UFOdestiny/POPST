@@ -43,12 +43,16 @@ class OD_CQR_Engine(BaseEngine_OD):
 
     @staticmethod
     def _finite_quantile(scores, alpha):
-        scores = scores[torch.isfinite(scores)]
-        n = scores.numel()
+        # ``torch.quantile`` has an implementation-size limit on large OD
+        # matrices (e.g. 3503 x 77 x 77 validation cells).  Split conformal
+        # needs an order statistic, not interpolated quantiles, so numpy's
+        # in-place partition is both exact for CQR and scalable here.
+        scores = scores[torch.isfinite(scores)].detach().cpu().numpy().reshape(-1)
+        n = scores.size
         if n == 0:
             return torch.tensor(0.0)
-        level = min(float(np.ceil((n + 1) * (1 - alpha)) / n), 1.0)
-        return torch.quantile(scores, level)
+        rank = min(int(np.ceil((n + 1) * (1 - alpha))), n) - 1
+        return torch.tensor(np.partition(scores, rank)[rank])
 
     def _point_prediction(self, X, label):
         out = self._predict(X, label=label, iter=self._iter_cnt)
@@ -122,6 +126,10 @@ class OD_CQR_Engine(BaseEngine_OD):
         pred, label = self._collect("test")
         if self._conformal_q is None:
             self.calibrate()
+        # Prediction collection stays on CPU to keep the full OD test set
+        # memory-safe.  Metric calculation over tens of millions of Chicago
+        # OD cells is substantially faster on the configured accelerator.
+        pred, label = pred.to(self._device), label.to(self._device)
         lower, upper = self._interval(pred)
         for h in range(pred.shape[1]):
             self.metric.compute_one_batch(
@@ -134,7 +142,7 @@ class OD_CQR_Engine(BaseEngine_OD):
             for msg in self.metric.get_test_msg():
                 self._logger.info(msg)
         if export:
-            result = torch.stack([pred, lower, upper, label]).numpy()
+            result = torch.stack([pred, lower, upper, label]).cpu().numpy()
             tag = getattr(self.args, "calibration_tag", "").strip()
             suffix = f"od_cqr_{tag}_res" if tag else "od_cqr_res"
             path = self._get_unique_save_path(suffix)

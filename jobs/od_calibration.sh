@@ -16,12 +16,17 @@
 #   sbatch jobs/od_calibration.sh
 #   CALIBRATION_ENGINE=zero_cqr_8bin sbatch jobs/od_calibration.sh
 # To restrict a run, edit DATASETS=(...), MODELS=(...), and
-# CALIBRATION_ENGINES=(...) below.
+# CALIBRATION_ENGINES=(...) below.  Each run produces a CSV and Markdown
+# comparison table containing all successfully completed calibrations.
 
-set -uo pipefail
+set -o pipefail
 date
+# Some site Conda deactivate hooks reference optional backup variables.  Keep
+# nounset disabled only while the module/Conda environment is being changed.
+set +u
 module load cuda conda
 conda activate st
+set -u
 
 BASE=/home/dy23a.fsu/st
 SRC=$BASE/src/od
@@ -31,6 +36,22 @@ BS=${BS:-64}
 ALPHA=${ALPHA:-0.05}
 CQR_MODE=${CQR_MODE:-horizon}
 ZERO_CQR_BINS=${ZERO_CQR_BINS:-8}
+RUN_ID=$(date +%Y-%m-%d_%H-%M-%S)
+SUMMARY_DIR="$BASE/result/OD_CALIBRATION_COMPARISON"
+mkdir -p "$SUMMARY_DIR"
+SUMMARY_CSV="$SUMMARY_DIR/od_calibration_${RUN_ID}.csv"
+SUMMARY_MD="$SUMMARY_DIR/od_calibration_${RUN_ID}.md"
+TARGET_COVERAGE=$(awk -v alpha="$ALPHA" 'BEGIN { printf "%.1f", 100 * (1 - alpha) }')
+
+printf 'project,dataset,model,method,target_coverage,mae,mape,mse,rmse,mpiw,is,coverage,status,checkpoint,log,result\n' > "$SUMMARY_CSV"
+{
+    echo "# OD calibration comparison"
+    echo
+    echo "Target coverage: ${TARGET_COVERAGE}% (alpha=${ALPHA}); generated: ${RUN_ID}."
+    echo
+    echo '| Project | Dataset | Model | Method | MAE | MSE | MPIW | IS | Coverage | Status |'
+    echo '|---|---|---|---|---:|---:|---:|---:|---:|---|'
+} > "$SUMMARY_MD"
 
 # Each entry is run and logged separately for every compatible model/dataset.
 #   od_cqr_horizon: generic OD split conformal, one radius per horizon
@@ -44,6 +65,15 @@ CALIBRATION_ENGINES=(
     zero_cqr_16bin
     zero_cqr
 )
+# Space-separated environment overrides make a small end-to-end smoke run
+# possible without editing this job file, e.g.
+# DATASETS_OVERRIDE=nyc_manhattan_od_15min_fhv \
+# MODELS_OVERRIDE=pdr_reg_post \
+# CALIBRATION_ENGINES_OVERRIDE='od_cqr_horizon zero_cqr_8bin' \
+# sbatch jobs/od_calibration.sh
+if [[ -n ${CALIBRATION_ENGINES_OVERRIDE:-} ]]; then
+    read -r -a CALIBRATION_ENGINES <<< "$CALIBRATION_ENGINES_OVERRIDE"
+fi
 # Backward-compatible one-method override, e.g.
 # CALIBRATION_ENGINE=zero_cqr_4bin sbatch jobs/od_calibration.sh
 if [[ -n ${CALIBRATION_ENGINE:-} ]]; then
@@ -62,9 +92,15 @@ DATASETS=(
     sf_od_15min_taxi
     sf_od_15min_bike
 )
+if [[ -n ${DATASETS_OVERRIDE:-} ]]; then
+    read -r -a DATASETS <<< "$DATASETS_OVERRIDE"
+fi
 
 # These are the OD models that currently opt into the generic OD-CQR engine.
 MODELS=(agcrn stgcn stzinb pdr pdr_reg pdr_reg_post)
+if [[ -n ${MODELS_OVERRIDE:-} ]]; then
+    read -r -a MODELS <<< "$MODELS_OVERRIDE"
+fi
 
 project_for_dataset() {
     case "$1" in
@@ -90,8 +126,46 @@ result_model_name() {
 
 latest_checkpoint() {
     local directory=$1
-    find "$directory" -maxdepth 1 -type f -name '*.pt' -printf '%T@ %p\n' 2>/dev/null \
+    local model_name=$2
+    # Calibration state artifacts are also .pt files.  The underscore after
+    # the model name selects only actual model checkpoints.
+    find "$directory" -maxdepth 1 -type f -name "${model_name}_*.pt" -printf '%T@ %p\n' 2>/dev/null \
         | sort -nr | head -1 | cut -d' ' -f2-
+}
+
+metric_from_average() {
+    local average=$1
+    local metric=$2
+    # Metrics are comma-delimited.  Splitting first avoids matching the
+    # trailing "MSE" substring in "RMSE" when extracting MSE.
+    awk -F ', ' -v metric="$metric" '{
+        for (i = 1; i <= NF; i++) {
+            if ($i ~ ("(^| )" metric ": ")) {
+                sub(/.*: /, "", $i); print $i; exit
+            }
+        }
+    }' <<< "$average"
+}
+
+append_summary() {
+    local project=$1 dataset=$2 model=$3 method=$4 checkpoint=$5 log_path=$6 status=$7
+    local average mae mape mse rmse mpiw interval_score coverage result_path
+    average=$(rg 'Average:' "$log_path" | tail -1 || true)
+    mae=$(metric_from_average "$average" MAE); mape=$(metric_from_average "$average" MAPE)
+    mse=$(metric_from_average "$average" MSE); rmse=$(metric_from_average "$average" RMSE)
+    mpiw=$(metric_from_average "$average" MPIW); interval_score=$(metric_from_average "$average" IS)
+    coverage=$(metric_from_average "$average" COV)
+    result_path=$(sed -nE 's/.*Results Save Path: ([^|]+).*/\1/p' "$log_path" | tail -1)
+    # A failed run has no Average line; keep it in the comparison rather than
+    # silently making a partial table look complete.
+    : "${mae:=NA}" "${mape:=NA}" "${mse:=NA}" "${rmse:=NA}" "${mpiw:=NA}"
+    : "${interval_score:=NA}" "${coverage:=NA}" "${result_path:=NA}"
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "$project" "$dataset" "$model" "$method" "$TARGET_COVERAGE" "$mae" "$mape" "$mse" "$rmse" "$mpiw" "$interval_score" "$coverage" "$status" "$checkpoint" "$log_path" "$result_path" \
+        >> "$SUMMARY_CSV"
+    printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+        "$project" "$dataset" "$model" "$method" "$mae" "$mse" "$mpiw" "$interval_score" "$coverage" "$status" \
+        >> "$SUMMARY_MD"
 }
 
 method_args() {
@@ -125,7 +199,7 @@ for dataset in "${DATASETS[@]}"; do
     for m in "${MODELS[@]}"; do
         model_name=$(result_model_name "$m") || { echo "Unknown model: $m"; continue; }
         checkpoint_dir="$BASE/result/$project/$model_name/$dataset"
-        checkpoint=$(latest_checkpoint "$checkpoint_dir")
+        checkpoint=$(latest_checkpoint "$checkpoint_dir" "$model_name")
         if [[ -z "$checkpoint" ]]; then
             echo "Skipping $m on $dataset: no checkpoint under $checkpoint_dir"
             continue
@@ -144,9 +218,18 @@ for dataset in "${DATASETS[@]}"; do
                 continue
             fi
             echo "=== $calibration_method: $m on $dataset ==="
-            "$PYTHON" "$SRC/$m/main.py" "${common[@]}" --calibration_tag "$calibration_method" "${METHOD_ARGS[@]}" 2>&1 | tee "$log_dir/${m}_${dataset}_${calibration_method}.log"
-            echo "$calibration_method: $m on $dataset finished with exit code ${PIPESTATUS[0]}"
+            run_log="$log_dir/${m}_${dataset}_${calibration_method}.log"
+            "$PYTHON" "$SRC/$m/main.py" "${common[@]}" --calibration_tag "$calibration_method" "${METHOD_ARGS[@]}" 2>&1 | tee "$run_log"
+            status=${PIPESTATUS[0]}
+            if [[ $status -eq 0 ]]; then
+                append_summary "$project" "$dataset" "$m" "$calibration_method" "$checkpoint" "$run_log" "ok"
+            else
+                append_summary "$project" "$dataset" "$m" "$calibration_method" "$checkpoint" "$run_log" "failed($status)"
+            fi
+            echo "$calibration_method: $m on $dataset finished with exit code $status"
         done
     done
 done
+echo "Calibration comparison CSV: $SUMMARY_CSV"
+echo "Calibration comparison Markdown: $SUMMARY_MD"
 date

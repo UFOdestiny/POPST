@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=dc_o_b
-##SBATCH --account=fsu-compsci-dept
+#SBATCH --account=fsu-compsci-dept
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=dy23a@fsu.edu
 #SBATCH --nodes=1
