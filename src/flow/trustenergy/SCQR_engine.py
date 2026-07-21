@@ -47,7 +47,7 @@ from base.CQR_engine import CQR_Engine
 
 
 class SCQR_Engine(CQR_Engine):
-    DEFAULT_METRICS = ["Quantile", "MAE", "MAPE", "RMSE", "MPIW", "IS", "COV"]
+    DEFAULT_METRICS = ["Quantile", "MAE", "MAPE", "RMSE", "MPIW", "IS", "COV", "F1", "TZR", "KL", "CRPS"]
 
     def __init__(self, scqr_window: int = 200, **args):
         """

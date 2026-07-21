@@ -38,6 +38,10 @@ def add_args(parser):
     parser.add_argument("--zero_cqr_aux_samples", type=int, default=400000)
     parser.add_argument("--zero_cqr_period", type=int, default=96)
     parser.add_argument(
+        "--zero_cqr_disable_online", action="store_true",
+        help="Disable ZeroCQR's causal online residual correction at test time.",
+    )
+    parser.add_argument(
         "--zero_cqr_zero_floor", type=float, default=1e-3,
         help="Set non-negative post-hoc point forecasts at or below this value to zero.",
     )
@@ -87,6 +91,7 @@ if __name__ == "__main__":
             "zero_cqr_aux_epochs": args.zero_cqr_aux_epochs,
             "zero_cqr_aux_samples": args.zero_cqr_aux_samples,
             "zero_cqr_period": args.zero_cqr_period,
+            "zero_cqr_enable_online": not args.zero_cqr_disable_online,
             "zero_cqr_zero_floor": args.zero_cqr_zero_floor,
             "zero_cqr_active_bins": args.zero_cqr_active_bins,
         },

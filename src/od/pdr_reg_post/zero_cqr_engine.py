@@ -33,7 +33,7 @@ class ZeroCQREngine(BaseEngine_OD):
     inference time.
     """
 
-    DEFAULT_METRICS = ["MAE", "MAPE", "MSE", "RMSE", "MPIW", "IS", "COV"]
+    DEFAULT_METRICS = ["MAE", "MAPE", "MSE", "RMSE", "MPIW", "IS", "COV", "F1", "TZR", "KL", "CRPS"]
 
     def __init__(
         self,

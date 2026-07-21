@@ -41,6 +41,19 @@ def get_public_config():
              "'global' uses a single shared Q.",
     )
     parser.add_argument("--quantile_alpha", type=float, default=0.1)
+    parser.add_argument(
+        "--od_calibration", type=str, default="split", choices=["split", "aci"],
+        help="OD post-hoc calibration used with --cqr: fixed split conformal "
+             "or adaptive conformal inference (ACI).",
+    )
+    parser.add_argument(
+        "--od_aci_gamma", type=float, default=0.005,
+        help="ACI coverage-feedback step size for OD post-hoc calibration.",
+    )
+    parser.add_argument(
+        "--od_aci_calibration_size", type=int, default=200000,
+        help="Maximum residuals retained per ACI calibration reference distribution.",
+    )
 
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--seed", type=int, default=2025)
@@ -109,7 +122,7 @@ def print_args(logger, args):
     data_keys = ["dataset", "years", "seq_len", "horizon", "input_dim", "output_dim", "normalize"]
     training_keys = ["bs", "max_epochs", "patience", "lrate", "wdecay", "clip_grad_norm",
                      "dropout", "step_size", "gamma", "seed"]
-    cqr_keys = ["cqr", "quantile_alpha"]
+    cqr_keys = ["cqr", "quantile_alpha", "od_calibration", "od_aci_gamma", "od_aci_calibration_size"]
     system_keys = ["device", "mode", "model_path", "export", "proj", "comment"]
 
     # Everything else a model declares is a model hyperparameter: list it under

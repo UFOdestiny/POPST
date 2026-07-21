@@ -64,6 +64,7 @@ if __name__ == "__main__":
         build_model=build_model,
         loss_fn="MAE",
         od=True,
+        od_cqr=True,
         init_weights=True,
         setup=setup,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.CosineAnnealingLR(o, T_max=a.max_epochs, eta_min=1e-6),

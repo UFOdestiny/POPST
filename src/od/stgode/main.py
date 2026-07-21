@@ -98,6 +98,7 @@ if __name__ == "__main__":
         build_model=build_model,
         loss_fn="MAE",
         od=True,
+        od_cqr=True,
         setup=setup,
         make_optimizer=lambda m, a: torch.optim.AdamW(m.parameters(), lr=a.lrate, weight_decay=a.wdecay),
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=20, gamma=0.5),

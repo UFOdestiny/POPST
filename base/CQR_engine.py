@@ -42,7 +42,7 @@ class CQR_Engine(BaseEngine):
     correction.
     """
 
-    DEFAULT_METRICS = ["Quantile", "MAE", "MAPE", "RMSE", "MPIW", "IS", "COV"]
+    DEFAULT_METRICS = ["Quantile", "MAE", "MAPE", "RMSE", "MPIW", "IS", "COV", "F1", "TZR", "KL", "CRPS"]
 
     def __init__(self, cqr_min_width: float = 0.0, **args):
         """

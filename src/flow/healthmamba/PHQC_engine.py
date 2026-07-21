@@ -61,7 +61,7 @@ from base.metrics import Metrics
 
 
 class PHQC_Engine(BaseEngine):
-    DEFAULT_METRICS = ["Quantile", "MAE", "MAPE", "RMSE", "MPIW", "IS", "COV"]
+    DEFAULT_METRICS = ["Quantile", "MAE", "MAPE", "RMSE", "MPIW", "IS", "COV", "F1", "TZR", "KL", "CRPS"]
 
     def __init__(
         self,

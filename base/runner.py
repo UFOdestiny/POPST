@@ -208,7 +208,11 @@ def run_experiment(
                     f"{model_name} is an OD model and does not support --cqr "
                     f"(its output is an OD matrix, not output_dim-driven quantiles)."
                 )
-            engine_quantile_cls = OD_CQR_Engine
+            if args.od_calibration == "aci":
+                from base.OD_ACI_engine import OD_ACI_Engine
+                engine_quantile_cls = OD_ACI_Engine
+            else:
+                engine_quantile_cls = OD_CQR_Engine
 
     dataloader, scaler = load_data(data_path, args, logger)
 

@@ -6,7 +6,7 @@
 #SBATCH --tasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=128gb
-#SBATCH --time=3-00:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --output=NONE
 #SBATCH --partition=hpg-b200
 #SBATCH --gpus=1
@@ -36,6 +36,9 @@ BS=${BS:-64}
 ALPHA=${ALPHA:-0.05}
 CQR_MODE=${CQR_MODE:-horizon}
 ZERO_CQR_BINS=${ZERO_CQR_BINS:-8}
+ZERO_CQR_LAG_AUX_EPOCHS=${ZERO_CQR_LAG_AUX_EPOCHS:-4}
+OD_ACI_GAMMA=${OD_ACI_GAMMA:-0.005}
+OD_ACI_CALIBRATION_SIZE=${OD_ACI_CALIBRATION_SIZE:-200000}
 RUN_ID=$(date +%Y-%m-%d_%H-%M-%S)
 SUMMARY_DIR="$BASE/result/OD_CALIBRATION_COMPARISON"
 mkdir -p "$SUMMARY_DIR"
@@ -43,39 +46,52 @@ SUMMARY_CSV="$SUMMARY_DIR/od_calibration_${RUN_ID}.csv"
 SUMMARY_MD="$SUMMARY_DIR/od_calibration_${RUN_ID}.md"
 TARGET_COVERAGE=$(awk -v alpha="$ALPHA" 'BEGIN { printf "%.1f", 100 * (1 - alpha) }')
 
-printf 'project,dataset,model,method,target_coverage,mae,mape,mse,rmse,mpiw,is,coverage,status,checkpoint,log,result\n' > "$SUMMARY_CSV"
+printf 'project,dataset,model,method,target_coverage,mae,mape,mse,rmse,mpiw,is,coverage,f1,true_zero_rate,kl,crps,status,checkpoint,log,result\n' > "$SUMMARY_CSV"
 {
     echo "# OD calibration comparison"
     echo
     echo "Target coverage: ${TARGET_COVERAGE}% (alpha=${ALPHA}); generated: ${RUN_ID}."
     echo
-    echo '| Project | Dataset | Model | Method | MAE | MSE | MPIW | IS | Coverage | Status |'
-    echo '|---|---|---|---|---:|---:|---:|---:|---:|---|'
+    echo '| Project | Dataset | Model | Method | MAE | MSE | MPIW | IS | Coverage | F1 | True-zero rate | KL | CRPS | Status |'
+    echo '|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|'
 } > "$SUMMARY_MD"
 
 # Each entry is run and logged separately for every compatible model/dataset.
-#   od_cqr_horizon: generic OD split conformal, one radius per horizon
-#   od_cqr_global:  generic OD split conformal, one shared radius
-#   zero_cqr_Nbin:  sparse OD ZeroCQR, N positive-demand Mondrian bins
+#   od_split_cp_horizon: generic OD split conformal, one radius per horizon
+#   od_split_cp_global:  generic OD split conformal, one shared radius
+#   od_aci_horizon:      OD adaptive conformal inference per horizon
+#   od_aci_global:       OD adaptive conformal inference across horizons
+#   zero_cqr_Nbin:      sparse OD ZeroCQR, N positive-demand Mondrian bins
+#   zero_cqr_static_Nbin: ZeroCQR without causal online correction
+#   zero_cqr_lag_Nbin:  ZeroCQR with its LagZeroCQR auxiliary correction
+# The latter two are implemented by ZeroCQREngine and are limited to
+# pdr_reg_post, just like the regular zero_cqr_Nbin configurations.
 CALIBRATION_ENGINES=(
-    od_cqr_horizon
-    od_cqr_global
+    od_split_cp_horizon
+    od_split_cp_global
+    od_aci_horizon
+    od_aci_global
+    zero_cqr_1bin
+    zero_cqr_2bin
     zero_cqr_4bin
     zero_cqr_8bin
     zero_cqr_16bin
-    zero_cqr
+    zero_cqr_32bin
+    zero_cqr_64bin
+    zero_cqr_static_8bin
+    zero_cqr_lag_8bin
 )
 # Space-separated environment overrides make a small end-to-end smoke run
 # possible without editing this job file, e.g.
 # DATASETS_OVERRIDE=nyc_manhattan_od_15min_fhv \
 # MODELS_OVERRIDE=pdr_reg_post \
-# CALIBRATION_ENGINES_OVERRIDE='od_cqr_horizon zero_cqr_8bin' \
+# CALIBRATION_ENGINES_OVERRIDE='od_split_cp_horizon od_aci_horizon' \
 # sbatch jobs/od_calibration.sh
 if [[ -n ${CALIBRATION_ENGINES_OVERRIDE:-} ]]; then
     read -r -a CALIBRATION_ENGINES <<< "$CALIBRATION_ENGINES_OVERRIDE"
 fi
 # Backward-compatible one-method override, e.g.
-# CALIBRATION_ENGINE=zero_cqr_4bin sbatch jobs/od_calibration.sh
+# CALIBRATION_ENGINE=zero_cqr_lag_8bin sbatch jobs/od_calibration.sh
 if [[ -n ${CALIBRATION_ENGINE:-} ]]; then
     CALIBRATION_ENGINES=("$CALIBRATION_ENGINE")
 fi
@@ -96,8 +112,9 @@ if [[ -n ${DATASETS_OVERRIDE:-} ]]; then
     read -r -a DATASETS <<< "$DATASETS_OVERRIDE"
 fi
 
-# These are the OD models that currently opt into the generic OD-CQR engine.
-MODELS=(agcrn stgcn stzinb pdr pdr_reg pdr_reg_post)
+# These OD models opt into the generic post-hoc OD-CQR engine.  ZeroCQR below
+# remains intentionally limited to pdr_reg_post.
+MODELS=(agcrn astgcn gmel gwnet stgcn stgode stzinb pdr pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe pdr_reg pdr_reg_post)
 if [[ -n ${MODELS_OVERRIDE:-} ]]; then
     read -r -a MODELS <<< "$MODELS_OVERRIDE"
 fi
@@ -115,9 +132,17 @@ project_for_dataset() {
 result_model_name() {
     case "$1" in
         agcrn) echo AGCRN_OD ;;
+        astgcn) echo ASTGCN_OD ;;
+        gmel) echo GMEL ;;
+        gwnet) echo GWNET_OD ;;
         stgcn) echo STGCN_OD ;;
+        stgode) echo STGODE_OD ;;
         stzinb) echo STZINB ;;
         pdr) echo PDR ;;
+        pdr_no_context) echo PDR_no_context ;;
+        pdr_no_zone_embed) echo PDR_no_zone_embed ;;
+        pdr_no_spatial) echo PDR_no_spatial ;;
+        pdr_no_moe) echo PDR_no_moe ;;
         pdr_reg) echo PDR_REG ;;
         pdr_reg_post) echo PDR_REG_POST ;;
         *) return 1 ;;
@@ -149,35 +174,58 @@ metric_from_average() {
 
 append_summary() {
     local project=$1 dataset=$2 model=$3 method=$4 checkpoint=$5 log_path=$6 status=$7
-    local average mae mape mse rmse mpiw interval_score coverage result_path
+    local average mae mape mse rmse mpiw interval_score coverage f1 tzr kl crps result_path
     average=$(rg 'Average:' "$log_path" | tail -1 || true)
     mae=$(metric_from_average "$average" MAE); mape=$(metric_from_average "$average" MAPE)
     mse=$(metric_from_average "$average" MSE); rmse=$(metric_from_average "$average" RMSE)
     mpiw=$(metric_from_average "$average" MPIW); interval_score=$(metric_from_average "$average" IS)
-    coverage=$(metric_from_average "$average" COV)
+    coverage=$(metric_from_average "$average" COV); f1=$(metric_from_average "$average" F1)
+    tzr=$(metric_from_average "$average" TZR); kl=$(metric_from_average "$average" KL); crps=$(metric_from_average "$average" CRPS)
     result_path=$(sed -nE 's/.*Results Save Path: ([^|]+).*/\1/p' "$log_path" | tail -1)
     # A failed run has no Average line; keep it in the comparison rather than
     # silently making a partial table look complete.
     : "${mae:=NA}" "${mape:=NA}" "${mse:=NA}" "${rmse:=NA}" "${mpiw:=NA}"
-    : "${interval_score:=NA}" "${coverage:=NA}" "${result_path:=NA}"
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-        "$project" "$dataset" "$model" "$method" "$TARGET_COVERAGE" "$mae" "$mape" "$mse" "$rmse" "$mpiw" "$interval_score" "$coverage" "$status" "$checkpoint" "$log_path" "$result_path" \
+    : "${interval_score:=NA}" "${coverage:=NA}" "${f1:=NA}" "${tzr:=NA}" "${kl:=NA}" "${crps:=NA}" "${result_path:=NA}"
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "$project" "$dataset" "$model" "$method" "$TARGET_COVERAGE" "$mae" "$mape" "$mse" "$rmse" "$mpiw" "$interval_score" "$coverage" "$f1" "$tzr" "$kl" "$crps" "$status" "$checkpoint" "$log_path" "$result_path" \
         >> "$SUMMARY_CSV"
-    printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
-        "$project" "$dataset" "$model" "$method" "$mae" "$mse" "$mpiw" "$interval_score" "$coverage" "$status" \
+    printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+        "$project" "$dataset" "$model" "$method" "$mae" "$mse" "$mpiw" "$interval_score" "$coverage" "$f1" "$tzr" "$kl" "$crps" "$status" \
         >> "$SUMMARY_MD"
 }
 
 method_args() {
     local method=$1
     case "$method" in
-        od_cqr_horizon)
+        od_split_cp_horizon|od_cqr_horizon)
             METHOD_ARGS=(--cqr horizon --quantile_alpha "$ALPHA")
-            METHOD_KIND=od_cqr
+            METHOD_KIND=od_split_cp
             ;;
-        od_cqr_global)
+        od_split_cp_global|od_cqr_global)
             METHOD_ARGS=(--cqr global --quantile_alpha "$ALPHA")
-            METHOD_KIND=od_cqr
+            METHOD_KIND=od_split_cp
+            ;;
+        od_aci_horizon)
+            METHOD_ARGS=(--cqr horizon --quantile_alpha "$ALPHA" --od_calibration aci --od_aci_gamma "$OD_ACI_GAMMA" --od_aci_calibration_size "$OD_ACI_CALIBRATION_SIZE")
+            METHOD_KIND=od_aci
+            ;;
+        od_aci_global)
+            METHOD_ARGS=(--cqr global --quantile_alpha "$ALPHA" --od_calibration aci --od_aci_gamma "$OD_ACI_GAMMA" --od_aci_calibration_size "$OD_ACI_CALIBRATION_SIZE")
+            METHOD_KIND=od_aci
+            ;;
+        zero_cqr_static_*bin)
+            local bins=${method#zero_cqr_static_}
+            bins=${bins%bin}
+            [[ "$bins" =~ ^[1-9][0-9]*$ ]] || return 1
+            METHOD_ARGS=(--zero_cqr_alpha "$ALPHA" --zero_cqr_active_bins "$bins" --zero_cqr_aux_epochs 0 --zero_cqr_disable_online)
+            METHOD_KIND=zero_cqr
+            ;;
+        zero_cqr_lag_*bin)
+            local bins=${method#zero_cqr_lag_}
+            bins=${bins%bin}
+            [[ "$bins" =~ ^[1-9][0-9]*$ ]] || return 1
+            METHOD_ARGS=(--zero_cqr_alpha "$ALPHA" --zero_cqr_active_bins "$bins" --zero_cqr_aux_epochs "$ZERO_CQR_LAG_AUX_EPOCHS")
+            METHOD_KIND=zero_cqr
             ;;
         zero_cqr_*bin)
             local bins=${method#zero_cqr_}
@@ -186,6 +234,8 @@ method_args() {
             METHOD_ARGS=(--zero_cqr_alpha "$ALPHA" --zero_cqr_active_bins "$bins" --zero_cqr_aux_epochs 0)
             METHOD_KIND=zero_cqr
             ;;
+        # Retained for existing one-method invocations; it is equivalent to
+        # the configured regular bin count and is not in the default suite.
         zero_cqr)
             METHOD_ARGS=(--zero_cqr_alpha "$ALPHA" --zero_cqr_active_bins "$ZERO_CQR_BINS" --zero_cqr_aux_epochs 0)
             METHOD_KIND=zero_cqr

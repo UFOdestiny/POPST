@@ -25,7 +25,7 @@ class OD_CQR_Engine(BaseEngine_OD):
     of a ZINB model and is converted to its mean in count space.
     """
 
-    DEFAULT_METRICS = ["MAE", "MAPE", "MSE", "RMSE", "MPIW", "IS", "COV"]
+    DEFAULT_METRICS = ["MAE", "MAPE", "MSE", "RMSE", "MPIW", "IS", "COV", "F1", "TZR", "KL", "CRPS"]
 
     def __init__(self, **args):
         # This engine is evaluation/post-hoc focused.  Do not retain NLL or

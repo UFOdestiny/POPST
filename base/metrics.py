@@ -57,17 +57,86 @@ def masked_mape(preds, labels, null_val):
     return _masked_mean(loss, mask) * 100
 
 
-def masked_kl(preds, labels, null_val):
+def masked_f1(preds, labels, null_val):
+    """F1 for detecting active (strictly positive) targets.
+
+    OD demand is zero-inflated, so this treats each valid cell as a binary
+    active/inactive prediction: ``pred > 0`` versus ``label > 0``.  Returning
+    zero when precision and recall are both undefined makes all-empty batches
+    well-defined and keeps metric aggregation NaN-safe.
+    """
     assert preds.shape == labels.shape, f"preds {preds.shape} vs labels {labels.shape}"
-    loss = labels * torch.log((labels + 1e-5) / (preds + 1e-5))
-    return _masked_mean(loss, get_mask(labels, null_val))
+    mask = get_mask(labels, null_val).bool()
+    predicted_active = (preds > 0) & mask
+    actual_active = (labels > 0) & mask
+    true_positive = (predicted_active & actual_active).sum().to(dtype=preds.dtype)
+    false_positive = (predicted_active & ~actual_active).sum().to(dtype=preds.dtype)
+    false_negative = (~predicted_active & actual_active).sum().to(dtype=preds.dtype)
+    denominator = 2 * true_positive + false_positive + false_negative
+    return torch.where(
+        denominator > 0,
+        2 * true_positive / denominator,
+        preds.new_tensor(0.0),
+    )
+
+
+def masked_kl(preds, labels, null_val):
+    """KL divergence between per-sample OD demand distributions.
+
+    Counts are normalized over all non-batch axes.  Empty true-demand samples
+    have no probability distribution and contribute zero; an all-zero forecast
+    against positive demand receives a large but finite penalty via ``eps``.
+    """
+    assert preds.shape == labels.shape, f"preds {preds.shape} vs labels {labels.shape}"
+    eps = torch.finfo(preds.dtype).eps
+    valid = get_mask(labels, null_val).bool()
+    target = torch.where(valid, labels.clamp_min(0.0), torch.zeros_like(labels))
+    forecast = torch.where(valid, preds.clamp_min(0.0), torch.zeros_like(preds))
+    flat_target, flat_forecast = target.reshape(target.shape[0], -1), forecast.reshape(forecast.shape[0], -1)
+    target_sum, forecast_sum = flat_target.sum(dim=1, keepdim=True), flat_forecast.sum(dim=1, keepdim=True)
+    p = flat_target / target_sum.clamp_min(eps)
+    q = flat_forecast / forecast_sum.clamp_min(eps)
+    terms = torch.where(p > 0, p * torch.log(p / q.clamp_min(eps)), torch.zeros_like(p))
+    per_sample = terms.sum(dim=1)
+    return torch.where(target_sum.squeeze(1) > 0, per_sample, torch.zeros_like(per_sample)).mean()
 
 
 def masked_crps(preds, labels, null_val):
+    """CRPS for an ensemble forecast, or MAE for a point-mass forecast."""
+    if preds.shape == labels.shape:
+        # CRPS of a deterministic (Dirac) forecast equals absolute error.
+        return masked_mae(preds, labels, null_val)
     preds_np = preds.detach().cpu().numpy()
     labels_np = labels.detach().cpu().numpy()
     score = ps.crps_ensemble(labels_np, preds_np)
     return torch.tensor(score.mean(), device=preds.device, dtype=preds.dtype)
+
+
+def masked_interval_crps(lower, upper, labels, null_val):
+    """CRPS of the uniform predictive distribution on ``[lower, upper]``.
+
+    Post-hoc conformal methods produce intervals rather than samples.  This
+    proper score reduces to MAE for a zero-width interval, so interval methods
+    can be compared without inventing pseudo-ensembles.
+    """
+    assert lower.shape == upper.shape == labels.shape
+    lo, hi = torch.minimum(lower, upper), torch.maximum(lower, upper)
+    width = hi - lo
+    below, above = labels < lo, labels > hi
+    inside = ((labels - lo).square() + (hi - labels).square()) / (2.0 * width.clamp_min(1e-8))
+    expected_abs = torch.where(below, (lo + hi) / 2.0 - labels, torch.where(above, labels - (lo + hi) / 2.0, inside))
+    score = expected_abs - width / 6.0
+    return _masked_mean(torch.where(width <= 1e-8, torch.abs(labels - lo), score), get_mask(labels, null_val))
+
+
+def masked_true_zero_rate(preds, labels, null_val):
+    """Zero-class recall: ``P(pred <= 0 | label == 0)`` over valid cells."""
+    assert preds.shape == labels.shape, f"preds {preds.shape} vs labels {labels.shape}"
+    valid_zero = (labels == 0) & get_mask(labels, null_val).bool()
+    count = valid_zero.sum()
+    if count == 0:
+        return preds.new_tensor(0.0)
+    return ((preds <= 0) & valid_zero).sum().to(dtype=preds.dtype) / count
 
 
 # ---------------------------------------------------------------------------
@@ -200,9 +269,11 @@ _REGISTRY = {
     "MAE":      (masked_mae,      "basic"),
     "MSE":      (masked_mse,      "basic"),
     "MAPE":     (masked_mape,     "basic"),
+    "F1":       (masked_f1,       "basic"),
+    "TZR":      (masked_true_zero_rate, "basic"),
     "RMSE":     (masked_rmse,     "basic"),
     "KL":       (masked_kl,       "basic"),
-    "CRPS":     (masked_crps,     "basic"),
+    "CRPS":     (masked_crps,     "crps"),
     "MGAU":     (mnormal_loss,    "scale"),
     "MPIW":     (masked_mpiw,     "interval"),
     "WINK":     (masked_wink,     "interval_target"),
@@ -233,6 +304,10 @@ def register_metric(name, fn, kind):
 def _dispatch(fn, kind, preds, labels, null, kw):
     """Call a metric function according to its kind."""
     if kind == "basic":
+        return fn(preds, labels, null)
+    if kind == "crps":
+        if "lower" in kw and "upper" in kw:
+            return masked_interval_crps(kw["lower"], kw["upper"], labels, null)
         return fn(preds, labels, null)
     if kind == "scale":
         return fn(preds, labels, null, kw["scale"])

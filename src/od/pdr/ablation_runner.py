@@ -57,6 +57,7 @@ def run_pdr_ablation(model_name, model_cls, engine_cls):
         loss_fn="NLL",
         metric_list=["NLL", "MAE", "MAPE", "MSE", "RMSE"],
         od=True,
+        od_cqr=True,
         engine_cls=engine_cls,
         setup=setup,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(

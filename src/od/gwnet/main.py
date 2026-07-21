@@ -58,5 +58,6 @@ if __name__ == "__main__":
         loss_fn="MAE",
         setup=setup,
         od=True,
+        od_cqr=True,
         make_scheduler=lambda o, a: torch.optim.lr_scheduler.StepLR(o, step_size=a.step_size, gamma=a.gamma),
     )
