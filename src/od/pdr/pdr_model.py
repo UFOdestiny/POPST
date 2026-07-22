@@ -121,6 +121,26 @@ class ODRegimeExpertHead(nn.Module):
         return raw
 
 
+class ODSingleZINBHead(nn.Module):
+    """The shared (non-expert) ZINB head used for the no-MoE ablation.
+
+    Keeping this head here makes the ablation a true architectural switch of
+    :class:`PDR`, rather than a post-construction replacement of its head.
+    """
+
+    def __init__(self, context_dim, hidden_dim=128, dropout=0.0):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(context_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 3),
+        )
+
+    def forward(self, context):
+        return self.net(context)
+
+
 class PDR(BaseODModel):
     """PDR-ZINB: a lightweight OD-aware encoder (Pair/origin/destination/global
     temporal stems + diffusion-style spatial mixing) with a mixture-of-experts
@@ -155,60 +175,85 @@ class PDR(BaseODModel):
         num_experts=3,
         head_hidden_dim=128,
         dropout=0.0,
+        use_aggregate_context=True,
+        use_zone_embeddings=True,
+        use_spatial_mixing=True,
+        use_moe=True,
         **args,
     ):
         super(PDR, self).__init__(node_num, input_dim, output_dim, seq_len, horizon)
         self.context_dim = int(context_dim)
+        self.use_aggregate_context = bool(use_aggregate_context)
+        self.use_zone_embeddings = bool(use_zone_embeddings)
+        self.use_spatial_mixing = bool(use_spatial_mixing)
+        self.use_moe = bool(use_moe)
 
         self.pair_stem = TemporalStem(seq_len, context_dim, dropout=dropout)
-        self.origin_stem = TemporalStem(seq_len, context_dim, dropout=dropout)
-        self.dest_stem = TemporalStem(seq_len, context_dim, dropout=dropout)
-        self.global_stem = TemporalStem(seq_len, context_dim, dropout=dropout)
+        if self.use_aggregate_context:
+            self.origin_stem = TemporalStem(seq_len, context_dim, dropout=dropout)
+            self.dest_stem = TemporalStem(seq_len, context_dim, dropout=dropout)
+            self.global_stem = TemporalStem(seq_len, context_dim, dropout=dropout)
 
-        self.origin_embed = nn.Embedding(node_num, zone_embed_dim)
-        self.dest_embed = nn.Embedding(node_num, zone_embed_dim)
-        self.origin_proj = nn.Linear(zone_embed_dim, context_dim)
-        self.dest_proj = nn.Linear(zone_embed_dim, context_dim)
+        if self.use_zone_embeddings:
+            self.origin_embed = nn.Embedding(node_num, zone_embed_dim)
+            self.dest_embed = nn.Embedding(node_num, zone_embed_dim)
+            self.origin_proj = nn.Linear(zone_embed_dim, context_dim)
+            self.dest_proj = nn.Linear(zone_embed_dim, context_dim)
 
-        self.spatial_layers = nn.ModuleList(
-            [ODSeparableSpatialBlock(context_dim, dropout=dropout) for _ in range(int(num_spatial_layers))]
-        )
+        if self.use_spatial_mixing:
+            self.spatial_layers = nn.ModuleList(
+                [ODSeparableSpatialBlock(context_dim, dropout=dropout) for _ in range(int(num_spatial_layers))]
+            )
         self.context_norm = nn.LayerNorm(context_dim)
-        self.head = ODRegimeExpertHead(
-            context_dim=context_dim,
-            hidden_dim=head_hidden_dim,
-            num_experts=num_experts,
-            dropout=dropout,
-        )
+        if self.use_moe:
+            self.head = ODRegimeExpertHead(
+                context_dim=context_dim,
+                hidden_dim=head_hidden_dim,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
+        else:
+            self.head = ODSingleZINBHead(context_dim, head_hidden_dim, dropout)
 
-        A_q = torch.from_numpy(calculate_random_walk_matrix(A).T.astype("float32"))
-        A_h = torch.from_numpy(calculate_random_walk_matrix(A.T).T.astype("float32"))
-        self.register_buffer("A_q", A_q)
-        self.register_buffer("A_h", A_h)
+        # Do not retain adjacency buffers when spatial mixing is ablated.  This
+        # makes the no-spatial model independent of the graph at inference.
+        if self.use_spatial_mixing:
+            A_q = torch.from_numpy(calculate_random_walk_matrix(A).T.astype("float32"))
+            A_h = torch.from_numpy(calculate_random_walk_matrix(A.T).T.astype("float32"))
+            self.register_buffer("A_q", A_q)
+            self.register_buffer("A_h", A_h)
 
     def _encode(self, x):
         # x: (B, O, D, T) -- a single mobility channel's OD history.
         bsz, num_origins, num_destinations, _ = x.shape
         pair = self.pair_stem(x)
-        origin_context = self.origin_stem(x.sum(dim=2))
-        dest_context = self.dest_stem(x.sum(dim=1))
-        global_context = self.global_stem(x.sum(dim=(1, 2)))
+        h = pair
 
-        origin_ids = torch.arange(num_origins, device=x.device, dtype=torch.long)
-        dest_ids = torch.arange(num_destinations, device=x.device, dtype=torch.long)
-        origin_embed = self.origin_proj(self.origin_embed(origin_ids).to(dtype=pair.dtype))
-        dest_embed = self.dest_proj(self.dest_embed(dest_ids).to(dtype=pair.dtype))
+        if self.use_aggregate_context:
+            origin_context = self.origin_stem(x.sum(dim=2))
+            dest_context = self.dest_stem(x.sum(dim=1))
+            global_context = self.global_stem(x.sum(dim=(1, 2)))
+            h = (
+                h
+                + origin_context.unsqueeze(2)
+                + dest_context.unsqueeze(1)
+                + global_context.view(bsz, 1, 1, self.context_dim)
+            )
 
-        h = (
-            pair
-            + origin_context.unsqueeze(2)
-            + dest_context.unsqueeze(1)
-            + global_context.view(bsz, 1, 1, self.context_dim)
-            + origin_embed.view(1, num_origins, 1, self.context_dim)
-            + dest_embed.view(1, 1, num_destinations, self.context_dim)
-        )
-        for layer in self.spatial_layers:
-            h = layer(h, self.A_q, self.A_h)
+        if self.use_zone_embeddings:
+            origin_ids = torch.arange(num_origins, device=x.device, dtype=torch.long)
+            dest_ids = torch.arange(num_destinations, device=x.device, dtype=torch.long)
+            origin_embed = self.origin_proj(self.origin_embed(origin_ids).to(dtype=pair.dtype))
+            dest_embed = self.dest_proj(self.dest_embed(dest_ids).to(dtype=pair.dtype))
+            h = (
+                h
+                + origin_embed.view(1, num_origins, 1, self.context_dim)
+                + dest_embed.view(1, 1, num_destinations, self.context_dim)
+            )
+
+        if self.use_spatial_mixing:
+            for layer in self.spatial_layers:
+                h = layer(h, self.A_q, self.A_h)
 
         h = h.unsqueeze(3).expand(bsz, num_origins, num_destinations, self.horizon, self.context_dim)
         return self.context_norm(h)

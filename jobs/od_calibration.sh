@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --tasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=128gb
+#SBATCH --mem=78gb
 #SBATCH --time=1-00:00:00
 #SBATCH --output=NONE
 #SBATCH --partition=hpg-b200

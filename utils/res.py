@@ -41,7 +41,8 @@ DATASETS = [
 # Names must match model directories under result/<project>/.
 MODELS = [
     "PDR",
-    "PDR_v2",
+    "PDR_REG",
+    "PDR_REG_POST",
     "PDR_no_context",
     "PDR_no_zone_embed",
     "PDR_no_spatial",
