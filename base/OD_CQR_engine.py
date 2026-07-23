@@ -21,8 +21,8 @@ class OD_CQR_Engine(BaseEngine_OD):
     """Generic post-hoc CQR for 5-D OD tensors.
 
     ``--cqr horizon`` learns one correction per horizon; ``--cqr global``
-    pools horizons.  For tuple outputs, the tuple is interpreted as ``(n,p,pi)``
-    of a ZINB model and is converted to its mean in count space.
+    pools horizons.  A three-tuple is interpreted as ZINB ``(n,p,pi)``;
+    a two-tuple is interpreted as location-scale ``(loc, scale)`` output.
     """
 
     DEFAULT_METRICS = ["MAE", "MAPE", "MSE", "RMSE", "MPIW", "IS", "COV", "F1", "TZR", "KL", "CRPS"]
@@ -57,13 +57,25 @@ class OD_CQR_Engine(BaseEngine_OD):
     def _point_prediction(self, X, label):
         out = self._predict(X, label=label, iter=self._iter_cnt)
         if isinstance(out, tuple):
-            if len(out) != 3:
-                raise RuntimeError("OD_CQR only supports point output or ZINB (n,p,pi) output")
-            # ZINB parameters are defined in original count space; only the
-            # normalised data label is inverse transformed.
-            pred = zinb_mean(*out)
-            if self._normalize:
-                label = self._inverse_transform(label, device=self._device.type)
+            if len(out) == 3:
+                # ZINB parameters are defined in original count space; only
+                # the normalised data label is inverse transformed.
+                pred = zinb_mean(*out)
+                if self._normalize:
+                    label = self._inverse_transform(label, device=self._device.type)
+            elif len(out) == 2:
+                # Gaussian/Laplace/Student-t models use their location as the
+                # centre prediction for post-hoc conformal calibration.
+                pred, _ = out
+                if self._normalize:
+                    pred, label = self._inverse_transform(
+                        [pred, label], device=self._device.type
+                    )
+            else:
+                raise RuntimeError(
+                    "OD_CQR only supports point output, location-scale "
+                    "(loc,scale), or ZINB (n,p,pi) output"
+                )
         else:
             pred = out
             if self._normalize:

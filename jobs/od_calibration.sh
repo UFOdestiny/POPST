@@ -114,7 +114,7 @@ fi
 
 # These OD models opt into the generic post-hoc OD-CQR engine.  ZeroCQR below
 # remains intentionally limited to pdr_reg_post.
-MODELS=(agcrn astgcn gmel gwnet stgcn stgode stzinb pdr pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe pdr_reg pdr_reg_post)
+MODELS=(agcrn astgcn gmel gwnet stgcn stgode stzinb pdr pdr_no_context pdr_no_zone_embed pdr_no_spatial pdr_no_moe pdr_reg pdr_reg_gau pdr_reg_lap pdr_reg_t pdr_reg_post)
 if [[ -n ${MODELS_OVERRIDE:-} ]]; then
     read -r -a MODELS <<< "$MODELS_OVERRIDE"
 fi
@@ -144,6 +144,9 @@ result_model_name() {
         pdr_no_spatial) echo PDR_no_spatial ;;
         pdr_no_moe) echo PDR_no_moe ;;
         pdr_reg) echo PDR_REG ;;
+        pdr_reg_gau) echo PDR_REG_GAU ;;
+        pdr_reg_lap) echo PDR_REG_LAP ;;
+        pdr_reg_t) echo PDR_REG_T ;;
         pdr_reg_post) echo PDR_REG_POST ;;
         *) return 1 ;;
     esac
