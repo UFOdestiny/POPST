@@ -1,0 +1,76 @@
+# Project outputs / data (large, not tracked)
+output
+outputs/
+result
+datasets
+data/Analysis
+checkpoints/
+wandb/
+logs/
+EnergyAssimilation
+latex
+
+# Editor / tooling
+bash
+.vscode
+.github
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.ruff_cache
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files
+*.arrow
+*.parquet
+
+# Model weights
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.gguf
+
+# Caches (HuggingFace, etc.)
+.cache/
+hf_cache/
+
+# SLURM / logs
+*.log
+*.err
+slurm-*.out
+
+# Jupyter
+.ipynb_checkpoints/
+*.png
+
+# Secrets / environment files
+.env
+.env.*
+
+# Claude
+.claude*
+CLAUDE*
+
+visualization
+*.docx
