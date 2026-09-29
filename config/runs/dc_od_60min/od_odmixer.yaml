@@ -1,0 +1,6 @@
+model:
+  id: od/odmixer
+data:
+  id: dc_od_60min
+experiment:
+  name: dc_od_60min_od_odmixer

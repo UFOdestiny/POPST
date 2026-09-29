@@ -1,0 +1,100 @@
+flow/agcrn:
+  module: models.flow.agcrn
+flow/astgcn:
+  module: models.flow.astgcn
+flow/d2stgnn:
+  module: models.flow.d2stgnn
+flow/dcrnn:
+  module: models.flow.dcrnn
+flow/dgcrn:
+  module: models.flow.dgcrn
+flow/dstagnn:
+  module: models.flow.dstagnn
+flow/energymamba:
+  module: models.flow.energymamba
+flow/gluonts:
+  module: models.flow.gluonts
+flow/gwnet:
+  module: models.flow.gwnet
+flow/healthmamba:
+  module: models.flow.healthmamba
+flow/hl:
+  module: models.flow.hl
+flow/mamba:
+  module: models.flow.mamba
+flow/patchtst:
+  module: models.flow.patchtst
+flow/st_llm_plus:
+  module: models.flow.st_llm_plus
+flow/stgcn:
+  module: models.flow.stgcn
+flow/stgode:
+  module: models.flow.stgode
+flow/sttn:
+  module: models.flow.sttn
+flow/trustenergy:
+  module: models.flow.trustenergy
+flow/uqgnn:
+  module: models.flow.uqgnn
+od/agcrn:
+  module: models.od.agcrn
+od/arima:
+  module: models.od.arima
+od/astgcn:
+  module: models.od.astgcn
+od/gwnet:
+  module: models.od.gwnet
+od/ha:
+  module: models.od.ha
+od/hl:
+  module: models.od.hl
+od/odmixer:
+  module: models.od.odmixer
+od/stpro:
+  module: models.od.stpro
+od/od_ced:
+  module: models.od.od_ced
+od/pdr:
+  module: models.od.pdr
+od/pdr_no_context:
+  module: models.od.pdr_variants
+  factory: get_pdr_no_context_recipe
+od/pdr_no_moe:
+  module: models.od.pdr_variants
+  factory: get_pdr_no_moe_recipe
+od/pdr_no_spatial:
+  module: models.od.pdr_variants
+  factory: get_pdr_no_spatial_recipe
+od/pdr_no_zone_embed:
+  module: models.od.pdr_variants
+  factory: get_pdr_no_zone_embed_recipe
+od/pdr_reg:
+  module: models.od.pdr_reg
+od/pdr_reg_gau:
+  module: models.od.pdr_distributions
+  factory: get_pdr_reg_gau_recipe
+od/pdr_reg_lap:
+  module: models.od.pdr_distributions
+  factory: get_pdr_reg_lap_recipe
+od/pdr_reg_post:
+  module: models.od.pdr_reg
+  factory: get_post_recipe
+od/pdr_reg_t:
+  module: models.od.pdr_distributions
+  factory: get_pdr_reg_t_recipe
+od/sarima:
+  module: models.od.sarima
+od/stgcn:
+  module: models.od.stgcn
+od/stgode:
+  module: models.od.stgode
+od/stzinb:
+  module: models.od.stzinb
+od/var:
+  module: models.od.var
+od/zero:
+  module: models.od.zero
+od/persistence:
+  module: models.od.persistence
+od/seasonal:
+  module: models.od.seasonal

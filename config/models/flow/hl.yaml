@@ -1,0 +1,14 @@
+model:
+  id: flow/hl
+  params: {}
+  name: HL
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0
+  clip_grad_norm: 0

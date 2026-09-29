@@ -1,0 +1,8 @@
+data:
+  id: nyc_manhattan_od_15min_fhv
+  directory: nyc_manhattan_od_15min_fhv
+  adjacency: nyc_manhattan_od_15min_fhv/manhattan.npy
+  layout: TODC
+  channels:
+  - fhv
+  frequency: 15min

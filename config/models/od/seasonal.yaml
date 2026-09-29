@@ -1,0 +1,10 @@
+model:
+  id: od/seasonal
+  name: Seasonal_Naive
+  params:
+    days: 1
+training:
+  optimizer:
+    name: none
+runtime:
+  device: cpu

@@ -1,0 +1,34 @@
+model:
+  id: flow/d2stgnn
+  params:
+    num_hidden: 32
+    node_hidden: 10
+    time_emb_dim: 10
+    layer: 5
+    k_t: 3
+    k_s: 2
+    gap: 3
+    cl_epoch: 3
+    warm_epoch: 30
+    tpd: 96
+    dropout: 0.1
+  name: D2STGNN
+training:
+  optimizer:
+    name: Adam
+    lr: 0.002
+    weight_decay: 1.0e-05
+    eps: 1.0e-08
+  clip_grad_norm: 5
+  scheduler:
+    name: MultiStepLR
+    milestones:
+    - 1
+    - 30
+    - 38
+    - 46
+    - 54
+    - 62
+    - 70
+    - 80
+    gamma: 0.5

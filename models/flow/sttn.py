@@ -1,0 +1,318 @@
+from models.layers import GCN
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from models.base import BaseModel
+from engine.recipe import ModelRecipe
+from data.loader import load_adj_from_numpy
+from data.graph import normalize_adj_mx
+
+
+class STTN(BaseModel):
+    """
+    Reference code: https://github.com/xumingxingsjtu/STTN
+    """
+
+    def __init__(
+        self,
+        device,
+        supports,
+        blocks,
+        mlp_expand,
+        hidden_channels,
+        end_channels,
+        dropout,
+        **args,
+    ):
+        super(STTN, self).__init__(**args)
+        self.t_modules = nn.ModuleList()
+        self.s_modules = nn.ModuleList()
+        self.bn = nn.ModuleList()
+
+        self.start_conv = nn.Conv2d(
+            in_channels=self.input_dim, out_channels=hidden_channels, kernel_size=(1, 1)
+        )
+
+        self.supports = supports
+        self.blocks = blocks
+        for b in range(blocks):
+            self.t_modules.append(
+                TemporalTransformer(
+                    dim=hidden_channels,
+                    depth=1,
+                    heads=4,
+                    mlp_dim=hidden_channels * mlp_expand,
+                    time_num=self.seq_len,
+                    dropout=dropout,
+                    window_size=self.seq_len,
+                    device=device,
+                )
+            )
+
+            self.s_modules.append(
+                SpatialTransformer(
+                    dim=hidden_channels,
+                    depth=1,
+                    heads=4,
+                    mlp_dim=hidden_channels * mlp_expand,
+                    node_num=self.node_num,
+                    dropout=dropout,
+                    stage=b,
+                )
+            )
+
+            self.bn.append(nn.BatchNorm2d(hidden_channels))
+
+        self.end_conv_1 = nn.Conv2d(
+            in_channels=hidden_channels,
+            out_channels=end_channels,
+            kernel_size=(1, 1),
+            bias=True,
+        )
+
+        self.end_conv_2 = nn.Conv2d(
+            in_channels=end_channels,
+            out_channels=self.output_dim * self.horizon,
+            kernel_size=(1, 1),
+            bias=True,
+        )
+
+    def forward(self, inputs, label=None):  # (b, t, n, f)
+        x = inputs.transpose(1, 3)
+        x = self.start_conv(x)
+        for i in range(self.blocks):
+            residual = x
+            x = self.s_modules[i](x, torch.stack(self.supports))
+            x = self.t_modules[i](x)
+            x = self.bn[i](x) + residual
+
+        x = x[..., -1:]
+        out = F.relu(self.end_conv_1(x))
+        out = self.end_conv_2(out).permute(0, 3, 2, 1)
+        return out.view(out.shape[0], self.horizon, out.shape[2], self.output_dim)
+
+
+class TemporalTransformer(nn.Module):
+    def __init__(self, dim, depth, heads, mlp_dim, time_num, dropout, window_size, device):
+        super().__init__()
+        self.pos_embedding = nn.Parameter(torch.randn(1, time_num, dim))
+        self.layers = nn.ModuleList([])
+        for i in range(depth):
+            self.layers.append(
+                nn.ModuleList(
+                    [
+                        TemporalAttention(
+                            dim=dim,
+                            heads=heads,
+                            window_size=window_size,
+                            dropout=dropout,
+                            # Official STTN is a bidirectional encoder over the
+                            # fixed input window (no causal mask).
+                            causal=False,
+                            stage=i,
+                            device=device,
+                        ),
+                        PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout)),
+                    ]
+                )
+            )
+
+    def forward(self, x):
+        b, c, n, t = x.shape
+        x = x.permute(0, 2, 3, 1).reshape(b * n, t, c)
+        x = x + self.pos_embedding
+        for attn, ff in self.layers:
+            x = attn(x) + x
+            x = ff(x) + x
+        x = x.reshape(b, n, t, c).permute(0, 3, 1, 2)
+        return x
+
+
+class TemporalAttention(nn.Module):
+    def __init__(
+        self,
+        dim,
+        heads=8,
+        window_size=1,
+        dropout=0.0,
+        causal=True,
+        stage=0,
+        device=None,
+        qkv_bias=False,
+        qk_scale=None,
+    ):
+        super().__init__()
+        assert dim % heads == 0, f"dim {dim} should be divided by num_heads {heads}."
+
+        self.dim = dim
+        self.num_heads = heads
+        self.causal = causal
+        head_dim = dim // heads
+        self.scale = qk_scale or head_dim**-0.5
+        self.window_size = window_size
+        self.stage = stage
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+
+        self.attn_drop = nn.Dropout(dropout)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(dropout)
+
+        self.mask = torch.tril(torch.ones(window_size, window_size)).to(device)
+
+    def forward(self, x):
+        B_prev, T_prev, C_prev = x.shape
+        if self.window_size > 0:
+            x = x.reshape(-1, self.window_size, C_prev)
+        B, T, C = x.shape
+
+        qkv = (
+            self.qkv(x)
+            .reshape(B, -1, 3, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+
+        if self.causal:
+            attn = attn.masked_fill(self.mask == 0, float("-inf"))
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, T, C)
+
+        x = self.proj(x)
+        x = self.proj_drop(x)
+
+        if self.window_size > 0:
+            x = x.reshape(B_prev, T_prev, C_prev)
+        return x
+
+
+class SpatialTransformer(nn.Module):
+    def __init__(self, dim, depth, heads, mlp_dim, node_num, dropout, stage=0):
+        super().__init__()
+        self.pos_embedding = nn.Parameter(torch.randn(1, node_num, dim))
+        self.layers = nn.ModuleList([])
+        for i in range(depth):
+            self.layers.append(
+                nn.ModuleList(
+                    [
+                        SpatialAttention(dim, heads=heads, dropout=dropout, stage=stage),
+                        PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout)),
+                        GCN(dim, dim, dropout, support_len=2),
+                        # learned gate between the transformer branch (U_S) and
+                        # the GCN branch (X_G), as in the official STTN spatial
+                        # block: out = g*U_S + (1-g)*X_G.
+                        nn.ModuleList([nn.Linear(dim, dim), nn.Linear(dim, dim)]),
+                    ]
+                )
+            )
+
+    def forward(self, x, adj):
+        b, c, n, t = x.shape
+        x = x.permute(0, 3, 2, 1).reshape(b * t, n, c)
+        x = x + self.pos_embedding
+        for attn, ff, gcn, (fs, fg) in self.layers:
+            residual = x.reshape(b, t, n, c)
+            # transformer (self-attention + feed-forward) branch
+            u_s = attn(x, adj) + x
+            u_s = ff(u_s) + u_s
+            # graph-convolution branch
+            x_g = gcn(residual.permute(0, 3, 2, 1), adj).permute(0, 3, 2, 1).reshape(b * t, n, c)
+            # gated fusion (STTN's defining spatial mechanism)
+            g = torch.sigmoid(fs(u_s) + fg(x_g))
+            x = g * u_s + (1 - g) * x_g
+        x = x.reshape(b, t, n, c).permute(0, 3, 2, 1)
+        return x
+
+
+class SpatialAttention(nn.Module):
+    def __init__(self, dim, heads=8, dropout=0.0, stage=0, qkv_bias=False, qk_scale=None):
+        super().__init__()
+        assert dim % heads == 0, f"dim {dim} should be divided by num_heads {heads}."
+
+        self.dim = dim
+        self.num_heads = heads
+        head_dim = dim // heads
+        self.scale = qk_scale or head_dim**-0.5
+        self.stage = stage
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+
+        self.attn_drop = nn.Dropout(dropout)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(dropout)
+
+    def forward(self, x, adj=None):
+        B, N, C = x.shape
+
+        qkv = (
+            self.qkv(x)
+            .reshape(B, -1, 3, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+
+        return x
+
+
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.fn = fn
+
+    def forward(self, x, **kwargs):
+        return self.fn(self.norm(x), **kwargs)
+
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout=0.0):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def setup(config, data_path, adj_path, node_num, device, logger):
+    adj_mx = load_adj_from_numpy(adj_path)
+    adj_mx = normalize_adj_mx(adj_mx, config.model.params.adj_type)
+    supports = [torch.tensor(i).to(device) for i in adj_mx]
+    return {"supports": supports, "device": device}
+
+
+def build_model(config, node_num, **ctx):
+    return STTN(
+        node_num=node_num,
+        input_dim=config.data.input_dim,
+        output_dim=config.data.output_dim,
+        device=ctx["device"],
+        supports=ctx["supports"],
+        blocks=config.model.params.blocks,
+        mlp_expand=config.model.params.mlp_expand,
+        hidden_channels=config.model.params.hid_dim,
+        end_channels=config.model.params.end_dim,
+        dropout=config.model.params.dropout,
+        horizon=config.data.horizon,
+        seq_len=config.data.seq_len,
+    )
+
+
+def get_recipe():
+    return ModelRecipe(build_model=build_model, setup=setup)

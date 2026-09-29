@@ -1,0 +1,9 @@
+data:
+  id: dc_60min
+  directory: dc_60min
+  adjacency: dc_60min/dc.npy
+  layout: TNF
+  channels:
+  - taxi
+  - bike
+  frequency: 60min

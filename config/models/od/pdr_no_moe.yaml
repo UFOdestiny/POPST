@@ -1,0 +1,20 @@
+model:
+  id: od/pdr_no_moe
+  params:
+    context_dim: 64
+    zone_embed_dim: 16
+    pdr_num_spatial_layers: 2
+    num_experts: 3
+    head_hidden_dim: 128
+    dropout: 0.0
+  name: PDR_no_moe
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.0002
+    weight_decay: 0.0
+  clip_grad_norm: 5

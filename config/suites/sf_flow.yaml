@@ -1,0 +1,29 @@
+matrix:
+  model.id:
+  - flow/agcrn
+  - flow/astgcn
+  - flow/d2stgnn
+  - flow/dcrnn
+  - flow/dgcrn
+  - flow/dstagnn
+  - flow/energymamba
+  - flow/gluonts
+  - flow/gwnet
+  - flow/healthmamba
+  - flow/hl
+  - flow/mamba
+  - flow/patchtst
+  - flow/st_llm_plus
+  - flow/stgcn
+  - flow/stgode
+  - flow/sttn
+  - flow/trustenergy
+  - flow/uqgnn
+  data.version:
+  - 2025_12to1
+  training.seed:
+  - 2026
+overrides: {}
+runs:
+- ../runs/sf_15min/flow_hl.yaml
+devices: all

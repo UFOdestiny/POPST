@@ -1,0 +1,24 @@
+model:
+  id: od/pdr_reg_post
+data:
+  id: dc_od_60min_bike
+experiment:
+  name: dc_od_60min_bike_od_zero_cal
+calibration:
+  mode: 'no'
+  alpha: 0.1
+  options:
+    zero_cqr_alpha: 0.1
+    zero_cqr_gate_quantile: 0.95
+    zero_cqr_grid_size: 33
+    zero_cqr_min_group: 64
+    zero_cqr_mse_weight: 1.0
+    zero_cqr_period: 96
+    zero_cqr_disable_online: false
+    zero_cqr_zero_floor: 0.001
+    zero_cqr_active_bins: 32
+runtime:
+  mode: calibrate
+  checkpoint: null
+output:
+  predictions: true

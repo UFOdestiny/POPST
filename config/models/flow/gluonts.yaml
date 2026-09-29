@@ -1,0 +1,22 @@
+model:
+  id: flow/gluonts
+  params:
+    init_dim: 32
+    hid_dim: 32
+    end_dim: 64
+    num_layers: 3
+    kernel_size: 3
+    num_heads: 4
+    use_attention: true
+    dropout: 0.1
+  name: GluonTS
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0001
+  clip_grad_norm: 5

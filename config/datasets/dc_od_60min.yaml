@@ -1,0 +1,9 @@
+data:
+  id: dc_od_60min
+  directory: dc_od_60min
+  adjacency: dc_od_60min/dc.npy
+  layout: TODC
+  channels:
+  - taxi
+  - bike
+  frequency: 60min

@@ -1,0 +1,14 @@
+model:
+  id: od/pdr_reg
+data:
+  id: dc_od_60min_bike
+experiment:
+  name: dc_od_60min_bike_od_aci
+runtime:
+  mode: calibrate
+  checkpoint: null
+calibration:
+  mode: horizon
+  method: aci
+output:
+  predictions: true

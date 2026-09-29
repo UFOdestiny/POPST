@@ -1,0 +1,8 @@
+model:
+  id: od/zero
+  name: Always_Zero
+training:
+  optimizer:
+    name: none
+runtime:
+  device: cpu

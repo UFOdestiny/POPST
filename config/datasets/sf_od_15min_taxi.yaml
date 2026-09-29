@@ -1,0 +1,8 @@
+data:
+  id: sf_od_15min_taxi
+  directory: sf_od_15min_taxi
+  adjacency: sf_od_15min_taxi/sf.npy
+  layout: TODC
+  channels:
+  - taxi
+  frequency: 15min

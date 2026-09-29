@@ -1,0 +1,23 @@
+model:
+  id: flow/trustenergy
+  params:
+    embed_dim: 10
+    rnn_unit: 64
+    num_layers: 2
+    cheb_k: 2
+    tcn_kernel: 3
+    dropout: 0.1
+  name: TrustEnergy
+calibration:
+  options:
+    scqr_window: 200
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: AdamW
+    lr: 0.001
+    weight_decay: 0.0005
+  clip_grad_norm: 5.0

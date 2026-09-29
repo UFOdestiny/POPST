@@ -1,0 +1,17 @@
+model:
+  id: flow/stgode
+  params:
+    tpd: 96
+    sigma: 0.1
+    thres: 0.6
+  name: STGODE
+training:
+  optimizer:
+    name: AdamW
+    lr: 0.002
+    weight_decay: 0
+  clip_grad_norm: 0
+  scheduler:
+    name: StepLR
+    step_size: 50
+    gamma: 0.5

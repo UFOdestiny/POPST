@@ -1,0 +1,6 @@
+model:
+  id: od/sarima
+data:
+  id: nyc_manhattan_od_15min
+experiment:
+  name: nyc_manhattan_od_15min_od_sarima

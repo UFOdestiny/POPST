@@ -1,0 +1,6 @@
+model:
+  id: od/stzinb
+data:
+  id: dc_od_60min
+experiment:
+  name: dc_od_60min_od_stzinb

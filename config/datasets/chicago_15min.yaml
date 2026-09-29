@@ -1,0 +1,10 @@
+data:
+  id: chicago_15min
+  directory: chicago_15min
+  adjacency: chicago_15min/chicago.npy
+  layout: TNF
+  channels:
+  - taxi
+  - tnp
+  - bike
+  frequency: 15min

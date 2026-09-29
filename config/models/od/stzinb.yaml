@@ -1,0 +1,19 @@
+model:
+  id: od/stzinb
+  params:
+    rank_s: 32
+    rank_t: 32
+    hidden_dim_s: 16
+    hidden_dim_t: 16
+    dropout: 0.1
+  name: STZINB
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0001
+  clip_grad_norm: 5

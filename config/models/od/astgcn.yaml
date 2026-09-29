@@ -1,0 +1,19 @@
+model:
+  id: od/astgcn
+  params:
+    order: 3
+    nb_block: 2
+    nb_chev_filter: 64
+    nb_time_filter: 64
+    time_stride: 1
+  name: ASTGCN_OD
+training:
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0001
+  clip_grad_norm: 5
+  scheduler:
+    name: CosineAnnealingLR
+    T_max: ${training.max_epochs}
+    eta_min: 1.0e-06

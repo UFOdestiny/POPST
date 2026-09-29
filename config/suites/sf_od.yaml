@@ -1,0 +1,27 @@
+matrix:
+  data.version:
+  - 2025_12to1
+  training.seed:
+  - 2026
+overrides: {}
+runs:
+- ../runs/sf_od_15min/od_agcrn.yaml
+- ../runs/sf_od_15min/od_astgcn.yaml
+- ../runs/sf_od_15min/od_gwnet.yaml
+- ../runs/sf_od_15min/od_hl.yaml
+- ../runs/sf_od_15min/od_odmixer.yaml
+- ../runs/sf_od_15min/od_stpro.yaml
+- ../runs/sf_od_15min/od_od_ced.yaml
+- ../runs/sf_od_15min/od_pdr.yaml
+- ../runs/sf_od_15min/od_pdr_no_context.yaml
+- ../runs/sf_od_15min/od_pdr_no_moe.yaml
+- ../runs/sf_od_15min/od_pdr_no_spatial.yaml
+- ../runs/sf_od_15min/od_pdr_no_zone_embed.yaml
+- ../runs/sf_od_15min/od_pdr_reg.yaml
+- ../runs/sf_od_15min/od_pdr_reg_gau.yaml
+- ../runs/sf_od_15min/od_pdr_reg_lap.yaml
+- ../runs/sf_od_15min/od_pdr_reg_t.yaml
+- ../runs/sf_od_15min/od_stgcn.yaml
+- ../runs/sf_od_15min/od_stgode.yaml
+- ../runs/sf_od_15min/od_stzinb.yaml
+devices: all

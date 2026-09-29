@@ -1,0 +1,6 @@
+model:
+  id: od/stpro
+data:
+  id: sf_od_15min
+experiment:
+  name: sf_od_15min_od_stpro

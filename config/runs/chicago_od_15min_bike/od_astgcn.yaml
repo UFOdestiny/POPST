@@ -1,0 +1,6 @@
+model:
+  id: od/astgcn
+data:
+  id: chicago_od_15min_bike
+experiment:
+  name: chicago_od_15min_bike_od_astgcn

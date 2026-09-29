@@ -1,0 +1,6 @@
+model:
+  id: od/stzinb
+data:
+  id: chicago_od_15min_bike
+experiment:
+  name: chicago_od_15min_bike_od_stzinb

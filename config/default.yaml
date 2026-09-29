@@ -1,0 +1,64 @@
+schema_version: 1
+experiment:
+  name: default
+  comment: ''
+model:
+  id: null
+  name: null
+  params: {}
+data:
+  id: null
+  version: '2025_12to1'
+  directory: null
+  adjacency: null
+  root: datasets
+  layout: null
+  channels: []
+  frequency: null
+  seq_len: null
+  horizon: null
+  input_dim: null
+  output_dim: null
+  node_num: null
+  cqr_channels: null
+  normalize: true
+  protocol: legacy
+training:
+  seed: 2026
+  batch_size: 128
+  max_epochs: 400
+  patience: 30
+  min_delta: 0.001
+  clip_grad_norm: 5.0
+  evaluate_test: true
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0
+  scheduler:
+    name: none
+calibration:
+  mode: 'no'
+  method: split
+  alpha: 0.1
+  aci_gamma: 0.005
+  aci_calibration_size: 200000
+  tag: ''
+  options: {}
+runtime:
+  skip_completed: true
+  device: cuda
+  mode: train
+  checkpoint: null
+  num_workers: 0
+  pin_memory: false
+  profile: false
+  quiet: false
+  threads: 4
+  deterministic: false
+  max_train_samples: null
+  max_val_samples: null
+  max_test_samples: null
+output:
+  predictions: false
+  test_inputs: false

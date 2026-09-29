@@ -1,0 +1,35 @@
+model:
+  id: flow/healthmamba
+  params:
+    num_layers: 2
+    d_model: 64
+    d_hid: 128
+    unet_depth: 2
+    d_state: 16
+    expand: 2
+    d_conv: 4
+    emb_dim: 32
+    dropout: 0.3
+    use_stce: 1
+    use_gmamba: 1
+    use_node: 1
+    use_dist: 1
+    use_param: 1
+  name: HealthMamba
+calibration:
+  options:
+    phqc: horizon
+    phqc_mc: 20
+    phqc_w_nll: 1.0
+    phqc_w_param: 1.0
+    phqc_w_calib: 1.0
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: AdamW
+    lr: 0.001
+    weight_decay: 0.0005
+  clip_grad_norm: 1.0

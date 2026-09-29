@@ -1,0 +1,6 @@
+model:
+  id: od/pdr_reg
+data:
+  id: chicago_od_15min_taxi
+experiment:
+  name: chicago_od_15min_taxi_od_pdr_reg

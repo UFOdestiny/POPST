@@ -1,0 +1,8 @@
+data:
+  id: sf_od_15min_bike
+  directory: sf_od_15min_bike
+  adjacency: sf_od_15min_bike/sf.npy
+  layout: TODC
+  channels:
+  - bike
+  frequency: 15min

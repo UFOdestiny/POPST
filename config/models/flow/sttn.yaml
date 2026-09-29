@@ -1,0 +1,18 @@
+model:
+  id: flow/sttn
+  params:
+    adj_type: doubletransition
+    blocks: 2
+    mlp_expand: 2
+    hid_dim: 32
+    end_dim: 512
+    dropout: 0.1
+  name: STTN
+training:
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0001
+  clip_grad_norm: 5
+  scheduler:
+    name: none

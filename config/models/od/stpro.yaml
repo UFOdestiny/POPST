@@ -1,0 +1,17 @@
+model:
+  id: od/stpro
+  name: STPro_OD
+  params:
+    hidden_dim: 128
+    num_heads: 2
+    prototype_num: 0  # ceil(node_num / 3), inferred from the released 69/23 layout
+    dropout: 0.2
+training:
+  optimizer:
+    name: Adam
+    lr: 0.003
+    weight_decay: 0.0
+    eps: 1.0e-8
+  scheduler:
+    name: none
+  clip_grad_norm: 5.0

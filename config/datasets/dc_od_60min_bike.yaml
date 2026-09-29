@@ -1,0 +1,8 @@
+data:
+  id: dc_od_60min_bike
+  directory: dc_od_60min_bike
+  adjacency: dc_od_60min_bike/dc.npy
+  layout: TODC
+  channels:
+  - bike
+  frequency: 60min

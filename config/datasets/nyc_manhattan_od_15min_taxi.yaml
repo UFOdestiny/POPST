@@ -1,0 +1,8 @@
+data:
+  id: nyc_manhattan_od_15min_taxi
+  directory: nyc_manhattan_od_15min_taxi
+  adjacency: nyc_manhattan_od_15min_taxi/manhattan.npy
+  layout: TODC
+  channels:
+  - taxi
+  frequency: 15min

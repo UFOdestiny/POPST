@@ -1,0 +1,9 @@
+data:
+  id: sf_15min
+  directory: sf_15min
+  adjacency: sf_15min/sf.npy
+  layout: TNF
+  channels:
+  - taxi
+  - bike
+  frequency: 15min

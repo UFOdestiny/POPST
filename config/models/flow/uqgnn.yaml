@@ -1,0 +1,21 @@
+model:
+  id: flow/uqgnn
+  params:
+    hidden_dim_s: 64
+    hidden_dim_t: 64
+    emb_dim: 32
+    kernel_size: 3
+    temporal_layers: 2
+    dropout: 0.5
+    min_vec: 1.0e-06
+  name: UQGNN
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0005
+  clip_grad_norm: 5

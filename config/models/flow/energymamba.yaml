@@ -1,0 +1,26 @@
+model:
+  id: flow/energymamba
+  params:
+    num_layers: 2
+    d_model: 64
+    unet_depth: 2
+    d_state: 16
+    expand: 2
+    d_conv: 4
+    dropout: 0.1
+  name: EnergyMamba
+calibration:
+  options:
+    acqr_window: 100
+    acqr_gamma: 0.005
+    acqr_delta: 1.0e-06
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: AdamW
+    lr: 0.001
+    weight_decay: 0.0005
+  clip_grad_norm: 1.0

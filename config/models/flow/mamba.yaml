@@ -1,0 +1,18 @@
+model:
+  id: flow/mamba
+  params:
+    num_layers: 2
+    d_model: 128
+    unet_depth: 2
+    dropout: 0.1
+  name: Mamba
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0
+  clip_grad_norm: 0

@@ -1,0 +1,6 @@
+model:
+  id: od/odmixer
+data:
+  id: chicago_od_15min
+experiment:
+  name: chicago_od_15min_od_odmixer

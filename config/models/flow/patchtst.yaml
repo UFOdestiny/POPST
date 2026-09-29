@@ -1,0 +1,21 @@
+model:
+  id: flow/patchtst
+  params:
+    patch_len: 2
+    stride: 1
+    d_model: 64
+    num_heads: 8
+    d_ff: 64
+    num_layers: 2
+    dropout: 0.3
+  name: PatchTST
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0001
+  clip_grad_norm: 5

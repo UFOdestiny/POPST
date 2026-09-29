@@ -1,0 +1,18 @@
+model:
+  id: od/stgcn
+  params:
+    Kt: 2
+    Ks: 3
+    block_num: 2
+    dropout: 0.5
+  name: STGCN_OD
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0005
+  clip_grad_norm: 0

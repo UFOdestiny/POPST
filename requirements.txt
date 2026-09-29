@@ -1,28 +1,37 @@
-# Core (CUDA 12.8 build)
-torch==2.8.0
-torchaudio==2.8.0
-torchvision==0.23.0
-numpy==2.0.2
-pandas==2.2.3
-scipy==1.15.1
+# Tested in the existing Python 3.11 / CUDA 12.8 environment.
+# Keep the installed CUDA build of torch; this pin also accepts 2.10.0+cu128.
+torch==2.10.0
+numpy==2.2.6
+pandas==3.0.1
+scipy==1.17.1
+scikit-learn==1.8.0
+PyYAML==6.0.3
+python-dotenv==1.2.2
+tqdm==4.67.3
+psutil==7.2.2
 
-# Training & evaluation
-scikit-learn==1.6.1
-statsmodels==0.14.4
+# Models and evaluation. Install with --no-build-isolation for Mamba.
+statsmodels==0.15.0
 properscoring==0.1
-tqdm==4.67.1
-psutil==6.1.1
-pyyaml==6.0.2
-
-# Model-specific
 torchdiffeq==0.2.5
-mamba_ssm==2.2.6.post3
-dgl==2.4.0          # +cu124
-gluonts==0.16.2
-transformers==4.57.1
+fastdtw==0.3.4
+transformers==5.7.0
 peft==0.19.1
+einops==0.8.2
 
-# Geo / data processing
-geopandas==1.0.1
+# Data processing, reports and notebooks.
+geopandas==1.1.4
 shapely==2.1.2
-fastdtw==0.2.0
+pyarrow==23.0.1
+matplotlib==3.10.8
+requests==2.32.5
+nbformat==5.11.1
+nbclient==0.11.0
+ipykernel==7.2.0
+
+# Native CUDA extension (uses the active torch build).
+mamba-ssm==2.3.2.post1
+
+# Repository validation.
+pytest==9.0.2
+ruff==0.12.12

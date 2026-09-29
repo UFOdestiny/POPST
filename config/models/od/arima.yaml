@@ -1,0 +1,19 @@
+model:
+  id: od/arima
+  params:
+    order:
+    - 6
+    - 0
+    - 0
+    n_threads: 16
+  name: ARIMA
+training:
+  optimizer:
+    name: none
+    lr: 0.001
+    weight_decay: 0.0
+  clip_grad_norm: 0
+  scheduler:
+    name: none
+runtime:
+  device: cpu

@@ -1,0 +1,15 @@
+model:
+  id: od/ha
+  params:
+    step: 6
+  name: HA_OD
+training:
+  optimizer:
+    name: none
+    lr: 0.001
+    weight_decay: 0.0
+  clip_grad_norm: 0
+  scheduler:
+    name: none
+runtime:
+  device: cpu

@@ -1,0 +1,19 @@
+model:
+  id: od/odmixer
+  params:
+    hid_dim: 16
+    layer_nums: 5
+    dropout: 0.3
+    period: 0  # previous day, inferred from data.frequency
+  name: ODMixer_OD
+training:
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0
+    eps: 1.0e-12
+  clip_grad_norm: 0

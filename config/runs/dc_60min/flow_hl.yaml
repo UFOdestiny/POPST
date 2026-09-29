@@ -1,0 +1,9 @@
+model:
+  id: flow/hl
+data:
+  id: dc_60min
+experiment:
+  name: dc_60min_flow_hl
+runtime:
+  mode: train
+  device: cuda

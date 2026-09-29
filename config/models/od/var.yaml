@@ -1,0 +1,16 @@
+model:
+  id: od/var
+  params:
+    k: 6
+    lags: 6
+  name: LowRank_VAR
+training:
+  optimizer:
+    name: none
+    lr: 0.001
+    weight_decay: 0.0
+  clip_grad_norm: 0
+  scheduler:
+    name: none
+runtime:
+  device: cpu

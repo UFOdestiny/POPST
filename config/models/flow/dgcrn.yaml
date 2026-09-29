@@ -1,0 +1,21 @@
+model:
+  id: flow/dgcrn
+  params:
+    gcn_depth: 3
+    rnn_size: 64
+    hyperGNN_dim: 16
+    node_dim: 40
+    middle_dim: 2
+    tanhalpha: 3
+    cl_decay_step: 4000
+    tpd: 24
+    dropout: 0.3
+  name: DGCRN
+training:
+  scheduler:
+    name: none
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0001
+  clip_grad_norm: 5

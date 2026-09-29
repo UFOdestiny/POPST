@@ -1,0 +1,8 @@
+model:
+  id: od/persistence
+  name: Persistence
+training:
+  optimizer:
+    name: none
+runtime:
+  device: cpu

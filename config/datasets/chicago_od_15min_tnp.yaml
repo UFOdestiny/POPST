@@ -1,0 +1,8 @@
+data:
+  id: chicago_od_15min_tnp
+  directory: chicago_od_15min_tnp
+  adjacency: chicago_od_15min_tnp/chicago.npy
+  layout: TODC
+  channels:
+  - tnp
+  frequency: 15min

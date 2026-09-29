@@ -1,0 +1,27 @@
+matrix:
+  data.version:
+  - 2025_12to1
+  training.seed:
+  - 2026
+overrides: {}
+runs:
+- ../runs/chicago_od_15min/od_agcrn.yaml
+- ../runs/chicago_od_15min/od_astgcn.yaml
+- ../runs/chicago_od_15min/od_gwnet.yaml
+- ../runs/chicago_od_15min/od_hl.yaml
+- ../runs/chicago_od_15min/od_odmixer.yaml
+- ../runs/chicago_od_15min/od_stpro.yaml
+- ../runs/chicago_od_15min/od_od_ced.yaml
+- ../runs/chicago_od_15min/od_pdr.yaml
+- ../runs/chicago_od_15min/od_pdr_no_context.yaml
+- ../runs/chicago_od_15min/od_pdr_no_moe.yaml
+- ../runs/chicago_od_15min/od_pdr_no_spatial.yaml
+- ../runs/chicago_od_15min/od_pdr_no_zone_embed.yaml
+- ../runs/chicago_od_15min/od_pdr_reg.yaml
+- ../runs/chicago_od_15min/od_pdr_reg_gau.yaml
+- ../runs/chicago_od_15min/od_pdr_reg_lap.yaml
+- ../runs/chicago_od_15min/od_pdr_reg_t.yaml
+- ../runs/chicago_od_15min/od_stgcn.yaml
+- ../runs/chicago_od_15min/od_stgode.yaml
+- ../runs/chicago_od_15min/od_stzinb.yaml
+devices: all

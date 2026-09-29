@@ -1,0 +1,6 @@
+model:
+  id: od/stgcn
+data:
+  id: nyc_manhattan_od_15min_taxi
+experiment:
+  name: nyc_manhattan_od_15min_taxi_od_stgcn

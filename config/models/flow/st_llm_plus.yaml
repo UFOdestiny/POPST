@@ -1,0 +1,20 @@
+model:
+  id: flow/st_llm_plus
+  params:
+    gpt_channel: 256
+    llm_layer: 6
+    U: 1
+    lora_rank: 16
+    pretrained_model: gpt2
+    dropout: 0.1
+  name: ST-LLM-plus
+training:
+  optimizer:
+    name: AdamW
+    lr: 0.001
+    weight_decay: 0.0001
+  clip_grad_norm: 5
+  scheduler:
+    name: CosineAnnealingLR
+    T_max: ${training.max_epochs}
+    eta_min: 1.0e-06
