@@ -54,34 +54,8 @@ od/stpro:
   module: models.od.stpro
 od/od_ced:
   module: models.od.od_ced
-od/pdr:
-  module: models.od.pdr
-od/pdr_no_context:
-  module: models.od.pdr_variants
-  factory: get_pdr_no_context_recipe
-od/pdr_no_moe:
-  module: models.od.pdr_variants
-  factory: get_pdr_no_moe_recipe
-od/pdr_no_spatial:
-  module: models.od.pdr_variants
-  factory: get_pdr_no_spatial_recipe
-od/pdr_no_zone_embed:
-  module: models.od.pdr_variants
-  factory: get_pdr_no_zone_embed_recipe
-od/pdr_reg:
-  module: models.od.pdr_reg
-od/pdr_reg_gau:
-  module: models.od.pdr_distributions
-  factory: get_pdr_reg_gau_recipe
-od/pdr_reg_lap:
-  module: models.od.pdr_distributions
-  factory: get_pdr_reg_lap_recipe
-od/pdr_reg_post:
-  module: models.od.pdr_reg
-  factory: get_post_recipe
-od/pdr_reg_t:
-  module: models.od.pdr_distributions
-  factory: get_pdr_reg_t_recipe
+od/pdr_hurdle:
+  module: models.od.pdr_hurdle
 od/sarima:
   module: models.od.sarima
 od/stgcn:

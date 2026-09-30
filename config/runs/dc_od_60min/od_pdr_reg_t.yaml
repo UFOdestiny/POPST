@@ -1,6 +1,0 @@
-model:
-  id: od/pdr_reg_t
-data:
-  id: dc_od_60min
-experiment:
-  name: dc_od_60min_od_pdr_reg_t

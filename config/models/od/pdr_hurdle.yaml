@@ -1,0 +1,23 @@
+model:
+  id: od/pdr_hurdle
+  name: PDR_HurdleQuantile
+  params:
+    hid_dim: 16
+    layer_nums: 5
+    dropout: 0.3
+    period: 0
+    quantile_count: 11
+    event_normalization: true
+    occurrence_weight: 0.1
+    quantile_weight: 0.1
+training:
+  optimizer:
+    name: Adam
+    lr: 0.001
+    weight_decay: 0.0
+    eps: 1.0e-12
+  scheduler:
+    name: StepLR
+    step_size: 200
+    gamma: 0.95
+  clip_grad_norm: 0

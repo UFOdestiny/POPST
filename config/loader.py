@@ -164,6 +164,8 @@ def load_config(path=None, overrides=(), *, model=None, dataset=None):
             defaults[requested], current if requested == current["name"] else {}
         )
     value = merge(base, raw, strict=True)
+    if value['data']['protocol'] != 'legacy':
+        raise ValueError('Only the original legacy data protocol is supported')
     if value["schema_version"] != 1:
         raise ValueError("Unsupported schema_version")
     if value["training"]["scheduler"].get("T_max") == "${training.max_epochs}":
@@ -202,6 +204,8 @@ def load_config(path=None, overrides=(), *, model=None, dataset=None):
         v = value["data"][key]
         if not isinstance(v, str) or Path(v).is_absolute() or ".." in Path(v).parts:
             raise ValueError(f"data.{key} must be a relative path within its configured root")
+    if value['data']['version'] != '2025_12to1':
+        raise ValueError('Use the original prepared data version 2025_12to1')
     return Config(value)
 
 

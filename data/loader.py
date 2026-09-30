@@ -120,8 +120,6 @@ def load_dataset(data_path, config, logger, drop=False):
         f"Data shape: {data.shape}; shared float32 storage: {data.nbytes / 1024**2:.1f} MiB"
     )
     splits = ["train", "val", "test"]
-    if config.data.protocol == "revision":
-        splits += ["tune", "fit", "cal"]
     for split in splits:
         indices = np.load(folder / f"idx_{split}.npy")
         limit = getattr(config.runtime, f"max_{split}_samples", None)

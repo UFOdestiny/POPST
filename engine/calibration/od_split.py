@@ -91,8 +91,6 @@ class OD_CQR_Engine(BaseEngine_OD):
         return torch.cat(preds), torch.cat(labels)
 
     def calibrate(self, mode="val"):
-        if self.config.data.protocol == "revision":
-            mode = "cal"
         pred, label = self._collect(mode)
         scores = torch.abs(label - pred)
         if self.cqr_mode == "horizon":

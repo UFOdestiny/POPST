@@ -228,8 +228,6 @@ def load_data(data_path, config, logger, drop=False):
     period = config.model.params.period or steps_per_day(config.data.frequency)
     loaders = {}
     splits = ["train", "val", "test"]
-    if config.data.protocol == "revision":
-        splits += ["tune", "fit", "cal"]
     for split in splits:
         indices = np.load(folder / f"idx_{split}.npy")
         usable = indices[indices >= config.data.seq_len - 1 + period]

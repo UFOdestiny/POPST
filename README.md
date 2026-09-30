@@ -1,111 +1,76 @@
 # POPST
 
-Version 2.0. See [release changes](CHANGELOG.md).
-
-PyTorch models for node flow and origin–destination (OD) forecasting, with conformal
-calibration. Model IDs and implementations are listed in `config/models/registry.yaml`.
+PyTorch forecasting for origin–destination demand and node flow. The retained PDR
+method is **PDRHurdleQuantile** (`od/pdr_hurdle`). It predicts flow occurrence and
+positive-demand quantiles, then returns the marginal median in count space.
 
 ## Run
 
-Use the project Python environment from the repository root:
+Use Python 3.11 with the project dependencies:
 
 ```bash
 pip install --no-build-isolation -r requirements.txt
-python run.py config/runs/dc_od_60min_bike/od_pdr_reg.yaml --dry-run
-python run.py config/runs/dc_od_60min_bike/od_pdr_reg.yaml
-python run.py config/suites/od_baselines.yaml
-python run.py config/suites/od_zeropdr.yaml
+python run.py config/runs/dc_od_60min_bike/od_pdr_hurdle.yaml --dry-run
+python run.py config/runs/dc_od_60min_bike/od_pdr_hurdle.yaml --device cuda:0
+python run.py config/suites/od_pdr_hurdle.yaml
 ```
 
-Tested with Python 3.11 and Torch 2.10.0 + CUDA 12.8. Mamba builds against the active
-Torch/CUDA installation. ST-LLM-plus needs local GPT-2 weights or downloads them on first use.
-
-All supplied suites use seed **2026** and `devices: all`: one independent experiment per
-visible GPU. Explicit lists such as `[cuda:0, cuda:2]` remain supported. A single model
-uses one GPU. `all` requires a visible CUDA GPU and respects Slurm / `CUDA_VISIBLE_DEVICES`.
-The baseline suite has **60 tasks**; the PDR suite has **54**. Neither launches calibration.
-
-See the [configuration guide](config/README.md) for batch size and other overrides,
-the [run catalog](config/runs/README.md) for calibration, and the
-[OD implementation audit](models/od/README.md) for baseline provenance and limitations.
-
-## Paths and outputs
-
-Copy `.env.example` to `.env` on another machine. Environment variables override `.env`;
-relative paths resolve from the repository root.
-
-| Variable | Purpose / default |
-|---|---|
-| `POPST_DATA_SOURCE` | Shared dataset source; set for your installation |
-| `POPST_DATA_ROOT` | Prepared datasets: `./datasets`, linked to the source |
-| `POPST_RUN_ROOT` | Experiment outputs: `./results` |
-| `POPST_CACHE_ROOT` | Hugging Face / Torch caches: `./artifacts/cache` |
-| `POPST_MODEL_ROOT` | Local pretrained models: `./artifacts/models` |
-
-Existing `HF_HOME` and `TORCH_HOME` settings take precedence. ST-LLM-plus checks
-`<POPST_MODEL_ROOT>/<pretrained_model>` before using a Hugging Face model ID.
-Shared datasets remain read only; generated data and results stay local.
-
-Each run writes configurations, metadata, logs, status, and metrics to
-`results/<experiment>/<run-id>/`. Neural training saves `best.pt` for evaluation;
-optimizer-state training resumption is not supported. Enable `output.predictions`,
-`output.test_inputs`, or `runtime.profile` for additional exports. Suite task logs and
-status are under `results/suites/`; failures produce a nonzero exit after the batch finishes.
-
-```python
-from engine.reporting import report
-report(root="results", output="results/summary.csv")
-```
-
-## Slurm
-
-`run.sh` runs the OD baseline suite, then the PDR suite, with the configured Python
-executable. Both receive the same command-line arguments; a baseline failure stops
-the script before PDR starts. Its
-`#SBATCH` directives request three GPUs, 12 CPUs, 64 GB RAM, and 23 hours. Edit those
-directives or pass `sbatch` flags to change the allocation; `devices: all` uses only the
-GPUs visible inside it. The default four threads per experiment fit three concurrent runs.
+The method suite contains six datasets: DC Bike, Chicago Bike/Taxi/TNP, and NYC
+Manhattan FHV/Taxi. It schedules one experiment per visible GPU and reuses completed
+matching runs. Baselines are available through `config/suites/od_baselines.yaml`;
+existing checkpoints can be evaluated without training them again.
 
 ```bash
-bash run.sh --dry-run     # Preview both suites; requires visible GPUs.
-mkdir -p results
-sbatch run.sh            # Allocate resources and execute.
+python run.py --run results/<experiment>/<run-id> --set runtime.mode=test
 ```
 
-`bash run.sh` runs on the current host without allocating resources. The batch log is
-`results/st-<job-id>.out`.
+## Original protocol
 
-## Data preparation
+| Setting | Value |
+|---|---|
+| Data | Existing `2025_12to1` arrays and `legacy` splits/scaler |
+| History / horizon | 12 / 1 |
+| Seed / batch size | 2026 / 128 |
+| Epoch limit / patience / min_delta | 400 / 30 / 0.001 |
+| Evaluation | Complete test split, original count scale |
 
-Fixed preprocessing settings and `RAW_ROOT`, `ASSET_ROOT`, and `PROCESSED_ROOT` live in
-the original city notebooks. Download notebooks use `artifacts/raw/`; preparation
-notebooks default to `datasets/raw/`. Set their `RAW_ROOT` to process a fresh download.
-Generated arrays default to `artifacts/data/`; select them with `data.root: artifacts/data`.
+The configuration loader accepts the original data protocol. Formal comparisons
+use native model outputs without additional thresholding or rounding. MAE, MSE,
+RMSE and MAPE measure count errors; F1 detects `prediction > 0`, and TZR measures
+`P(prediction <= 0 | target == 0)`. MAPE excludes zero targets.
 
-```python
-from engine.notebooks import execute_notebook
-execute_notebook("notebooks/DC/DC_OD.ipynb", timeout=3600)
-```
+PDRHurdleQuantile's encoder, dataset, training prior, decoder and loss are contained
+in [models/od/pdr_hurdle.py](models/od/pdr_hurdle.py). Its occurrence probability
+selects zero at `q <= 0.5`; otherwise it queries the positive quantile at
+`1 - 0.5/q`. Quantiles are monotonic, with interpolation and constant tails.
 
-The executor saves a copy under `results/notebooks/`. New preparation fits scaling on
-training observations and removes target overlap between multi-step splits. Existing
-shared arrays need regeneration to use this protocol. `data/revision.py` provides the
-separate chronological splits used by the review-driven experiment protocol.
+## Results and paths
 
-## Development
+Each run saves its resolved configuration, status, logs, `metrics.json` and neural
+`best.pt` under `results/<experiment>/<run-id>/`. Suite logs are in `results/suites/`.
+The complete six-metric method/ODMixer comparison is in
+[original-protocol-full-comparison.csv](benchmarks/original-protocol-full-comparison.csv).
+The [all-model table](benchmarks/original-protocol-all-models.csv)
+contains retained baseline results; uncomputed F1/TZR values are empty.
 
-`config/` holds experiment definitions; `models/` contains model implementations;
-`engine/` handles execution and metrics; `data/` and `notebooks/` prepare datasets.
-Generated `results/` and `artifacts/` are ignored by Git.
+Refresh the all-model table with
+`python tools/report.py`.
+
+The method improves MAE, MAPE, F1 and TZR over original ODMixer on all six datasets.
+RMSE/MSE improve on Chicago Bike and Taxi. These results do not establish overall SOTA.
+
+Copy `.env.example` to `.env` to configure dataset, output, cache and pretrained-model
+paths. Shared datasets are read only; generated outputs remain local. See the
+[configuration guide](config/README.md), [run catalog](config/runs/README.md) and
+[OD models](models/od/README.md).
+
+`bash run.sh` runs the method suite. `sbatch run.sh` requests the resources specified
+in that script; `devices: all` uses the GPUs visible inside the allocation.
+
+## Checks
 
 ```bash
 python -m pytest -q
 ruff check run.py config data engine models tests --select F401,F841,F811,F821
 bash -n run.sh
 ```
-
-Tests exercise small fixtures, checkpoint replay, forecast causality, and suite scheduling.
-Full benchmark training and the remaining uncertainty audit are still required for paper
-comparisons; the repository does not establish SOTA performance. Notebook preparation
-cells expose variables through `globals().update(result)`; validate them by execution
-with the required raw data rather than applying Python-module unused-code fixes.

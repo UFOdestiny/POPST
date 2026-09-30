@@ -1,0 +1,11 @@
+runs:
+- ../runs/dc_od_60min_bike/od_pdr_hurdle.yaml
+- ../runs/nyc_manhattan_od_15min_taxi/od_pdr_hurdle.yaml
+- ../runs/chicago_od_15min_tnp/od_pdr_hurdle.yaml
+- ../runs/nyc_manhattan_od_15min_fhv/od_pdr_hurdle.yaml
+- ../runs/chicago_od_15min_taxi/od_pdr_hurdle.yaml
+- ../runs/chicago_od_15min_bike/od_pdr_hurdle.yaml
+matrix:
+  training.seed:
+  - 2026
+devices: all

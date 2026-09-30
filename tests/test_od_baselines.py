@@ -98,6 +98,34 @@ def test_nonfinite_forecast_cannot_score_as_zero_error():
     assert masked_mae(torch.tensor([float("nan"), 2.]), torch.tensor([float("nan"), 1.]), float("nan")).item() == 1
 
 
+@pytest.mark.parametrize("nodes, log_max", [(46, 4.989), (77, 6.307)])
+def test_stpro_count_space_training_stays_finite(nodes, log_max):
+    from data.preprocessing import MinMaxScaler
+    from models.od.stpro import STPro
+    from engine.metrics import masked_mae, masked_mse
+
+    torch.set_num_threads(2)
+    torch.manual_seed(2026)
+    model = STPro(nodes, nodes, nodes, 12, 1)
+    scaler = MinMaxScaler(data_min=[0.], data_max=[log_max], use_log1p=True)
+    # Zero demand must not acquire a large count forecast from affine biases.
+    torch.testing.assert_close(model(torch.zeros(2, 12, nodes, nodes, 1)),
+                               torch.zeros(2, 1, nodes, nodes, 1))
+    optimizer = torch.optim.Adam(model.parameters(), lr=.003)
+    x = torch.rand(2, 12, nodes, nodes, 1) * .2
+    labels = scaler.inverse_transform(x[:, -1:])
+    for _ in range(12):
+        optimizer.zero_grad()
+        prediction = scaler.inverse_transform(model(x))
+        loss = masked_mae(prediction, labels, float("nan"))
+        assert torch.isfinite(loss)
+        assert torch.isfinite(masked_mse(prediction, labels, float("nan")))
+        loss.backward()
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5.)
+        assert torch.isfinite(norm)
+        optimizer.step()
+
+
 def test_stgode_graph_ignores_future(history):
     from models.od.stgode import _construct_se_matrix
     cfg = resolved_copy(load_config(model="od/stgode", dataset="dc_od_60min"), {"data": {"version": "v", "horizon": 3}})

@@ -1,6 +1,0 @@
-model:
-  id: od/pdr_no_zone_embed
-data:
-  id: dc_od_60min_bike
-experiment:
-  name: dc_od_60min_bike_od_pdr_no_zone_embed

@@ -1,6 +1,0 @@
-model:
-  id: od/pdr_reg_gau
-data:
-  id: nyc_manhattan_od_15min_fhv
-experiment:
-  name: nyc_manhattan_od_15min_fhv_od_pdr_reg_gau

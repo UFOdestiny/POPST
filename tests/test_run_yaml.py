@@ -203,17 +203,20 @@ def test_provided_suite_contracts():
             assert cfg.training.batch_size == 128
         if path.stem.endswith(("_flow", "_od")):
             configs = [cfg for _, cfg in expand_suite(path)]
-            assert len(configs) == 19
+            assert len(configs) == (19 if path.stem.endswith('_flow') else 10)
             assert all(cfg.model.id != "flow/transformer" for cfg in configs)
     baseline = [cfg for _, cfg in expand_suite(suites / "od_baselines.yaml")]
-    own = [cfg for _, cfg in expand_suite(suites / "od_zeropdr.yaml")]
-    assert len(baseline) == 60 and len(own) == 54
+    own = [cfg for _, cfg in expand_suite(suites / "od_pdr_hurdle.yaml")]
+    assert len(baseline) == 60 and len(own) == 6
     assert {cfg.data.id for cfg in baseline} == {cfg.data.id for cfg in own}
-    assert {cfg.model.id for cfg in own} == {
-        f"od/{name}" for name in ("pdr", "pdr_reg", "pdr_no_context", "pdr_no_zone_embed",
-        "pdr_no_spatial", "pdr_no_moe", "pdr_reg_gau", "pdr_reg_lap", "pdr_reg_t")
-    }
+    assert {cfg.model.id for cfg in own} == {'od/pdr_hurdle'}
     assert all(cfg.runtime.mode == "train" for cfg in own)
+
+
+@pytest.mark.parametrize('override', ['data.protocol=revision', 'data.version=revision_12to1'])
+def test_configuration_rejects_nonoriginal_protocol(override):
+    with pytest.raises(ValueError, match='original'):
+        load_config(ROOT/'config/runs/dc_od_60min_bike/od_pdr_hurdle.yaml', overrides=[override])
 
 
 def test_legacy_scheduler_metadata_does_not_break_checkpoint_loading(tmp_path):

@@ -1,6 +1,0 @@
-model:
-  id: od/pdr_reg_lap
-data:
-  id: nyc_manhattan_od_15min_taxi
-experiment:
-  name: nyc_manhattan_od_15min_taxi_od_pdr_reg_lap

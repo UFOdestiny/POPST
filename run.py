@@ -46,9 +46,8 @@ def main(argv=None):
     if (
         config.runtime.mode == "calibrate"
         and config.calibration.mode == "no"
-        and config.model.id != "od/pdr_reg_post"
     ):
-        parser.error("Calibration requires calibration.mode=horizon/global or model od/pdr_reg_post")
+        parser.error("Calibration requires calibration.mode=horizon/global")
     from engine.runner import run_experiment
 
     result = run_experiment(config)

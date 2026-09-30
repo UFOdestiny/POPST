@@ -8,17 +8,13 @@ __pycache__/
 .agents
 .vscode
 
-output
-outputs
 result
 /datasets
 latex
-logs
 
 .env
-.env.*
-!.env.example
 /artifacts/
 /results/
 .pytest_cache/
 *.egg-info/
+ccf*

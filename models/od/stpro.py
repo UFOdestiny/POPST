@@ -129,6 +129,20 @@ class STPro(BaseODModel):
         self.end_conv = nn.Conv2d(
             1, horizon * node_num * self.expansion, kernel_size=(1, hidden_dim)
         )
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Random positive biases accumulate through the projection/attention
+        # stack and can overflow the log1p scaler's count-space inverse.
+        # Keep Xavier matrices, zero affine biases and the standard PReLU slope.
+        for parameter in self.parameters():
+            if parameter.ndim > 1:
+                nn.init.xavier_uniform_(parameter)
+            else:
+                nn.init.zeros_(parameter)
+        for module in self.modules():
+            if isinstance(module, nn.PReLU):
+                nn.init.constant_(module.weight, 0.25)
 
     def forward_single(self, x, label=None):
         if x.shape[1:] != (self.seq_len, self.node_num, self.node_num):
@@ -155,4 +169,4 @@ def build_model(config, node_num, **ctx):
 
 
 def get_recipe():
-    return ModelRecipe(build_model=build_model, od=True, od_cqr=True, init_weights=True)
+    return ModelRecipe(build_model=build_model, od=True, od_cqr=True)

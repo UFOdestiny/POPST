@@ -18,5 +18,4 @@ python_bin=/blue/fsu-compsci-dept/dahai/conda/envs/llm/bin/python
 
 cd /blue/fsu-compsci-dept/dahai/proj/POPST
 
-"$python_bin" -u run.py config/suites/od_baselines.yaml "$@"
-exec "$python_bin" -u run.py config/suites/od_zeropdr.yaml "$@"
+exec "$python_bin" -u run.py config/suites/od_pdr_hurdle.yaml "$@"

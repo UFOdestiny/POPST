@@ -134,7 +134,7 @@ def build_engine(config, paths, directory, logger):
         logger=logger,
         seed=config.training.seed,
         normalize=config.data.normalize,
-        metric_list=recipe.metric_list or ["MAE", "MAPE", "MSE", "RMSE"],
+        metric_list=recipe.metric_list or ["MAE", "MAPE", "MSE", "RMSE", "F1", "TZR"],
         init_weights=recipe.init_weights,
         config=config,
     )
